@@ -1,5 +1,7 @@
 # Auto-Linker
 
+[한국어 가이드 (README_KO.md)](README_KO.md)
+
 Auto-Linker is an Obsidian community plugin for selective AI-driven metadata updates.
 It helps users build a cleaner graph-based second brain by proposing metadata changes for only the notes they choose.
 
