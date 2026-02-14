@@ -1,0 +1,30 @@
+{
+  "name": "obsidian-auto-linker",
+  "version": "0.1.0",
+  "description": "Selective AI-assisted metadata and MOC builder for Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "check": "tsc --noEmit",
+    "security:check": "bash scripts/security-check.sh",
+    "release:check": "npm run check && npm run build && npm run security:check"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "knowledge-management",
+    "second-brain",
+    "ai"
+  ],
+  "author": "piman",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.17.57",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.25.9",
+    "obsidian": "^1.8.10",
+    "tslib": "^2.8.1",
+    "typescript": "^5.9.2"
+  }
+}
