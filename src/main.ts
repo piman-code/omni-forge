@@ -5,7 +5,6 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
-  TAbstractFile,
   TFile,
   TFolder,
   normalizePath,
@@ -20,16 +19,21 @@ import {
 } from "./frontmatter";
 import {
   analyzeWithFallback,
+  buildOllamaModelOptions,
   detectOllamaModels,
   getProviderModelLabel,
+  isOllamaModelAnalyzable,
 } from "./providers";
 import type {
   AnalysisRunSummary,
+  BackupDecision,
   FieldReasons,
   KnowledgeWeaverSettings,
   ManagedFrontmatter,
   NoteSuggestion,
   OllamaDetectionResult,
+  OllamaModelOption,
+  ProgressErrorItem,
   ProviderId,
 } from "./types";
 
@@ -61,8 +65,11 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   targetFilePaths: [],
   targetFolderPaths: [],
   includeSubfoldersInFolderSelection: true,
+  selectionPathWidthPercent: 72,
   backupBeforeApply: true,
   backupRootPath: "Auto-Linker Backups",
+  backupRetentionCount: 10,
+  excludedFolderPatterns: ".obsidian,Auto-Linker Backups",
   showProgressNotices: true,
   generateMoc: true,
   mocPath: "MOC/Selected Knowledge MOC.md",
@@ -92,10 +99,23 @@ function readManagedValueByKey(
 }
 
 function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return "0ms";
+  }
   if (ms < 1000) {
     return `${ms}ms`;
   }
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatBackupStamp(date: Date): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const sec = String(date.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}_${hh}-${min}-${sec}`;
 }
 
 function mergeUniqueStrings(base: string[], additions: string[]): string[] {
@@ -112,20 +132,25 @@ function mergeUniqueStrings(base: string[], additions: string[]): string[] {
   return out;
 }
 
-function formatBackupStamp(date: Date): string {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-  const hh = String(date.getHours()).padStart(2, "0");
-  const min = String(date.getMinutes()).padStart(2, "0");
-  const sec = String(date.getSeconds()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}_${hh}-${min}-${sec}`;
+function parsePositiveInt(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return parsed;
+}
+
+interface ProgressEventItem {
+  filePath: string;
+  status: "ok" | "error";
+  message?: string;
 }
 
 interface SelectionSubmitPayload {
   selectedFilePaths: string[];
   selectedFolderPaths: string[];
   includeSubfolders: boolean;
+  pathWidthPercent: number;
 }
 
 class SelectionModal extends Modal {
@@ -135,10 +160,11 @@ class SelectionModal extends Modal {
   private readonly selectedFilePaths: Set<string>;
   private readonly selectedFolderPaths: Set<string>;
   private includeSubfolders: boolean;
+  private pathWidthPercent: number;
 
-  private searchValue: string = "";
-  private fileListContainer!: HTMLElement;
-  private folderListContainer!: HTMLElement;
+  private searchValue = "";
+  private activeTab: "files" | "folders" = "files";
+  private listContainer!: HTMLElement;
   private footerCounterEl!: HTMLElement;
 
   constructor(
@@ -148,6 +174,7 @@ class SelectionModal extends Modal {
     initialFiles: string[],
     initialFolders: string[],
     includeSubfolders: boolean,
+    pathWidthPercent: number,
     onSubmit: (payload: SelectionSubmitPayload) => Promise<void>,
   ) {
     super(app);
@@ -157,6 +184,7 @@ class SelectionModal extends Modal {
     this.selectedFilePaths = new Set(initialFiles);
     this.selectedFolderPaths = new Set(initialFolders);
     this.includeSubfolders = includeSubfolders;
+    this.pathWidthPercent = pathWidthPercent;
   }
 
   onOpen(): void {
@@ -165,7 +193,7 @@ class SelectionModal extends Modal {
     contentEl.createEl("h2", { text: "Select target notes and folders" });
 
     const info = contentEl.createEl("p", {
-      text: "You can combine file and folder selection. Folder selection can include subfolders.",
+      text: "Use tabs to switch between Files and Folders. Long paths are shown compactly with full path on hover.",
     });
     info.style.marginTop = "0";
 
@@ -178,7 +206,7 @@ class SelectionModal extends Modal {
     searchInput.style.width = "100%";
     searchInput.oninput = () => {
       this.searchValue = searchInput.value.trim().toLowerCase();
-      this.renderLists();
+      this.renderList();
     };
 
     const subfolderRow = contentEl.createDiv();
@@ -195,77 +223,97 @@ class SelectionModal extends Modal {
     };
     subfolderRow.createEl("span", { text: "Include subfolders when folder is selected" });
 
+    const widthRow = contentEl.createDiv();
+    widthRow.style.display = "flex";
+    widthRow.style.alignItems = "center";
+    widthRow.style.gap = "8px";
+    widthRow.style.marginTop = "6px";
+
+    widthRow.createEl("span", { text: "Path width" });
+    const widthInput = widthRow.createEl("input", {
+      type: "range",
+      attr: { min: "45", max: "100", step: "1" },
+    });
+    widthInput.value = String(this.pathWidthPercent);
+    const widthLabel = widthRow.createEl("span", {
+      text: `${this.pathWidthPercent}%`,
+    });
+
+    widthInput.oninput = () => {
+      const next = Number.parseInt(widthInput.value, 10);
+      if (Number.isFinite(next) && next >= 45 && next <= 100) {
+        this.pathWidthPercent = next;
+        widthLabel.setText(`${next}%`);
+        this.renderList();
+      }
+    };
+
+    const tabRow = contentEl.createDiv();
+    tabRow.style.display = "flex";
+    tabRow.style.gap = "8px";
+    tabRow.style.marginTop = "10px";
+
+    const filesTab = tabRow.createEl("button", { text: "Files" });
+    const foldersTab = tabRow.createEl("button", { text: "Folders" });
+
+    const switchTab = (tab: "files" | "folders") => {
+      this.activeTab = tab;
+      filesTab.toggleClass("mod-cta", tab === "files");
+      foldersTab.toggleClass("mod-cta", tab === "folders");
+      this.renderList();
+    };
+
+    filesTab.onclick = () => switchTab("files");
+    foldersTab.onclick = () => switchTab("folders");
+
     const actionRow = contentEl.createDiv();
     actionRow.style.display = "flex";
     actionRow.style.gap = "8px";
     actionRow.style.marginTop = "10px";
 
-    const selectFilteredFilesButton = actionRow.createEl("button", {
-      text: "Select filtered files",
+    const selectFilteredButton = actionRow.createEl("button", {
+      text: "Select filtered",
     });
-    selectFilteredFilesButton.onclick = () => {
-      for (const file of this.filteredFiles()) {
-        this.selectedFilePaths.add(file.path);
+    selectFilteredButton.onclick = () => {
+      if (this.activeTab === "files") {
+        for (const file of this.filteredFiles()) {
+          this.selectedFilePaths.add(file.path);
+        }
+      } else {
+        for (const folder of this.filteredFolders()) {
+          this.selectedFolderPaths.add(folder.path);
+        }
       }
-      this.renderLists();
+      this.renderList();
     };
 
-    const clearFilteredFilesButton = actionRow.createEl("button", {
-      text: "Clear filtered files",
+    const clearFilteredButton = actionRow.createEl("button", {
+      text: "Clear filtered",
     });
-    clearFilteredFilesButton.onclick = () => {
-      for (const file of this.filteredFiles()) {
-        this.selectedFilePaths.delete(file.path);
+    clearFilteredButton.onclick = () => {
+      if (this.activeTab === "files") {
+        for (const file of this.filteredFiles()) {
+          this.selectedFilePaths.delete(file.path);
+        }
+      } else {
+        for (const folder of this.filteredFolders()) {
+          this.selectedFolderPaths.delete(folder.path);
+        }
       }
-      this.renderLists();
+      this.renderList();
     };
 
-    const selectFilteredFoldersButton = actionRow.createEl("button", {
-      text: "Select filtered folders",
-    });
-    selectFilteredFoldersButton.onclick = () => {
-      for (const folder of this.filteredFolders()) {
-        this.selectedFolderPaths.add(folder.path);
-      }
-      this.renderLists();
-    };
-
-    const clearFilteredFoldersButton = actionRow.createEl("button", {
-      text: "Clear filtered folders",
-    });
-    clearFilteredFoldersButton.onclick = () => {
-      for (const folder of this.filteredFolders()) {
-        this.selectedFolderPaths.delete(folder.path);
-      }
-      this.renderLists();
-    };
-
-    const grid = contentEl.createDiv();
-    grid.style.display = "grid";
-    grid.style.gridTemplateColumns = "1fr 1fr";
-    grid.style.gap = "12px";
-    grid.style.marginTop = "12px";
-
-    const fileSection = grid.createDiv();
-    fileSection.createEl("h3", { text: "Files" });
-    this.fileListContainer = fileSection.createDiv();
-    this.fileListContainer.style.maxHeight = "45vh";
-    this.fileListContainer.style.overflow = "auto";
-    this.fileListContainer.style.border = "1px solid var(--background-modifier-border)";
-    this.fileListContainer.style.borderRadius = "8px";
-
-    const folderSection = grid.createDiv();
-    folderSection.createEl("h3", { text: "Folders" });
-    this.folderListContainer = folderSection.createDiv();
-    this.folderListContainer.style.maxHeight = "45vh";
-    this.folderListContainer.style.overflow = "auto";
-    this.folderListContainer.style.border = "1px solid var(--background-modifier-border)";
-    this.folderListContainer.style.borderRadius = "8px";
+    this.listContainer = contentEl.createDiv();
+    this.listContainer.style.maxHeight = "48vh";
+    this.listContainer.style.overflow = "auto";
+    this.listContainer.style.border = "1px solid var(--background-modifier-border)";
+    this.listContainer.style.borderRadius = "8px";
+    this.listContainer.style.marginTop = "10px";
 
     this.footerCounterEl = contentEl.createEl("p");
     this.footerCounterEl.style.marginTop = "8px";
 
-    this.renderLists();
+    switchTab("files");
 
     const footer = contentEl.createDiv();
     footer.style.display = "flex";
@@ -289,6 +337,7 @@ class SelectionModal extends Modal {
           a.localeCompare(b),
         ),
         includeSubfolders: this.includeSubfolders,
+        pathWidthPercent: this.pathWidthPercent,
       });
       this.close();
     };
@@ -312,61 +361,291 @@ class SelectionModal extends Modal {
     );
   }
 
-  private renderLists(): void {
-    this.fileListContainer.empty();
-    this.folderListContainer.empty();
+  private renderList(): void {
+    this.listContainer.empty();
 
-    for (const file of this.filteredFiles()) {
-      const row = this.fileListContainer.createDiv();
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.padding = "6px 8px";
-      row.style.borderBottom = "1px solid var(--background-modifier-border)";
-
-      const checkbox = row.createEl("input", { type: "checkbox" });
-      checkbox.checked = this.selectedFilePaths.has(file.path);
-      checkbox.onchange = () => {
-        if (checkbox.checked) {
-          this.selectedFilePaths.add(file.path);
-        } else {
-          this.selectedFilePaths.delete(file.path);
-        }
-        this.updateFooterCounter();
-      };
-
-      row.createEl("span", { text: file.path });
-    }
-
-    for (const folder of this.filteredFolders()) {
-      const row = this.folderListContainer.createDiv();
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.padding = "6px 8px";
-      row.style.borderBottom = "1px solid var(--background-modifier-border)";
-
-      const checkbox = row.createEl("input", { type: "checkbox" });
-      checkbox.checked = this.selectedFolderPaths.has(folder.path);
-      checkbox.onchange = () => {
-        if (checkbox.checked) {
-          this.selectedFolderPaths.add(folder.path);
-        } else {
-          this.selectedFolderPaths.delete(folder.path);
-        }
-        this.updateFooterCounter();
-      };
-
-      row.createEl("span", { text: folder.path });
+    if (this.activeTab === "files") {
+      for (const file of this.filteredFiles()) {
+        const row = this.createRow(file.path, this.selectedFilePaths.has(file.path));
+        const checkbox = row.querySelector("input") as HTMLInputElement;
+        checkbox.onchange = () => {
+          if (checkbox.checked) {
+            this.selectedFilePaths.add(file.path);
+          } else {
+            this.selectedFilePaths.delete(file.path);
+          }
+          this.updateFooterCounter();
+        };
+      }
+    } else {
+      for (const folder of this.filteredFolders()) {
+        const row = this.createRow(folder.path, this.selectedFolderPaths.has(folder.path));
+        const checkbox = row.querySelector("input") as HTMLInputElement;
+        checkbox.onchange = () => {
+          if (checkbox.checked) {
+            this.selectedFolderPaths.add(folder.path);
+          } else {
+            this.selectedFolderPaths.delete(folder.path);
+          }
+          this.updateFooterCounter();
+        };
+      }
     }
 
     this.updateFooterCounter();
   }
 
+  private createRow(path: string, checked: boolean): HTMLElement {
+    const row = this.listContainer.createDiv();
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    row.style.padding = "6px 8px";
+    row.style.borderBottom = "1px solid var(--background-modifier-border)";
+
+    const checkbox = row.createEl("input", { type: "checkbox" });
+    checkbox.checked = checked;
+
+    const pathEl = row.createEl("span", { text: path });
+    pathEl.style.flex = "1";
+    pathEl.style.whiteSpace = "nowrap";
+    pathEl.style.overflow = "hidden";
+    pathEl.style.textOverflow = "ellipsis";
+    pathEl.style.maxWidth = `${this.pathWidthPercent}%`;
+    pathEl.title = path;
+
+    return row;
+  }
+
   private updateFooterCounter(): void {
     this.footerCounterEl.setText(
-      `Selected files: ${this.selectedFilePaths.size}, selected folders: ${this.selectedFolderPaths.size}, include subfolders: ${this.includeSubfolders ? "yes" : "no"}`,
+      `Selected files: ${this.selectedFilePaths.size}, selected folders: ${this.selectedFolderPaths.size}, include subfolders: ${this.includeSubfolders ? "yes" : "no"}, path width: ${this.pathWidthPercent}%`,
     );
+  }
+}
+
+class BackupConfirmModal extends Modal {
+  private readonly defaultBackup: boolean;
+  private readonly onResolve: (decision: BackupDecision) => void;
+  private rememberAsDefault = false;
+
+  constructor(
+    app: App,
+    defaultBackup: boolean,
+    onResolve: (decision: BackupDecision) => void,
+  ) {
+    super(app);
+    this.defaultBackup = defaultBackup;
+    this.onResolve = onResolve;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl("h2", { text: "백업을 진행하시겠습니까?" });
+    contentEl.createEl("p", {
+      text: "분석 전에 선택된 문서를 백업할 수 있습니다. 복구가 필요할 때 안전합니다.",
+    });
+
+    const defaultText = this.defaultBackup
+      ? "현재 기본값: 백업 후 진행"
+      : "현재 기본값: 백업 없이 진행";
+    contentEl.createEl("p", { text: defaultText });
+
+    const rememberRow = contentEl.createDiv();
+    rememberRow.style.display = "flex";
+    rememberRow.style.alignItems = "center";
+    rememberRow.style.gap = "8px";
+
+    const rememberCheckbox = rememberRow.createEl("input", { type: "checkbox" });
+    rememberCheckbox.onchange = () => {
+      this.rememberAsDefault = rememberCheckbox.checked;
+    };
+    rememberRow.createEl("span", { text: "이 선택을 기본값으로 저장" });
+
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+
+    const cancelButton = footer.createEl("button", { text: "취소" });
+    cancelButton.onclick = () => {
+      this.resolve({
+        proceed: false,
+        backupBeforeRun: this.defaultBackup,
+        rememberAsDefault: false,
+      });
+    };
+
+    const noBackupButton = footer.createEl("button", { text: "백업 없이 진행" });
+    noBackupButton.onclick = () => {
+      this.resolve({
+        proceed: true,
+        backupBeforeRun: false,
+        rememberAsDefault: this.rememberAsDefault,
+      });
+    };
+
+    const backupButton = footer.createEl("button", {
+      text: "백업 후 진행(권장)",
+      cls: "mod-cta",
+    });
+    backupButton.onclick = () => {
+      this.resolve({
+        proceed: true,
+        backupBeforeRun: true,
+        rememberAsDefault: this.rememberAsDefault,
+      });
+    };
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+
+  private resolve(decision: BackupDecision): void {
+    this.onResolve(decision);
+    this.close();
+  }
+
+  static ask(app: App, defaultBackup: boolean): Promise<BackupDecision> {
+    return new Promise((resolve) => {
+      new BackupConfirmModal(app, defaultBackup, resolve).open();
+    });
+  }
+}
+
+class RunProgressModal extends Modal {
+  private readonly titleText: string;
+
+  private statusEl!: HTMLElement;
+  private currentFileEl!: HTMLElement;
+  private etaEl!: HTMLElement;
+  private errorsSummaryEl!: HTMLElement;
+  private errorsListEl!: HTMLElement;
+  private showOnlyErrors = true;
+  private cancelled = false;
+
+  constructor(app: App, titleText: string) {
+    super(app);
+    this.titleText = titleText;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl("h2", { text: this.titleText });
+
+    this.statusEl = contentEl.createEl("p", { text: "Preparing..." });
+    this.currentFileEl = contentEl.createEl("p", { text: "Current file: -" });
+    this.etaEl = contentEl.createEl("p", { text: "ETA: -" });
+
+    const filterRow = contentEl.createDiv();
+    filterRow.style.display = "flex";
+    filterRow.style.alignItems = "center";
+    filterRow.style.gap = "8px";
+
+    const onlyErrorsCheckbox = filterRow.createEl("input", { type: "checkbox" });
+    onlyErrorsCheckbox.checked = this.showOnlyErrors;
+    onlyErrorsCheckbox.onchange = () => {
+      this.showOnlyErrors = onlyErrorsCheckbox.checked;
+    };
+    filterRow.createEl("span", { text: "Show only errors" });
+
+    this.errorsSummaryEl = contentEl.createEl("p", { text: "Errors: 0" });
+
+    this.errorsListEl = contentEl.createDiv();
+    this.errorsListEl.style.maxHeight = "22vh";
+    this.errorsListEl.style.overflow = "auto";
+    this.errorsListEl.style.border = "1px solid var(--background-modifier-border)";
+    this.errorsListEl.style.borderRadius = "8px";
+    this.errorsListEl.style.padding = "8px";
+
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.marginTop = "12px";
+
+    const cancelButton = footer.createEl("button", {
+      text: "중지",
+      cls: "mod-warning",
+    });
+    cancelButton.onclick = () => {
+      this.cancelled = true;
+      this.statusEl.setText(`${this.titleText}: stopping after current file...`);
+    };
+  }
+
+  isCancelled(): boolean {
+    return this.cancelled;
+  }
+
+  update(params: {
+    stage: string;
+    current: number;
+    total: number;
+    startedAt: number;
+    currentFile?: string;
+    errors: ProgressErrorItem[];
+    events: ProgressEventItem[];
+  }): void {
+    const elapsedMs = Date.now() - params.startedAt;
+    const avgMs = params.current > 0 ? elapsedMs / params.current : 0;
+    const remaining = Math.max(0, params.total - params.current);
+    const etaMs = remaining * avgMs;
+
+    this.statusEl.setText(`${params.stage}: ${params.current}/${params.total}`);
+    this.currentFileEl.setText(`Current file: ${params.currentFile ?? "-"}`);
+    this.etaEl.setText(
+      `Elapsed: ${formatDurationMs(elapsedMs)} | ETA: ${
+        params.current > 0 ? formatDurationMs(Math.round(etaMs)) : "-"
+      }`,
+    );
+
+    this.errorsSummaryEl.setText(`Errors: ${params.errors.length}`);
+    this.renderEvents(params.errors, params.events);
+  }
+
+  setFinished(message: string): void {
+    this.statusEl.setText(message);
+  }
+
+  private renderEvents(
+    errors: ProgressErrorItem[],
+    events: ProgressEventItem[],
+  ): void {
+    this.errorsListEl.empty();
+
+    const showRows = this.showOnlyErrors
+      ? events.filter((item) => item.status === "error")
+      : events;
+
+    if (showRows.length === 0) {
+      this.errorsListEl.createEl("div", {
+        text: this.showOnlyErrors ? "No errors." : "No activity yet.",
+      });
+      return;
+    }
+
+    for (const item of showRows.slice(-200)) {
+      const row = this.errorsListEl.createDiv();
+      row.style.marginBottom = "6px";
+      const label = item.status === "error" ? "ERROR" : "OK";
+      row.createEl("div", { text: `${label}: ${item.filePath}` });
+
+      if (item.status === "error") {
+        const errorMessage =
+          errors.find((error) => error.filePath === item.filePath)?.message ??
+          item.message ??
+          "Unknown error";
+        row.createEl("small", { text: errorMessage });
+      } else if (item.message) {
+        row.createEl("small", { text: item.message });
+      }
+    }
   }
 }
 
@@ -408,7 +687,7 @@ class SuggestionPreviewModal extends Modal {
       text: `Analyzed: ${this.summary.totalFiles} | Changed: ${this.summary.changedFiles}`,
     });
     summaryEl.createEl("div", {
-      text: `Fallback used: ${this.summary.usedFallbackCount} | Elapsed: ${formatDurationMs(this.summary.elapsedMs)}`,
+      text: `Fallback used: ${this.summary.usedFallbackCount} | Errors: ${this.summary.errorCount} | Elapsed: ${formatDurationMs(this.summary.elapsedMs)}${this.summary.cancelled ? " | Cancelled" : ""}`,
     });
 
     const list = contentEl.createDiv();
@@ -498,7 +777,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     containerEl.createEl("h2", { text: "Auto-Linker Settings" });
 
     containerEl.createEl("p", {
-      text: "Docs: README.md (English) | README_KO.md (Korean)",
+      text: "Language docs: README.md (index) | README_KO.md (Korean quick access)",
     });
 
     new Setting(containerEl)
@@ -533,35 +812,49 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           }),
       );
 
+    const ollamaOptions = this.plugin.getOllamaModelOptions();
     new Setting(containerEl)
-      .setName("Ollama model")
-      .setDesc("If auto-pick is enabled, this can be auto-adjusted when missing or invalid.")
-      .addText((text) =>
-        text
-          .setPlaceholder("qwen2.5:7b")
-          .setValue(this.plugin.settings.ollamaModel)
-          .onChange(async (value) => {
-            this.plugin.settings.ollamaModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
+      .setName("Ollama detected model picker")
+      .setDesc(
+        "Choose among detected models. (추천)=recommended, (불가)=not suitable for analysis.",
+      )
+      .addDropdown((dropdown) => {
+        if (ollamaOptions.length === 0) {
+          dropdown.addOption("", "(No models detected)");
+          dropdown.setValue("");
+        } else {
+          for (const option of ollamaOptions) {
+            const suffix =
+              option.status === "recommended"
+                ? " (추천)"
+                : option.status === "unavailable"
+                  ? " (불가)"
+                  : "";
+            dropdown.addOption(option.model, `${option.model}${suffix}`);
+          }
 
-    new Setting(containerEl)
-      .setName("Auto-pick recommended Ollama model")
-      .setDesc("Detect local models and choose a suitable chat/instruct model automatically.")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.ollamaAutoPickEnabled)
-          .onChange(async (value) => {
-            this.plugin.settings.ollamaAutoPickEnabled = value;
-            await this.plugin.saveSettings();
-          }),
-      );
+          const current = this.plugin.settings.ollamaModel;
+          if (current && ollamaOptions.some((option) => option.model === current)) {
+            dropdown.setValue(current);
+          } else {
+            dropdown.setValue(ollamaOptions[0].model);
+          }
+        }
 
-    const ollamaSummaryText = this.plugin.getOllamaDetectionSummary();
-    new Setting(containerEl)
-      .setName("Detected Ollama models")
-      .setDesc(ollamaSummaryText)
+        dropdown.onChange(async (value) => {
+          if (!value) {
+            return;
+          }
+          this.plugin.settings.ollamaModel = value;
+          await this.plugin.saveSettings();
+
+          if (!isOllamaModelAnalyzable(value)) {
+            new Notice(`Selected model is marked as (불가): ${value}`, 4500);
+          }
+
+          this.display();
+        });
+      })
       .addButton((button) =>
         button.setButtonText("Refresh").onClick(async () => {
           await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
@@ -574,6 +867,35 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           this.display();
         }),
       );
+
+    new Setting(containerEl)
+      .setName("Ollama model (manual)")
+      .setDesc("Manual override if you want a custom model name.")
+      .addText((text) =>
+        text
+          .setPlaceholder("qwen2.5:7b")
+          .setValue(this.plugin.settings.ollamaModel)
+          .onChange(async (value) => {
+            this.plugin.settings.ollamaModel = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-pick recommended Ollama model")
+      .setDesc("Detect local models and auto-choose recommended when current is missing.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.ollamaAutoPickEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.ollamaAutoPickEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Ollama detection summary")
+      .setDesc(this.plugin.getOllamaDetectionSummary());
 
     new Setting(containerEl)
       .setName("LM Studio base URL")
@@ -724,7 +1046,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Show progress notices")
-      .setDesc("Displays progress updates like analyzed count while running.")
+      .setDesc("In addition to persistent progress modal, show short notices.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.showProgressNotices)
@@ -785,11 +1107,11 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .setPlaceholder("8")
           .setValue(String(this.plugin.settings.maxTags))
           .onChange(async (value) => {
-            const parsed = Number.parseInt(value, 10);
-            if (Number.isFinite(parsed) && parsed > 0) {
-              this.plugin.settings.maxTags = parsed;
-              await this.plugin.saveSettings();
-            }
+            this.plugin.settings.maxTags = parsePositiveInt(
+              value,
+              this.plugin.settings.maxTags,
+            );
+            await this.plugin.saveSettings();
           }),
       );
 
@@ -800,18 +1122,18 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .setPlaceholder("8")
           .setValue(String(this.plugin.settings.maxLinked))
           .onChange(async (value) => {
-            const parsed = Number.parseInt(value, 10);
-            if (Number.isFinite(parsed) && parsed > 0) {
-              this.plugin.settings.maxLinked = parsed;
-              await this.plugin.saveSettings();
-            }
+            this.plugin.settings.maxLinked = parsePositiveInt(
+              value,
+              this.plugin.settings.maxLinked,
+            );
+            await this.plugin.saveSettings();
           }),
       );
 
     new Setting(containerEl)
-      .setName("Clean unknown frontmatter keys")
+      .setName("Remove legacy AI-prefixed keys")
       .setDesc(
-        "If enabled, non-managed keys are removed except protected linter-like date keys.",
+        "If enabled, removes only legacy keys like ai_*/autolinker_* while preserving other existing keys (including linter date fields).",
       )
       .addToggle((toggle) =>
         toggle
@@ -848,7 +1170,37 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Selection path width percent")
+      .setDesc("Controls path width in Select target notes/folders modal (45-100).")
+      .addText((text) =>
+        text
+          .setPlaceholder("72")
+          .setValue(String(this.plugin.settings.selectionPathWidthPercent))
+          .onChange(async (value) => {
+            const parsed = Number.parseInt(value, 10);
+            if (Number.isFinite(parsed) && parsed >= 45 && parsed <= 100) {
+              this.plugin.settings.selectionPathWidthPercent = parsed;
+              await this.plugin.saveSettings();
+            }
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Excluded folder patterns")
+      .setDesc("Comma-separated substrings. Matched folders are ignored during selection/analysis.")
+      .addText((text) =>
+        text
+          .setPlaceholder(".obsidian,Auto-Linker Backups")
+          .setValue(this.plugin.settings.excludedFolderPatterns)
+          .onChange(async (value) => {
+            this.plugin.settings.excludedFolderPatterns = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Backup selected notes before apply")
+      .setDesc("You can also override this every run from the backup confirmation dialog.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.backupBeforeApply)
@@ -867,6 +1219,22 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.backupRootPath)
           .onChange(async (value) => {
             this.plugin.settings.backupRootPath = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Backup retention count")
+      .setDesc("Keep only latest N backups (old backups are deleted automatically).")
+      .addText((text) =>
+        text
+          .setPlaceholder("10")
+          .setValue(String(this.plugin.settings.backupRetentionCount))
+          .onChange(async (value) => {
+            this.plugin.settings.backupRetentionCount = parsePositiveInt(
+              value,
+              this.plugin.settings.backupRetentionCount,
+            );
             await this.plugin.saveSettings();
           }),
       );
@@ -910,6 +1278,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   settings!: KnowledgeWeaverSettings;
   private statusBarEl: HTMLElement | null = null;
   private ollamaDetectionCache: OllamaDetectionResult | null = null;
+  private ollamaDetectionOptions: OllamaModelOption[] = [];
   private ollamaDetectionSummary =
     "Model detection has not run yet. Click refresh to detect installed Ollama models.";
 
@@ -981,6 +1350,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return this.ollamaDetectionSummary;
   }
 
+  getOllamaModelOptions(): OllamaModelOption[] {
+    return this.ollamaDetectionOptions;
+  }
+
   async applyRecommendedOllamaModel(notify: boolean): Promise<void> {
     if (!this.ollamaDetectionCache?.recommended) {
       if (notify) {
@@ -1004,6 +1377,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     try {
       const detected = await detectOllamaModels(this.settings.ollamaBaseUrl);
       this.ollamaDetectionCache = detected;
+      this.ollamaDetectionOptions = buildOllamaModelOptions(
+        detected.models,
+        detected.recommended,
+      );
 
       const modelListPreview =
         detected.models.length > 0
@@ -1039,6 +1416,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown Ollama detection error";
+      this.ollamaDetectionCache = null;
+      this.ollamaDetectionOptions = [];
       this.ollamaDetectionSummary = `Detection failed: ${message}`;
       if (options.notify) {
         this.notice(`Ollama model detection failed: ${message}`);
@@ -1056,8 +1435,18 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!Array.isArray(this.settings.targetFolderPaths)) {
       this.settings.targetFolderPaths = [];
     }
+    if (!Number.isFinite(this.settings.selectionPathWidthPercent)) {
+      this.settings.selectionPathWidthPercent =
+        DEFAULT_SETTINGS.selectionPathWidthPercent;
+    }
     if (!this.settings.backupRootPath) {
       this.settings.backupRootPath = DEFAULT_SETTINGS.backupRootPath;
+    }
+    if (!this.settings.excludedFolderPatterns) {
+      this.settings.excludedFolderPatterns = DEFAULT_SETTINGS.excludedFolderPatterns;
+    }
+    if (!Number.isFinite(this.settings.backupRetentionCount)) {
+      this.settings.backupRetentionCount = DEFAULT_SETTINGS.backupRetentionCount;
     }
   }
 
@@ -1076,18 +1465,23 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     new Notice(text, timeout);
   }
 
-  private progressNotice(stage: string, current: number, total: number): void {
-    this.setStatus(`${stage} ${current}/${total}`);
-    if (this.settings.showProgressNotices) {
-      if (current === 1 || current === total || current % 5 === 0) {
-        new Notice(`Auto-Linker ${stage}: ${current}/${total}`, 1500);
-      }
-    }
+  private parseExcludedPatterns(): string[] {
+    return this.settings.excludedFolderPatterns
+      .split(/[\n,;]+/)
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => item.length > 0);
+  }
+
+  private isPathExcluded(path: string): boolean {
+    const lower = path.toLowerCase();
+    const patterns = this.parseExcludedPatterns();
+    return patterns.some((pattern) => lower.includes(pattern));
   }
 
   private getAllMarkdownFiles(): TFile[] {
     return this.app.vault
       .getMarkdownFiles()
+      .filter((file) => !this.isPathExcluded(file.path))
       .sort((a, b) => a.path.localeCompare(b.path));
   }
 
@@ -1096,7 +1490,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       .getAllLoadedFiles()
       .filter(
         (entry): entry is TFolder =>
-          entry instanceof TFolder && entry.path.trim().length > 0,
+          entry instanceof TFolder &&
+          entry.path.trim().length > 0 &&
+          !this.isPathExcluded(entry.path),
       );
 
     return folders.sort((a, b) => a.path.localeCompare(b.path));
@@ -1107,9 +1503,15 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     includeSubfolders: boolean,
     out: Set<string>,
   ): void {
+    if (this.isPathExcluded(folder.path)) {
+      return;
+    }
+
     for (const child of folder.children) {
       if (child instanceof TFile && child.extension === "md") {
-        out.add(child.path);
+        if (!this.isPathExcluded(child.path)) {
+          out.add(child.path);
+        }
         continue;
       }
 
@@ -1123,6 +1525,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     const selectedPaths = new Set<string>();
 
     for (const path of this.settings.targetFilePaths) {
+      if (this.isPathExcluded(path)) {
+        continue;
+      }
+
       const entry = this.app.vault.getAbstractFileByPath(path);
       if (entry instanceof TFile && entry.extension === "md") {
         selectedPaths.add(entry.path);
@@ -1130,6 +1536,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
 
     for (const folderPath of this.settings.targetFolderPaths) {
+      if (this.isPathExcluded(folderPath)) {
+        continue;
+      }
+
       const entry = this.app.vault.getAbstractFileByPath(folderPath);
       if (entry instanceof TFolder) {
         this.collectFilesFromFolder(
@@ -1162,19 +1572,25 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       this.settings.targetFilePaths,
       this.settings.targetFolderPaths,
       this.settings.includeSubfoldersInFolderSelection,
+      this.settings.selectionPathWidthPercent,
       async (payload) => {
         this.settings.targetFilePaths = payload.selectedFilePaths;
         this.settings.targetFolderPaths = payload.selectedFolderPaths;
         this.settings.includeSubfoldersInFolderSelection = payload.includeSubfolders;
+        this.settings.selectionPathWidthPercent = payload.pathWidthPercent;
         await this.saveSettings();
 
-        const filesExpanded = this.getSelectedFiles().length;
+        const expandedCount = this.getSelectedFiles().length;
         this.notice(
-          `Selection saved. Files: ${payload.selectedFilePaths.length}, folders: ${payload.selectedFolderPaths.length}, expanded markdown files: ${filesExpanded}`,
+          `Selection saved. Files: ${payload.selectedFilePaths.length}, folders: ${payload.selectedFolderPaths.length}, expanded markdown files: ${expandedCount}`,
           5000,
         );
       },
     ).open();
+  }
+
+  private async askBackupDecision(): Promise<BackupDecision> {
+    return BackupConfirmModal.ask(this.app, this.settings.backupBeforeApply);
   }
 
   private async backupSelectedNotesNow(): Promise<void> {
@@ -1203,105 +1619,176 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     if (this.settings.provider === "ollama") {
       await this.refreshOllamaDetection({ notify: false, autoApply: true });
+
+      const selectedModel = this.settings.ollamaModel.trim();
+      if (!selectedModel) {
+        this.notice("Ollama model is empty. Refresh model detection and select one.");
+        return;
+      }
+
+      if (!isOllamaModelAnalyzable(selectedModel)) {
+        this.notice(
+          `Selected Ollama model is marked as (불가): ${selectedModel}. Choose a chat/instruct model first.`,
+          6000,
+        );
+        return;
+      }
     }
+
+    const decision = await this.askBackupDecision();
+    if (!decision.proceed) {
+      this.notice("Analysis cancelled.");
+      return;
+    }
+
+    if (decision.rememberAsDefault) {
+      this.settings.backupBeforeApply = decision.backupBeforeRun;
+      await this.saveSettings();
+    }
+
+    let backupFolder: string | null = null;
+    if (decision.backupBeforeRun) {
+      this.setStatus("creating backup...");
+      backupFolder = await this.createBackupForFiles(selectedFiles);
+      if (backupFolder) {
+        this.notice(`Backup completed before analysis: ${backupFolder}`, 5000);
+      }
+    }
+
+    const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
+    progressModal.open();
 
     const selectedPathSet = new Set(selectedFiles.map((file) => file.path));
     const suggestions: NoteSuggestion[] = [];
+    const errors: ProgressErrorItem[] = [];
+    const events: ProgressEventItem[] = [];
     const runStartedAt = Date.now();
     let usedFallbackCount = 0;
-
-    this.notice(`Analyzing ${selectedFiles.length} note(s)...`);
+    let cancelled = false;
 
     for (let index = 0; index < selectedFiles.length; index += 1) {
+      if (progressModal.isCancelled()) {
+        cancelled = true;
+        break;
+      }
+
       const file = selectedFiles[index];
-      this.progressNotice("analyzing", index + 1, selectedFiles.length);
-
-      const request = {
-        sourcePath: file.path,
-        sourceText: await this.app.vault.cachedRead(file),
-        candidateLinkPaths: selectedFiles
-          .filter((candidate) => candidate.path !== file.path)
-          .map((candidate) => candidate.path),
-        maxTags: this.settings.maxTags,
-        maxLinked: this.settings.maxLinked,
-        analyzeTags: this.settings.analyzeTags,
-        analyzeTopic: this.settings.analyzeTopic,
-        analyzeLinked: this.settings.analyzeLinked,
-        analyzeIndex: this.settings.analyzeIndex,
-        includeReasons: this.settings.includeReasons,
-      };
-
-      const outcome = await analyzeWithFallback(this.settings, request);
-      if (outcome.meta.usedFallback) {
-        usedFallbackCount += 1;
-      }
-
-      const currentFrontmatter =
-        (this.app.metadataCache.getFileCache(file)?.frontmatter as
-          | Record<string, unknown>
-          | undefined) ?? {};
-
-      const existingBase = normalizeManagedFrontmatter(
-        extractManagedFrontmatter(currentFrontmatter),
-      );
-      const existingValidated: ManagedFrontmatter = {
-        tags: existingBase.tags,
-        topic: existingBase.topic,
-        linked: normalizeLinked(this.app, file.path, existingBase.linked),
-        index: existingBase.index,
-      };
-
-      const proposed: ManagedFrontmatter = {
-        tags: existingValidated.tags,
-        topic: existingValidated.topic,
-        linked: existingValidated.linked,
-        index: existingValidated.index,
-      };
-
-      if (this.settings.analyzeTags) {
-        const proposedTags = normalizeTags(
-          (outcome.proposal.tags ?? []).slice(0, this.settings.maxTags),
-        );
-        proposed.tags = mergeUniqueStrings(existingValidated.tags, proposedTags);
-      }
-
-      if (this.settings.analyzeTopic) {
-        const maybeTopic = outcome.proposal.topic?.trim();
-        if (maybeTopic) {
-          proposed.topic = maybeTopic;
-        }
-      }
-
-      if (this.settings.analyzeLinked) {
-        const proposedLinked = normalizeLinked(
-          this.app,
-          file.path,
-          (outcome.proposal.linked ?? []).slice(0, this.settings.maxLinked),
-          selectedPathSet,
-        );
-        proposed.linked = mergeUniqueStrings(existingValidated.linked, proposedLinked);
-      }
-
-      if (this.settings.analyzeIndex) {
-        const maybeIndex = outcome.proposal.index?.trim();
-        if (maybeIndex) {
-          proposed.index = maybeIndex;
-        }
-      }
-
-      const normalizedProposed = normalizeManagedFrontmatter(proposed);
-      if (!managedFrontmatterChanged(existingValidated, normalizedProposed)) {
-        continue;
-      }
-
-      suggestions.push({
-        file,
-        existing: existingValidated,
-        proposed: normalizedProposed,
-        reasons: outcome.proposal.reasons ?? {},
-        analysis: outcome.meta,
+      progressModal.update({
+        stage: "Analyzing",
+        current: index + 1,
+        total: selectedFiles.length,
+        startedAt: runStartedAt,
+        currentFile: file.path,
+        errors,
+        events,
       });
+      this.setStatus(`analyzing ${index + 1}/${selectedFiles.length}`);
+
+      try {
+        const request = {
+          sourcePath: file.path,
+          sourceText: await this.app.vault.cachedRead(file),
+          candidateLinkPaths: selectedFiles
+            .filter((candidate) => candidate.path !== file.path)
+            .map((candidate) => candidate.path),
+          maxTags: this.settings.maxTags,
+          maxLinked: this.settings.maxLinked,
+          analyzeTags: this.settings.analyzeTags,
+          analyzeTopic: this.settings.analyzeTopic,
+          analyzeLinked: this.settings.analyzeLinked,
+          analyzeIndex: this.settings.analyzeIndex,
+          includeReasons: this.settings.includeReasons,
+        };
+
+        const outcome = await analyzeWithFallback(this.settings, request);
+        if (outcome.meta.usedFallback) {
+          usedFallbackCount += 1;
+        }
+
+        const currentFrontmatter =
+          (this.app.metadataCache.getFileCache(file)?.frontmatter as
+            | Record<string, unknown>
+            | undefined) ?? {};
+
+        const existingBase = normalizeManagedFrontmatter(
+          extractManagedFrontmatter(currentFrontmatter),
+        );
+        const existingValidated: ManagedFrontmatter = {
+          tags: existingBase.tags,
+          topic: existingBase.topic,
+          linked: normalizeLinked(this.app, file.path, existingBase.linked),
+          index: existingBase.index,
+        };
+
+        const proposed: ManagedFrontmatter = {
+          tags: existingValidated.tags,
+          topic: existingValidated.topic,
+          linked: existingValidated.linked,
+          index: existingValidated.index,
+        };
+
+        if (this.settings.analyzeTags) {
+          const proposedTags = normalizeTags(
+            (outcome.proposal.tags ?? []).slice(0, this.settings.maxTags),
+          );
+          proposed.tags = mergeUniqueStrings(existingValidated.tags, proposedTags);
+        }
+
+        if (this.settings.analyzeTopic) {
+          const maybeTopic = outcome.proposal.topic?.trim();
+          if (maybeTopic) {
+            proposed.topic = maybeTopic;
+          }
+        }
+
+        if (this.settings.analyzeLinked) {
+          const proposedLinked = normalizeLinked(
+            this.app,
+            file.path,
+            (outcome.proposal.linked ?? []).slice(0, this.settings.maxLinked),
+            selectedPathSet,
+          );
+          proposed.linked = mergeUniqueStrings(existingValidated.linked, proposedLinked);
+        }
+
+        if (this.settings.analyzeIndex) {
+          const maybeIndex = outcome.proposal.index?.trim();
+          if (maybeIndex) {
+            proposed.index = maybeIndex;
+          }
+        }
+
+        const normalizedProposed = normalizeManagedFrontmatter(proposed);
+        if (!managedFrontmatterChanged(existingValidated, normalizedProposed)) {
+          continue;
+        }
+
+        suggestions.push({
+          file,
+          existing: existingValidated,
+          proposed: normalizedProposed,
+          reasons: outcome.proposal.reasons ?? {},
+          analysis: outcome.meta,
+        });
+
+        events.push({
+          filePath: file.path,
+          status: "ok",
+          message: normalizedProposed.tags.length > 0 ? "suggested" : "no-change",
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown analysis error";
+        errors.push({ filePath: file.path, message });
+        events.push({ filePath: file.path, status: "error", message });
+      }
     }
+
+    progressModal.setFinished(
+      cancelled
+        ? "Analysis stopped by user."
+        : `Analysis complete: ${suggestions.length} changed of ${selectedFiles.length}`,
+    );
+    progressModal.close();
 
     const summary: AnalysisRunSummary = {
       provider: this.settings.provider,
@@ -1310,16 +1797,25 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       changedFiles: suggestions.length,
       usedFallbackCount,
       elapsedMs: Date.now() - runStartedAt,
+      cancelled,
+      errorCount: errors.length,
     };
 
     this.setStatus(`analysis done (${summary.changedFiles}/${summary.totalFiles} changed)`);
 
     if (suggestions.length === 0) {
       this.notice(
-        `No metadata changes found. Provider=${summary.provider}, Model=${summary.model}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
-        4500,
+        `No metadata changes. Provider=${summary.provider}, Model=${summary.model}, Errors=${summary.errorCount}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
+        5000,
       );
       return;
+    }
+
+    if (cancelled) {
+      this.notice(
+        `Analysis stopped. Showing partial suggestions (${suggestions.length} file(s)).`,
+        5000,
+      );
     }
 
     if (this.settings.suggestionMode) {
@@ -1329,8 +1825,14 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         suggestions,
         this.settings.includeReasons,
         async () => {
-          await this.applySuggestions(suggestions, selectedFiles);
-          if (this.settings.generateMoc) {
+          const applyResult = await this.applySuggestions(
+            suggestions,
+            selectedFiles,
+            backupFolder,
+            decision.backupBeforeRun,
+            decision.backupBeforeRun,
+          );
+          if (!applyResult.cancelled && this.settings.generateMoc) {
             await this.generateMocFromSelection(suggestions);
           }
         },
@@ -1338,8 +1840,14 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       return;
     }
 
-    await this.applySuggestions(suggestions, selectedFiles);
-    if (this.settings.generateMoc) {
+    const applyResult = await this.applySuggestions(
+      suggestions,
+      selectedFiles,
+      backupFolder,
+      decision.backupBeforeRun,
+      decision.backupBeforeRun,
+    );
+    if (!applyResult.cancelled && this.settings.generateMoc) {
       await this.generateMocFromSelection(suggestions);
     }
   }
@@ -1347,44 +1855,94 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   private async applySuggestions(
     suggestions: NoteSuggestion[],
     selectedFilesForBackup: TFile[],
-  ): Promise<void> {
-    let backupFolder: string | null = null;
-    if (this.settings.backupBeforeApply) {
+    existingBackupFolder: string | null,
+    alreadyBackedUp: boolean,
+    backupEnabledForRun: boolean,
+  ): Promise<{ cancelled: boolean; errors: ProgressErrorItem[] }> {
+    let backupFolder = existingBackupFolder;
+
+    if (!alreadyBackedUp && backupEnabledForRun) {
       backupFolder = await this.createBackupForFiles(selectedFilesForBackup);
     }
 
+    const progressModal = new RunProgressModal(this.app, "Applying suggestions");
+    progressModal.open();
+
+    const errors: ProgressErrorItem[] = [];
+    const events: ProgressEventItem[] = [];
+    const startedAt = Date.now();
+    let cancelled = false;
+
     for (let index = 0; index < suggestions.length; index += 1) {
+      if (progressModal.isCancelled()) {
+        cancelled = true;
+        break;
+      }
+
       const suggestion = suggestions[index];
-      this.progressNotice("applying", index + 1, suggestions.length);
+      progressModal.update({
+        stage: "Applying",
+        current: index + 1,
+        total: suggestions.length,
+        startedAt,
+        currentFile: suggestion.file.path,
+        errors,
+        events,
+      });
+      this.setStatus(`applying ${index + 1}/${suggestions.length}`);
 
-      await this.app.fileManager.processFrontMatter(
-        suggestion.file,
-        (frontmatter) => {
-          const current = frontmatter as Record<string, unknown>;
-          const next = buildNextFrontmatter(current, suggestion.proposed, {
-            cleanUnknown: this.settings.cleanUnknownFrontmatter,
-            sortArrays: this.settings.sortArrays,
-          });
+      try {
+        await this.app.fileManager.processFrontMatter(
+          suggestion.file,
+          (frontmatter) => {
+            const current = frontmatter as Record<string, unknown>;
+            const next = buildNextFrontmatter(current, suggestion.proposed, {
+              cleanUnknown: this.settings.cleanUnknownFrontmatter,
+              sortArrays: this.settings.sortArrays,
+            });
 
-          for (const key of Object.keys(current)) {
-            delete current[key];
-          }
-          for (const [key, value] of Object.entries(next)) {
-            current[key] = value;
-          }
-        },
-      );
+            for (const key of Object.keys(current)) {
+              delete current[key];
+            }
+            for (const [key, value] of Object.entries(next)) {
+              current[key] = value;
+            }
+          },
+        );
+        events.push({ filePath: suggestion.file.path, status: "ok", message: "applied" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown apply error";
+        errors.push({ filePath: suggestion.file.path, message });
+        events.push({ filePath: suggestion.file.path, status: "error", message });
+      }
     }
 
-    this.setStatus(`apply done (${suggestions.length} note(s))`);
+    progressModal.setFinished(
+      cancelled
+        ? "Apply stopped by user."
+        : `Apply complete: ${suggestions.length - errors.length} succeeded`,
+    );
+    progressModal.close();
+
+    this.setStatus(
+      cancelled
+        ? `apply stopped (${suggestions.length - errors.length}/${suggestions.length})`
+        : `apply done (${suggestions.length - errors.length}/${suggestions.length})`,
+    );
+
     if (backupFolder) {
       this.notice(
-        `Applied changes to ${suggestions.length} note(s). Backup: ${backupFolder}`,
-        5000,
+        `Apply finished. Backup: ${backupFolder}. Errors: ${errors.length}${cancelled ? " (stopped early)" : ""}`,
+        6000,
       );
     } else {
-      this.notice(`Applied changes to ${suggestions.length} note(s).`);
+      this.notice(
+        `Apply finished. Errors: ${errors.length}${cancelled ? " (stopped early)" : ""}`,
+        5000,
+      );
     }
+
+    return { cancelled, errors };
   }
 
   private async createBackupForFiles(files: TFile[]): Promise<string | null> {
@@ -1424,7 +1982,34 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     const manifestPath = normalizePath(`${backupFolder}/manifest.json`);
     await this.app.vault.adapter.write(manifestPath, JSON.stringify(manifest, null, 2));
 
+    await this.pruneOldBackups();
+
     return backupFolder;
+  }
+
+  private async pruneOldBackups(): Promise<void> {
+    const keepCount = this.settings.backupRetentionCount;
+    if (!Number.isFinite(keepCount) || keepCount < 1) {
+      return;
+    }
+
+    const backupRoot = normalizePath(this.settings.backupRootPath);
+    const exists = await this.app.vault.adapter.exists(backupRoot);
+    if (!exists) {
+      return;
+    }
+
+    const list = await this.app.vault.adapter.list(backupRoot);
+    if (list.folders.length <= keepCount) {
+      return;
+    }
+
+    const sorted = [...list.folders].sort((a, b) => b.localeCompare(a));
+    const toDelete = sorted.slice(keepCount);
+
+    for (const folder of toDelete) {
+      await this.app.vault.adapter.rmdir(folder, true);
+    }
   }
 
   private async getLatestBackupFolder(): Promise<string | null> {

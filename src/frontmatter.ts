@@ -14,6 +14,12 @@ export const PROTECTED_FRONTMATTER_KEYS = new Set<string>([
   "modified",
 ]);
 
+const LEGACY_REMOVABLE_KEY_PREFIXES = [
+  "ai_",
+  "autolinker_",
+  "auto_linker_",
+];
+
 function toStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
@@ -166,14 +172,19 @@ export function buildNextFrontmatter(
     const normalizedKey = key.trim().toLowerCase();
     const isManaged = (MANAGED_KEYS as readonly string[]).includes(key);
     const isProtected = PROTECTED_FRONTMATTER_KEYS.has(normalizedKey);
+    const isLegacyRemovable = LEGACY_REMOVABLE_KEY_PREFIXES.some((prefix) =>
+      normalizedKey.startsWith(prefix),
+    );
 
     if (isManaged) {
       continue;
     }
 
-    if (!options.cleanUnknown || isProtected) {
-      next[key] = value;
+    if (options.cleanUnknown && isLegacyRemovable && !isProtected) {
+      continue;
     }
+
+    next[key] = value;
   }
 
   const tags = options.sortArrays

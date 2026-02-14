@@ -7,6 +7,7 @@ import type {
   KnowledgeWeaverSettings,
   MetadataProposal,
   OllamaDetectionResult,
+  OllamaModelOption,
   ProviderId,
 } from "./types";
 
@@ -446,6 +447,78 @@ function scoreOllamaModel(modelName: string): number {
   return score;
 }
 
+const UNAVAILABLE_MODEL_REGEX =
+  /(embed|embedding|bge|e5-|e5:|rerank|whisper|tts|speech|transcribe|stt)/i;
+
+export function isOllamaModelAnalyzable(modelName: string): boolean {
+  return !UNAVAILABLE_MODEL_REGEX.test(modelName);
+}
+
+function describeOllamaModel(modelName: string): string {
+  const lower = modelName.toLowerCase();
+
+  if (!isOllamaModelAnalyzable(modelName)) {
+    return "Looks like an embedding/speech/rerank model and is not suitable for metadata text analysis.";
+  }
+  if (/instruct|chat|it\b/.test(lower)) {
+    return "Chat/instruct style model suitable for metadata suggestion tasks.";
+  }
+  if (/:8b|:7b|:9b/.test(lower)) {
+    return "General-purpose local model with balanced quality and speed.";
+  }
+  if (/:4b|:3b/.test(lower)) {
+    return "Lightweight model with fast runtime; quality may vary by note complexity.";
+  }
+
+  return "General text model candidate.";
+}
+
+export function buildOllamaModelOptions(
+  models: string[],
+  recommended?: string,
+): OllamaModelOption[] {
+  const options = models.map((model): OllamaModelOption => {
+    if (!isOllamaModelAnalyzable(model)) {
+      return {
+        model,
+        status: "unavailable",
+        reason: describeOllamaModel(model),
+      };
+    }
+
+    if (recommended && model === recommended) {
+      return {
+        model,
+        status: "recommended",
+        reason: describeOllamaModel(model),
+      };
+    }
+
+    return {
+      model,
+      status: "available",
+      reason: describeOllamaModel(model),
+    };
+  });
+
+  const weight = (status: OllamaModelOption["status"]): number => {
+    switch (status) {
+      case "recommended":
+        return 0;
+      case "available":
+        return 1;
+      case "unavailable":
+        return 2;
+      default:
+        return 3;
+    }
+  };
+
+  return options.sort(
+    (a, b) => weight(a.status) - weight(b.status) || a.model.localeCompare(b.model),
+  );
+}
+
 function recommendOllamaModel(models: string[]): { recommended?: string; reason: string } {
   if (models.length === 0) {
     return {
@@ -454,7 +527,16 @@ function recommendOllamaModel(models: string[]): { recommended?: string; reason:
     };
   }
 
-  const scored = models
+  const analyzableModels = models.filter((model) => isOllamaModelAnalyzable(model));
+
+  if (analyzableModels.length === 0) {
+    return {
+      reason:
+        "No analyzable Ollama model detected. Install a chat/instruct LLM (not embedding-only).",
+    };
+  }
+
+  const scored = analyzableModels
     .map((name) => ({ name, score: scoreOllamaModel(name) }))
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 

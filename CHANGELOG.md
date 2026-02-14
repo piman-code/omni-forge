@@ -16,7 +16,7 @@ All notable changes to this project are documented in this file.
   - `topic`
   - `linked`
   - `index`
-- Optional clean mode to remove unknown frontmatter keys.
+- Optional clean mode to remove only legacy AI-prefixed keys (for example `ai_*`) while preserving existing custom fields.
 - Local-first provider support:
   - Ollama
   - LM Studio

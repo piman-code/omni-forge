@@ -8,7 +8,8 @@
     "build": "node esbuild.config.mjs production",
     "check": "tsc --noEmit",
     "security:check": "bash scripts/security-check.sh",
-    "release:check": "npm run check && npm run build && npm run security:check"
+    "release:integrity": "bash scripts/release-integrity-check.sh",
+    "release:check": "npm run check && npm run build && npm run security:check && npm run release:integrity"
   },
   "keywords": [
     "obsidian",

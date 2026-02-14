@@ -40,6 +40,11 @@ var PROTECTED_FRONTMATTER_KEYS = /* @__PURE__ */ new Set([
   "updated",
   "modified"
 ]);
+var LEGACY_REMOVABLE_KEY_PREFIXES = [
+  "ai_",
+  "autolinker_",
+  "auto_linker_"
+];
 function toStringArray(value) {
   if (Array.isArray(value)) {
     return value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean);
@@ -132,12 +137,16 @@ function buildNextFrontmatter(current, proposed, options) {
     const normalizedKey = key.trim().toLowerCase();
     const isManaged = MANAGED_KEYS.includes(key);
     const isProtected = PROTECTED_FRONTMATTER_KEYS.has(normalizedKey);
+    const isLegacyRemovable = LEGACY_REMOVABLE_KEY_PREFIXES.some(
+      (prefix) => normalizedKey.startsWith(prefix)
+    );
     if (isManaged) {
       continue;
     }
-    if (!options.cleanUnknown || isProtected) {
-      next[key] = value;
+    if (options.cleanUnknown && isLegacyRemovable && !isProtected) {
+      continue;
     }
+    next[key] = value;
   }
   const tags = options.sortArrays ? [...proposed.tags].sort((a, b) => a.localeCompare(b)) : [...proposed.tags];
   const linked = options.sortArrays ? [...proposed.linked].sort((a, b) => a.localeCompare(b)) : [...proposed.linked];
@@ -522,6 +531,64 @@ function scoreOllamaModel(modelName) {
   }
   return score;
 }
+var UNAVAILABLE_MODEL_REGEX = /(embed|embedding|bge|e5-|e5:|rerank|whisper|tts|speech|transcribe|stt)/i;
+function isOllamaModelAnalyzable(modelName) {
+  return !UNAVAILABLE_MODEL_REGEX.test(modelName);
+}
+function describeOllamaModel(modelName) {
+  const lower = modelName.toLowerCase();
+  if (!isOllamaModelAnalyzable(modelName)) {
+    return "Looks like an embedding/speech/rerank model and is not suitable for metadata text analysis.";
+  }
+  if (/instruct|chat|it\b/.test(lower)) {
+    return "Chat/instruct style model suitable for metadata suggestion tasks.";
+  }
+  if (/:8b|:7b|:9b/.test(lower)) {
+    return "General-purpose local model with balanced quality and speed.";
+  }
+  if (/:4b|:3b/.test(lower)) {
+    return "Lightweight model with fast runtime; quality may vary by note complexity.";
+  }
+  return "General text model candidate.";
+}
+function buildOllamaModelOptions(models, recommended) {
+  const options = models.map((model) => {
+    if (!isOllamaModelAnalyzable(model)) {
+      return {
+        model,
+        status: "unavailable",
+        reason: describeOllamaModel(model)
+      };
+    }
+    if (recommended && model === recommended) {
+      return {
+        model,
+        status: "recommended",
+        reason: describeOllamaModel(model)
+      };
+    }
+    return {
+      model,
+      status: "available",
+      reason: describeOllamaModel(model)
+    };
+  });
+  const weight = (status) => {
+    switch (status) {
+      case "recommended":
+        return 0;
+      case "available":
+        return 1;
+      case "unavailable":
+        return 2;
+      default:
+        return 3;
+    }
+  };
+  return options.sort(
+    (a, b) => weight(a.status) - weight(b.status) || a.model.localeCompare(b.model)
+  );
+}
 function recommendOllamaModel(models) {
   var _a;
   if (models.length === 0) {
@@ -529,7 +596,13 @@ function recommendOllamaModel(models) {
       reason: "No local Ollama models were detected. Install at least one chat/instruct model first."
     };
   }
-  const scored = models.map((name) => ({ name, score: scoreOllamaModel(name) })).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  const analyzableModels = models.filter((model) => isOllamaModelAnalyzable(model));
+  if (analyzableModels.length === 0) {
+    return {
+      reason: "No analyzable Ollama model detected. Install a chat/instruct LLM (not embedding-only)."
+    };
+  }
+  const scored = analyzableModels.map((name) => ({ name, score: scoreOllamaModel(name) })).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   const winner = (_a = scored[0]) == null ? void 0 : _a.name;
   if (!winner) {
     return { reason: "Could not select a recommended Ollama model." };
@@ -652,8 +725,11 @@ var DEFAULT_SETTINGS = {
   targetFilePaths: [],
   targetFolderPaths: [],
   includeSubfoldersInFolderSelection: true,
+  selectionPathWidthPercent: 72,
   backupBeforeApply: true,
   backupRootPath: "Auto-Linker Backups",
+  backupRetentionCount: 10,
+  excludedFolderPatterns: ".obsidian,Auto-Linker Backups",
   showProgressNotices: true,
   generateMoc: true,
   mocPath: "MOC/Selected Knowledge MOC.md"
@@ -677,10 +753,22 @@ function readManagedValueByKey(managed, key) {
   return managed[key];
 }
 function formatDurationMs(ms) {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return "0ms";
+  }
   if (ms < 1e3) {
     return `${ms}ms`;
   }
   return `${(ms / 1e3).toFixed(1)}s`;
+}
+function formatBackupStamp(date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const sec = String(date.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}_${hh}-${min}-${sec}`;
 }
 function mergeUniqueStrings(base, additions) {
   const out = [...base];
@@ -693,32 +781,32 @@ function mergeUniqueStrings(base, additions) {
   }
   return out;
 }
-function formatBackupStamp(date) {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-  const hh = String(date.getHours()).padStart(2, "0");
-  const min = String(date.getMinutes()).padStart(2, "0");
-  const sec = String(date.getSeconds()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}_${hh}-${min}-${sec}`;
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return parsed;
 }
 var SelectionModal = class extends import_obsidian3.Modal {
-  constructor(app, allFiles, allFolders, initialFiles, initialFolders, includeSubfolders, onSubmit) {
+  constructor(app, allFiles, allFolders, initialFiles, initialFolders, includeSubfolders, pathWidthPercent, onSubmit) {
     super(app);
     this.searchValue = "";
+    this.activeTab = "files";
     this.allFiles = allFiles;
     this.allFolders = allFolders;
     this.onSubmit = onSubmit;
     this.selectedFilePaths = new Set(initialFiles);
     this.selectedFolderPaths = new Set(initialFolders);
     this.includeSubfolders = includeSubfolders;
+    this.pathWidthPercent = pathWidthPercent;
   }
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: "Select target notes and folders" });
     const info = contentEl.createEl("p", {
-      text: "You can combine file and folder selection. Folder selection can include subfolders."
+      text: "Use tabs to switch between Files and Folders. Long paths are shown compactly with full path on hover."
     });
     info.style.marginTop = "0";
     const searchWrapper = contentEl.createDiv();
@@ -730,7 +818,7 @@ var SelectionModal = class extends import_obsidian3.Modal {
     searchInput.style.width = "100%";
     searchInput.oninput = () => {
       this.searchValue = searchInput.value.trim().toLowerCase();
-      this.renderLists();
+      this.renderList();
     };
     const subfolderRow = contentEl.createDiv();
     subfolderRow.style.display = "flex";
@@ -744,68 +832,85 @@ var SelectionModal = class extends import_obsidian3.Modal {
       this.updateFooterCounter();
     };
     subfolderRow.createEl("span", { text: "Include subfolders when folder is selected" });
+    const widthRow = contentEl.createDiv();
+    widthRow.style.display = "flex";
+    widthRow.style.alignItems = "center";
+    widthRow.style.gap = "8px";
+    widthRow.style.marginTop = "6px";
+    widthRow.createEl("span", { text: "Path width" });
+    const widthInput = widthRow.createEl("input", {
+      type: "range",
+      attr: { min: "45", max: "100", step: "1" }
+    });
+    widthInput.value = String(this.pathWidthPercent);
+    const widthLabel = widthRow.createEl("span", {
+      text: `${this.pathWidthPercent}%`
+    });
+    widthInput.oninput = () => {
+      const next = Number.parseInt(widthInput.value, 10);
+      if (Number.isFinite(next) && next >= 45 && next <= 100) {
+        this.pathWidthPercent = next;
+        widthLabel.setText(`${next}%`);
+        this.renderList();
+      }
+    };
+    const tabRow = contentEl.createDiv();
+    tabRow.style.display = "flex";
+    tabRow.style.gap = "8px";
+    tabRow.style.marginTop = "10px";
+    const filesTab = tabRow.createEl("button", { text: "Files" });
+    const foldersTab = tabRow.createEl("button", { text: "Folders" });
+    const switchTab = (tab) => {
+      this.activeTab = tab;
+      filesTab.toggleClass("mod-cta", tab === "files");
+      foldersTab.toggleClass("mod-cta", tab === "folders");
+      this.renderList();
+    };
+    filesTab.onclick = () => switchTab("files");
+    foldersTab.onclick = () => switchTab("folders");
     const actionRow = contentEl.createDiv();
     actionRow.style.display = "flex";
     actionRow.style.gap = "8px";
     actionRow.style.marginTop = "10px";
-    const selectFilteredFilesButton = actionRow.createEl("button", {
-      text: "Select filtered files"
+    const selectFilteredButton = actionRow.createEl("button", {
+      text: "Select filtered"
     });
-    selectFilteredFilesButton.onclick = () => {
-      for (const file of this.filteredFiles()) {
-        this.selectedFilePaths.add(file.path);
+    selectFilteredButton.onclick = () => {
+      if (this.activeTab === "files") {
+        for (const file of this.filteredFiles()) {
+          this.selectedFilePaths.add(file.path);
+        }
+      } else {
+        for (const folder of this.filteredFolders()) {
+          this.selectedFolderPaths.add(folder.path);
+        }
       }
-      this.renderLists();
+      this.renderList();
     };
-    const clearFilteredFilesButton = actionRow.createEl("button", {
-      text: "Clear filtered files"
+    const clearFilteredButton = actionRow.createEl("button", {
+      text: "Clear filtered"
     });
-    clearFilteredFilesButton.onclick = () => {
-      for (const file of this.filteredFiles()) {
-        this.selectedFilePaths.delete(file.path);
+    clearFilteredButton.onclick = () => {
+      if (this.activeTab === "files") {
+        for (const file of this.filteredFiles()) {
+          this.selectedFilePaths.delete(file.path);
+        }
+      } else {
+        for (const folder of this.filteredFolders()) {
+          this.selectedFolderPaths.delete(folder.path);
+        }
       }
-      this.renderLists();
+      this.renderList();
     };
-    const selectFilteredFoldersButton = actionRow.createEl("button", {
-      text: "Select filtered folders"
-    });
-    selectFilteredFoldersButton.onclick = () => {
-      for (const folder of this.filteredFolders()) {
-        this.selectedFolderPaths.add(folder.path);
-      }
-      this.renderLists();
-    };
-    const clearFilteredFoldersButton = actionRow.createEl("button", {
-      text: "Clear filtered folders"
-    });
-    clearFilteredFoldersButton.onclick = () => {
-      for (const folder of this.filteredFolders()) {
-        this.selectedFolderPaths.delete(folder.path);
-      }
-      this.renderLists();
-    };
-    const grid = contentEl.createDiv();
-    grid.style.display = "grid";
-    grid.style.gridTemplateColumns = "1fr 1fr";
-    grid.style.gap = "12px";
-    grid.style.marginTop = "12px";
-    const fileSection = grid.createDiv();
-    fileSection.createEl("h3", { text: "Files" });
-    this.fileListContainer = fileSection.createDiv();
-    this.fileListContainer.style.maxHeight = "45vh";
-    this.fileListContainer.style.overflow = "auto";
-    this.fileListContainer.style.border = "1px solid var(--background-modifier-border)";
-    this.fileListContainer.style.borderRadius = "8px";
-    const folderSection = grid.createDiv();
-    folderSection.createEl("h3", { text: "Folders" });
-    this.folderListContainer = folderSection.createDiv();
-    this.folderListContainer.style.maxHeight = "45vh";
-    this.folderListContainer.style.overflow = "auto";
-    this.folderListContainer.style.border = "1px solid var(--background-modifier-border)";
-    this.folderListContainer.style.borderRadius = "8px";
+    this.listContainer = contentEl.createDiv();
+    this.listContainer.style.maxHeight = "48vh";
+    this.listContainer.style.overflow = "auto";
+    this.listContainer.style.border = "1px solid var(--background-modifier-border)";
+    this.listContainer.style.borderRadius = "8px";
+    this.listContainer.style.marginTop = "10px";
     this.footerCounterEl = contentEl.createEl("p");
     this.footerCounterEl.style.marginTop = "8px";
-    this.renderLists();
+    switchTab("files");
     const footer = contentEl.createDiv();
     footer.style.display = "flex";
     footer.style.gap = "8px";
@@ -825,7 +930,8 @@ var SelectionModal = class extends import_obsidian3.Modal {
         selectedFolderPaths: [...this.selectedFolderPaths].sort(
           (a, b) => a.localeCompare(b)
         ),
-        includeSubfolders: this.includeSubfolders
+        includeSubfolders: this.includeSubfolders,
+        pathWidthPercent: this.pathWidthPercent
       });
       this.close();
     };
@@ -846,53 +952,218 @@ var SelectionModal = class extends import_obsidian3.Modal {
       (folder) => folder.path.toLowerCase().includes(this.searchValue)
     );
   }
-  renderLists() {
-    this.fileListContainer.empty();
-    this.folderListContainer.empty();
-    for (const file of this.filteredFiles()) {
-      const row = this.fileListContainer.createDiv();
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.padding = "6px 8px";
-      row.style.borderBottom = "1px solid var(--background-modifier-border)";
-      const checkbox = row.createEl("input", { type: "checkbox" });
-      checkbox.checked = this.selectedFilePaths.has(file.path);
-      checkbox.onchange = () => {
-        if (checkbox.checked) {
-          this.selectedFilePaths.add(file.path);
-        } else {
-          this.selectedFilePaths.delete(file.path);
-        }
-        this.updateFooterCounter();
-      };
-      row.createEl("span", { text: file.path });
-    }
-    for (const folder of this.filteredFolders()) {
-      const row = this.folderListContainer.createDiv();
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.padding = "6px 8px";
-      row.style.borderBottom = "1px solid var(--background-modifier-border)";
-      const checkbox = row.createEl("input", { type: "checkbox" });
-      checkbox.checked = this.selectedFolderPaths.has(folder.path);
-      checkbox.onchange = () => {
-        if (checkbox.checked) {
-          this.selectedFolderPaths.add(folder.path);
-        } else {
-          this.selectedFolderPaths.delete(folder.path);
-        }
-        this.updateFooterCounter();
-      };
-      row.createEl("span", { text: folder.path });
+  renderList() {
+    this.listContainer.empty();
+    if (this.activeTab === "files") {
+      for (const file of this.filteredFiles()) {
+        const row = this.createRow(file.path, this.selectedFilePaths.has(file.path));
+        const checkbox = row.querySelector("input");
+        checkbox.onchange = () => {
+          if (checkbox.checked) {
+            this.selectedFilePaths.add(file.path);
+          } else {
+            this.selectedFilePaths.delete(file.path);
+          }
+          this.updateFooterCounter();
+        };
+      }
+    } else {
+      for (const folder of this.filteredFolders()) {
+        const row = this.createRow(folder.path, this.selectedFolderPaths.has(folder.path));
+        const checkbox = row.querySelector("input");
+        checkbox.onchange = () => {
+          if (checkbox.checked) {
+            this.selectedFolderPaths.add(folder.path);
+          } else {
+            this.selectedFolderPaths.delete(folder.path);
+          }
+          this.updateFooterCounter();
+        };
+      }
     }
     this.updateFooterCounter();
   }
+  createRow(path, checked) {
+    const row = this.listContainer.createDiv();
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "8px";
+    row.style.padding = "6px 8px";
+    row.style.borderBottom = "1px solid var(--background-modifier-border)";
+    const checkbox = row.createEl("input", { type: "checkbox" });
+    checkbox.checked = checked;
+    const pathEl = row.createEl("span", { text: path });
+    pathEl.style.flex = "1";
+    pathEl.style.whiteSpace = "nowrap";
+    pathEl.style.overflow = "hidden";
+    pathEl.style.textOverflow = "ellipsis";
+    pathEl.style.maxWidth = `${this.pathWidthPercent}%`;
+    pathEl.title = path;
+    return row;
+  }
   updateFooterCounter() {
     this.footerCounterEl.setText(
-      `Selected files: ${this.selectedFilePaths.size}, selected folders: ${this.selectedFolderPaths.size}, include subfolders: ${this.includeSubfolders ? "yes" : "no"}`
+      `Selected files: ${this.selectedFilePaths.size}, selected folders: ${this.selectedFolderPaths.size}, include subfolders: ${this.includeSubfolders ? "yes" : "no"}, path width: ${this.pathWidthPercent}%`
     );
+  }
+};
+var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian3.Modal {
+  constructor(app, defaultBackup, onResolve) {
+    super(app);
+    this.rememberAsDefault = false;
+    this.defaultBackup = defaultBackup;
+    this.onResolve = onResolve;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "\uBC31\uC5C5\uC744 \uC9C4\uD589\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?" });
+    contentEl.createEl("p", {
+      text: "\uBD84\uC11D \uC804\uC5D0 \uC120\uD0DD\uB41C \uBB38\uC11C\uB97C \uBC31\uC5C5\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4. \uBCF5\uAD6C\uAC00 \uD544\uC694\uD560 \uB54C \uC548\uC804\uD569\uB2C8\uB2E4."
+    });
+    const defaultText = this.defaultBackup ? "\uD604\uC7AC \uAE30\uBCF8\uAC12: \uBC31\uC5C5 \uD6C4 \uC9C4\uD589" : "\uD604\uC7AC \uAE30\uBCF8\uAC12: \uBC31\uC5C5 \uC5C6\uC774 \uC9C4\uD589";
+    contentEl.createEl("p", { text: defaultText });
+    const rememberRow = contentEl.createDiv();
+    rememberRow.style.display = "flex";
+    rememberRow.style.alignItems = "center";
+    rememberRow.style.gap = "8px";
+    const rememberCheckbox = rememberRow.createEl("input", { type: "checkbox" });
+    rememberCheckbox.onchange = () => {
+      this.rememberAsDefault = rememberCheckbox.checked;
+    };
+    rememberRow.createEl("span", { text: "\uC774 \uC120\uD0DD\uC744 \uAE30\uBCF8\uAC12\uC73C\uB85C \uC800\uC7A5" });
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+    const cancelButton = footer.createEl("button", { text: "\uCDE8\uC18C" });
+    cancelButton.onclick = () => {
+      this.resolve({
+        proceed: false,
+        backupBeforeRun: this.defaultBackup,
+        rememberAsDefault: false
+      });
+    };
+    const noBackupButton = footer.createEl("button", { text: "\uBC31\uC5C5 \uC5C6\uC774 \uC9C4\uD589" });
+    noBackupButton.onclick = () => {
+      this.resolve({
+        proceed: true,
+        backupBeforeRun: false,
+        rememberAsDefault: this.rememberAsDefault
+      });
+    };
+    const backupButton = footer.createEl("button", {
+      text: "\uBC31\uC5C5 \uD6C4 \uC9C4\uD589(\uAD8C\uC7A5)",
+      cls: "mod-cta"
+    });
+    backupButton.onclick = () => {
+      this.resolve({
+        proceed: true,
+        backupBeforeRun: true,
+        rememberAsDefault: this.rememberAsDefault
+      });
+    };
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+  resolve(decision) {
+    this.onResolve(decision);
+    this.close();
+  }
+  static ask(app, defaultBackup) {
+    return new Promise((resolve) => {
+      new _BackupConfirmModal(app, defaultBackup, resolve).open();
+    });
+  }
+};
+var RunProgressModal = class extends import_obsidian3.Modal {
+  constructor(app, titleText) {
+    super(app);
+    this.showOnlyErrors = true;
+    this.cancelled = false;
+    this.titleText = titleText;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: this.titleText });
+    this.statusEl = contentEl.createEl("p", { text: "Preparing..." });
+    this.currentFileEl = contentEl.createEl("p", { text: "Current file: -" });
+    this.etaEl = contentEl.createEl("p", { text: "ETA: -" });
+    const filterRow = contentEl.createDiv();
+    filterRow.style.display = "flex";
+    filterRow.style.alignItems = "center";
+    filterRow.style.gap = "8px";
+    const onlyErrorsCheckbox = filterRow.createEl("input", { type: "checkbox" });
+    onlyErrorsCheckbox.checked = this.showOnlyErrors;
+    onlyErrorsCheckbox.onchange = () => {
+      this.showOnlyErrors = onlyErrorsCheckbox.checked;
+    };
+    filterRow.createEl("span", { text: "Show only errors" });
+    this.errorsSummaryEl = contentEl.createEl("p", { text: "Errors: 0" });
+    this.errorsListEl = contentEl.createDiv();
+    this.errorsListEl.style.maxHeight = "22vh";
+    this.errorsListEl.style.overflow = "auto";
+    this.errorsListEl.style.border = "1px solid var(--background-modifier-border)";
+    this.errorsListEl.style.borderRadius = "8px";
+    this.errorsListEl.style.padding = "8px";
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.marginTop = "12px";
+    const cancelButton = footer.createEl("button", {
+      text: "\uC911\uC9C0",
+      cls: "mod-warning"
+    });
+    cancelButton.onclick = () => {
+      this.cancelled = true;
+      this.statusEl.setText(`${this.titleText}: stopping after current file...`);
+    };
+  }
+  isCancelled() {
+    return this.cancelled;
+  }
+  update(params) {
+    var _a;
+    const elapsedMs = Date.now() - params.startedAt;
+    const avgMs = params.current > 0 ? elapsedMs / params.current : 0;
+    const remaining = Math.max(0, params.total - params.current);
+    const etaMs = remaining * avgMs;
+    this.statusEl.setText(`${params.stage}: ${params.current}/${params.total}`);
+    this.currentFileEl.setText(`Current file: ${(_a = params.currentFile) != null ? _a : "-"}`);
+    this.etaEl.setText(
+      `Elapsed: ${formatDurationMs(elapsedMs)} | ETA: ${params.current > 0 ? formatDurationMs(Math.round(etaMs)) : "-"}`
+    );
+    this.errorsSummaryEl.setText(`Errors: ${params.errors.length}`);
+    this.renderEvents(params.errors, params.events);
+  }
+  setFinished(message) {
+    this.statusEl.setText(message);
+  }
+  renderEvents(errors, events) {
+    var _a, _b, _c;
+    this.errorsListEl.empty();
+    const showRows = this.showOnlyErrors ? events.filter((item) => item.status === "error") : events;
+    if (showRows.length === 0) {
+      this.errorsListEl.createEl("div", {
+        text: this.showOnlyErrors ? "No errors." : "No activity yet."
+      });
+      return;
+    }
+    for (const item of showRows.slice(-200)) {
+      const row = this.errorsListEl.createDiv();
+      row.style.marginBottom = "6px";
+      const label = item.status === "error" ? "ERROR" : "OK";
+      row.createEl("div", { text: `${label}: ${item.filePath}` });
+      if (item.status === "error") {
+        const errorMessage = (_c = (_b = (_a = errors.find((error) => error.filePath === item.filePath)) == null ? void 0 : _a.message) != null ? _b : item.message) != null ? _c : "Unknown error";
+        row.createEl("small", { text: errorMessage });
+      } else if (item.message) {
+        row.createEl("small", { text: item.message });
+      }
+    }
   }
 };
 var SuggestionPreviewModal = class extends import_obsidian3.Modal {
@@ -919,7 +1190,7 @@ var SuggestionPreviewModal = class extends import_obsidian3.Modal {
       text: `Analyzed: ${this.summary.totalFiles} | Changed: ${this.summary.changedFiles}`
     });
     summaryEl.createEl("div", {
-      text: `Fallback used: ${this.summary.usedFallbackCount} | Elapsed: ${formatDurationMs(this.summary.elapsedMs)}`
+      text: `Fallback used: ${this.summary.usedFallbackCount} | Errors: ${this.summary.errorCount} | Elapsed: ${formatDurationMs(this.summary.elapsedMs)}${this.summary.cancelled ? " | Cancelled" : ""}`
     });
     const list = contentEl.createDiv();
     list.style.maxHeight = "52vh";
@@ -988,7 +1259,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
     containerEl.empty();
     containerEl.createEl("h2", { text: "Auto-Linker Settings" });
     containerEl.createEl("p", {
-      text: "Docs: README.md (English) | README_KO.md (Korean)"
+      text: "Language docs: README.md (index) | README_KO.md (Korean quick access)"
     });
     new import_obsidian3.Setting(containerEl).setName("Provider").setDesc("Choose AI provider. Local providers are recommended first.").addDropdown(
       (dropdown) => dropdown.addOption("ollama", "Ollama (local)").addOption("lmstudio", "LM Studio (local)").addOption("openai", "OpenAI / Codex").addOption("anthropic", "Claude").addOption("gemini", "Gemini").setValue(this.plugin.settings.provider).onChange(async (value) => {
@@ -1004,20 +1275,37 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Ollama model").setDesc("If auto-pick is enabled, this can be auto-adjusted when missing or invalid.").addText(
-      (text) => text.setPlaceholder("qwen2.5:7b").setValue(this.plugin.settings.ollamaModel).onChange(async (value) => {
-        this.plugin.settings.ollamaModel = value.trim();
+    const ollamaOptions = this.plugin.getOllamaModelOptions();
+    new import_obsidian3.Setting(containerEl).setName("Ollama detected model picker").setDesc(
+      "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for analysis."
+    ).addDropdown((dropdown) => {
+      if (ollamaOptions.length === 0) {
+        dropdown.addOption("", "(No models detected)");
+        dropdown.setValue("");
+      } else {
+        for (const option of ollamaOptions) {
+          const suffix = option.status === "recommended" ? " (\uCD94\uCC9C)" : option.status === "unavailable" ? " (\uBD88\uAC00)" : "";
+          dropdown.addOption(option.model, `${option.model}${suffix}`);
+        }
+        const current = this.plugin.settings.ollamaModel;
+        if (current && ollamaOptions.some((option) => option.model === current)) {
+          dropdown.setValue(current);
+        } else {
+          dropdown.setValue(ollamaOptions[0].model);
+        }
+      }
+      dropdown.onChange(async (value) => {
+        if (!value) {
+          return;
+        }
+        this.plugin.settings.ollamaModel = value;
         await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian3.Setting(containerEl).setName("Auto-pick recommended Ollama model").setDesc("Detect local models and choose a suitable chat/instruct model automatically.").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.ollamaAutoPickEnabled).onChange(async (value) => {
-        this.plugin.settings.ollamaAutoPickEnabled = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    const ollamaSummaryText = this.plugin.getOllamaDetectionSummary();
-    new import_obsidian3.Setting(containerEl).setName("Detected Ollama models").setDesc(ollamaSummaryText).addButton(
+        if (!isOllamaModelAnalyzable(value)) {
+          new import_obsidian3.Notice(`Selected model is marked as (\uBD88\uAC00): ${value}`, 4500);
+        }
+        this.display();
+      });
+    }).addButton(
       (button) => button.setButtonText("Refresh").onClick(async () => {
         await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
         this.display();
@@ -1028,6 +1316,19 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         this.display();
       })
     );
+    new import_obsidian3.Setting(containerEl).setName("Ollama model (manual)").setDesc("Manual override if you want a custom model name.").addText(
+      (text) => text.setPlaceholder("qwen2.5:7b").setValue(this.plugin.settings.ollamaModel).onChange(async (value) => {
+        this.plugin.settings.ollamaModel = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(containerEl).setName("Auto-pick recommended Ollama model").setDesc("Detect local models and auto-choose recommended when current is missing.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.ollamaAutoPickEnabled).onChange(async (value) => {
+        this.plugin.settings.ollamaAutoPickEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(containerEl).setName("Ollama detection summary").setDesc(this.plugin.getOllamaDetectionSummary());
     new import_obsidian3.Setting(containerEl).setName("LM Studio base URL").addText(
       (text) => text.setPlaceholder("http://127.0.0.1:1234").setValue(this.plugin.settings.lmStudioBaseUrl).onChange(async (value) => {
         this.plugin.settings.lmStudioBaseUrl = value.trim();
@@ -1102,7 +1403,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Show progress notices").setDesc("Displays progress updates like analyzed count while running.").addToggle(
+    new import_obsidian3.Setting(containerEl).setName("Show progress notices").setDesc("In addition to persistent progress modal, show short notices.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showProgressNotices).onChange(async (value) => {
         this.plugin.settings.showProgressNotices = value;
         await this.plugin.saveSettings();
@@ -1134,24 +1435,24 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
     );
     new import_obsidian3.Setting(containerEl).setName("Max tags").addText(
       (text) => text.setPlaceholder("8").setValue(String(this.plugin.settings.maxTags)).onChange(async (value) => {
-        const parsed = Number.parseInt(value, 10);
-        if (Number.isFinite(parsed) && parsed > 0) {
-          this.plugin.settings.maxTags = parsed;
-          await this.plugin.saveSettings();
-        }
+        this.plugin.settings.maxTags = parsePositiveInt(
+          value,
+          this.plugin.settings.maxTags
+        );
+        await this.plugin.saveSettings();
       })
     );
     new import_obsidian3.Setting(containerEl).setName("Max linked").addText(
       (text) => text.setPlaceholder("8").setValue(String(this.plugin.settings.maxLinked)).onChange(async (value) => {
-        const parsed = Number.parseInt(value, 10);
-        if (Number.isFinite(parsed) && parsed > 0) {
-          this.plugin.settings.maxLinked = parsed;
-          await this.plugin.saveSettings();
-        }
+        this.plugin.settings.maxLinked = parsePositiveInt(
+          value,
+          this.plugin.settings.maxLinked
+        );
+        await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Clean unknown frontmatter keys").setDesc(
-      "If enabled, non-managed keys are removed except protected linter-like date keys."
+    new import_obsidian3.Setting(containerEl).setName("Remove legacy AI-prefixed keys").setDesc(
+      "If enabled, removes only legacy keys like ai_*/autolinker_* while preserving other existing keys (including linter date fields)."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.cleanUnknownFrontmatter).onChange(async (value) => {
         this.plugin.settings.cleanUnknownFrontmatter = value;
@@ -1171,7 +1472,22 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Backup selected notes before apply").addToggle(
+    new import_obsidian3.Setting(containerEl).setName("Selection path width percent").setDesc("Controls path width in Select target notes/folders modal (45-100).").addText(
+      (text) => text.setPlaceholder("72").setValue(String(this.plugin.settings.selectionPathWidthPercent)).onChange(async (value) => {
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isFinite(parsed) && parsed >= 45 && parsed <= 100) {
+          this.plugin.settings.selectionPathWidthPercent = parsed;
+          await this.plugin.saveSettings();
+        }
+      })
+    );
+    new import_obsidian3.Setting(containerEl).setName("Excluded folder patterns").setDesc("Comma-separated substrings. Matched folders are ignored during selection/analysis.").addText(
+      (text) => text.setPlaceholder(".obsidian,Auto-Linker Backups").setValue(this.plugin.settings.excludedFolderPatterns).onChange(async (value) => {
+        this.plugin.settings.excludedFolderPatterns = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(containerEl).setName("Backup selected notes before apply").setDesc("You can also override this every run from the backup confirmation dialog.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.backupBeforeApply).onChange(async (value) => {
         this.plugin.settings.backupBeforeApply = value;
         await this.plugin.saveSettings();
@@ -1180,6 +1496,15 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
     new import_obsidian3.Setting(containerEl).setName("Backup root path").setDesc("Vault-relative folder path used for versioned backups.").addText(
       (text) => text.setPlaceholder("Auto-Linker Backups").setValue(this.plugin.settings.backupRootPath).onChange(async (value) => {
         this.plugin.settings.backupRootPath = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(containerEl).setName("Backup retention count").setDesc("Keep only latest N backups (old backups are deleted automatically).").addText(
+      (text) => text.setPlaceholder("10").setValue(String(this.plugin.settings.backupRetentionCount)).onChange(async (value) => {
+        this.plugin.settings.backupRetentionCount = parsePositiveInt(
+          value,
+          this.plugin.settings.backupRetentionCount
+        );
         await this.plugin.saveSettings();
       })
     );
@@ -1203,6 +1528,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     super(...arguments);
     this.statusBarEl = null;
     this.ollamaDetectionCache = null;
+    this.ollamaDetectionOptions = [];
     this.ollamaDetectionSummary = "Model detection has not run yet. Click refresh to detect installed Ollama models.";
   }
   async onload() {
@@ -1260,6 +1586,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
   getOllamaDetectionSummary() {
     return this.ollamaDetectionSummary;
   }
+  getOllamaModelOptions() {
+    return this.ollamaDetectionOptions;
+  }
   async applyRecommendedOllamaModel(notify) {
     var _a;
     if (!((_a = this.ollamaDetectionCache) == null ? void 0 : _a.recommended)) {
@@ -1278,6 +1607,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     try {
       const detected = await detectOllamaModels(this.settings.ollamaBaseUrl);
       this.ollamaDetectionCache = detected;
+      this.ollamaDetectionOptions = buildOllamaModelOptions(
+        detected.models,
+        detected.recommended
+      );
       const modelListPreview = detected.models.length > 0 ? detected.models.slice(0, 5).join(", ") : "(none)";
       this.ollamaDetectionSummary = [
         `Detected: ${detected.models.length} model(s).`,
@@ -1305,6 +1638,8 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       return detected;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Ollama detection error";
+      this.ollamaDetectionCache = null;
+      this.ollamaDetectionOptions = [];
       this.ollamaDetectionSummary = `Detection failed: ${message}`;
       if (options.notify) {
         this.notice(`Ollama model detection failed: ${message}`);
@@ -1320,8 +1655,17 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     if (!Array.isArray(this.settings.targetFolderPaths)) {
       this.settings.targetFolderPaths = [];
     }
+    if (!Number.isFinite(this.settings.selectionPathWidthPercent)) {
+      this.settings.selectionPathWidthPercent = DEFAULT_SETTINGS.selectionPathWidthPercent;
+    }
     if (!this.settings.backupRootPath) {
       this.settings.backupRootPath = DEFAULT_SETTINGS.backupRootPath;
+    }
+    if (!this.settings.excludedFolderPatterns) {
+      this.settings.excludedFolderPatterns = DEFAULT_SETTINGS.excludedFolderPatterns;
+    }
+    if (!Number.isFinite(this.settings.backupRetentionCount)) {
+      this.settings.backupRetentionCount = DEFAULT_SETTINGS.backupRetentionCount;
     }
   }
   async saveSettings() {
@@ -1337,27 +1681,32 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     }
     new import_obsidian3.Notice(text, timeout);
   }
-  progressNotice(stage, current, total) {
-    this.setStatus(`${stage} ${current}/${total}`);
-    if (this.settings.showProgressNotices) {
-      if (current === 1 || current === total || current % 5 === 0) {
-        new import_obsidian3.Notice(`Auto-Linker ${stage}: ${current}/${total}`, 1500);
-      }
-    }
+  parseExcludedPatterns() {
+    return this.settings.excludedFolderPatterns.split(/[\n,;]+/).map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);
+  }
+  isPathExcluded(path) {
+    const lower = path.toLowerCase();
+    const patterns = this.parseExcludedPatterns();
+    return patterns.some((pattern) => lower.includes(pattern));
   }
   getAllMarkdownFiles() {
-    return this.app.vault.getMarkdownFiles().sort((a, b) => a.path.localeCompare(b.path));
+    return this.app.vault.getMarkdownFiles().filter((file) => !this.isPathExcluded(file.path)).sort((a, b) => a.path.localeCompare(b.path));
   }
   getAllFolders() {
     const folders = this.app.vault.getAllLoadedFiles().filter(
-      (entry) => entry instanceof import_obsidian3.TFolder && entry.path.trim().length > 0
+      (entry) => entry instanceof import_obsidian3.TFolder && entry.path.trim().length > 0 && !this.isPathExcluded(entry.path)
     );
     return folders.sort((a, b) => a.path.localeCompare(b.path));
   }
   collectFilesFromFolder(folder, includeSubfolders, out) {
+    if (this.isPathExcluded(folder.path)) {
+      return;
+    }
     for (const child of folder.children) {
       if (child instanceof import_obsidian3.TFile && child.extension === "md") {
-        out.add(child.path);
+        if (!this.isPathExcluded(child.path)) {
+          out.add(child.path);
+        }
         continue;
       }
       if (child instanceof import_obsidian3.TFolder && includeSubfolders) {
@@ -1368,12 +1717,18 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
   getSelectedFiles() {
     const selectedPaths = /* @__PURE__ */ new Set();
     for (const path of this.settings.targetFilePaths) {
+      if (this.isPathExcluded(path)) {
+        continue;
+      }
       const entry = this.app.vault.getAbstractFileByPath(path);
       if (entry instanceof import_obsidian3.TFile && entry.extension === "md") {
         selectedPaths.add(entry.path);
       }
     }
     for (const folderPath of this.settings.targetFolderPaths) {
+      if (this.isPathExcluded(folderPath)) {
+        continue;
+      }
       const entry = this.app.vault.getAbstractFileByPath(folderPath);
       if (entry instanceof import_obsidian3.TFolder) {
         this.collectFilesFromFolder(
@@ -1402,18 +1757,23 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       this.settings.targetFilePaths,
       this.settings.targetFolderPaths,
       this.settings.includeSubfoldersInFolderSelection,
+      this.settings.selectionPathWidthPercent,
       async (payload) => {
         this.settings.targetFilePaths = payload.selectedFilePaths;
         this.settings.targetFolderPaths = payload.selectedFolderPaths;
         this.settings.includeSubfoldersInFolderSelection = payload.includeSubfolders;
+        this.settings.selectionPathWidthPercent = payload.pathWidthPercent;
         await this.saveSettings();
-        const filesExpanded = this.getSelectedFiles().length;
+        const expandedCount = this.getSelectedFiles().length;
         this.notice(
-          `Selection saved. Files: ${payload.selectedFilePaths.length}, folders: ${payload.selectedFolderPaths.length}, expanded markdown files: ${filesExpanded}`,
+          `Selection saved. Files: ${payload.selectedFilePaths.length}, folders: ${payload.selectedFolderPaths.length}, expanded markdown files: ${expandedCount}`,
           5e3
         );
       }
     ).open();
+  }
+  async askBackupDecision() {
+    return BackupConfirmModal.ask(this.app, this.settings.backupBeforeApply);
   }
   async backupSelectedNotesNow() {
     const selectedFiles = this.getSelectedFiles();
@@ -1437,101 +1797,170 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     }
     if (this.settings.provider === "ollama") {
       await this.refreshOllamaDetection({ notify: false, autoApply: true });
+      const selectedModel = this.settings.ollamaModel.trim();
+      if (!selectedModel) {
+        this.notice("Ollama model is empty. Refresh model detection and select one.");
+        return;
+      }
+      if (!isOllamaModelAnalyzable(selectedModel)) {
+        this.notice(
+          `Selected Ollama model is marked as (\uBD88\uAC00): ${selectedModel}. Choose a chat/instruct model first.`,
+          6e3
+        );
+        return;
+      }
     }
+    const decision = await this.askBackupDecision();
+    if (!decision.proceed) {
+      this.notice("Analysis cancelled.");
+      return;
+    }
+    if (decision.rememberAsDefault) {
+      this.settings.backupBeforeApply = decision.backupBeforeRun;
+      await this.saveSettings();
+    }
+    let backupFolder = null;
+    if (decision.backupBeforeRun) {
+      this.setStatus("creating backup...");
+      backupFolder = await this.createBackupForFiles(selectedFiles);
+      if (backupFolder) {
+        this.notice(`Backup completed before analysis: ${backupFolder}`, 5e3);
+      }
+    }
+    const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
+    progressModal.open();
     const selectedPathSet = new Set(selectedFiles.map((file) => file.path));
     const suggestions = [];
+    const errors = [];
+    const events = [];
     const runStartedAt = Date.now();
     let usedFallbackCount = 0;
-    this.notice(`Analyzing ${selectedFiles.length} note(s)...`);
+    let cancelled = false;
     for (let index = 0; index < selectedFiles.length; index += 1) {
+      if (progressModal.isCancelled()) {
+        cancelled = true;
+        break;
+      }
       const file = selectedFiles[index];
-      this.progressNotice("analyzing", index + 1, selectedFiles.length);
-      const request = {
-        sourcePath: file.path,
-        sourceText: await this.app.vault.cachedRead(file),
-        candidateLinkPaths: selectedFiles.filter((candidate) => candidate.path !== file.path).map((candidate) => candidate.path),
-        maxTags: this.settings.maxTags,
-        maxLinked: this.settings.maxLinked,
-        analyzeTags: this.settings.analyzeTags,
-        analyzeTopic: this.settings.analyzeTopic,
-        analyzeLinked: this.settings.analyzeLinked,
-        analyzeIndex: this.settings.analyzeIndex,
-        includeReasons: this.settings.includeReasons
-      };
-      const outcome = await analyzeWithFallback(this.settings, request);
-      if (outcome.meta.usedFallback) {
-        usedFallbackCount += 1;
-      }
-      const currentFrontmatter = (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {};
-      const existingBase = normalizeManagedFrontmatter(
-        extractManagedFrontmatter(currentFrontmatter)
-      );
-      const existingValidated = {
-        tags: existingBase.tags,
-        topic: existingBase.topic,
-        linked: normalizeLinked(this.app, file.path, existingBase.linked),
-        index: existingBase.index
-      };
-      const proposed = {
-        tags: existingValidated.tags,
-        topic: existingValidated.topic,
-        linked: existingValidated.linked,
-        index: existingValidated.index
-      };
-      if (this.settings.analyzeTags) {
-        const proposedTags = normalizeTags(
-          ((_c = outcome.proposal.tags) != null ? _c : []).slice(0, this.settings.maxTags)
-        );
-        proposed.tags = mergeUniqueStrings(existingValidated.tags, proposedTags);
-      }
-      if (this.settings.analyzeTopic) {
-        const maybeTopic = (_d = outcome.proposal.topic) == null ? void 0 : _d.trim();
-        if (maybeTopic) {
-          proposed.topic = maybeTopic;
-        }
-      }
-      if (this.settings.analyzeLinked) {
-        const proposedLinked = normalizeLinked(
-          this.app,
-          file.path,
-          ((_e = outcome.proposal.linked) != null ? _e : []).slice(0, this.settings.maxLinked),
-          selectedPathSet
-        );
-        proposed.linked = mergeUniqueStrings(existingValidated.linked, proposedLinked);
-      }
-      if (this.settings.analyzeIndex) {
-        const maybeIndex = (_f = outcome.proposal.index) == null ? void 0 : _f.trim();
-        if (maybeIndex) {
-          proposed.index = maybeIndex;
-        }
-      }
-      const normalizedProposed = normalizeManagedFrontmatter(proposed);
-      if (!managedFrontmatterChanged(existingValidated, normalizedProposed)) {
-        continue;
-      }
-      suggestions.push({
-        file,
-        existing: existingValidated,
-        proposed: normalizedProposed,
-        reasons: (_g = outcome.proposal.reasons) != null ? _g : {},
-        analysis: outcome.meta
+      progressModal.update({
+        stage: "Analyzing",
+        current: index + 1,
+        total: selectedFiles.length,
+        startedAt: runStartedAt,
+        currentFile: file.path,
+        errors,
+        events
       });
+      this.setStatus(`analyzing ${index + 1}/${selectedFiles.length}`);
+      try {
+        const request = {
+          sourcePath: file.path,
+          sourceText: await this.app.vault.cachedRead(file),
+          candidateLinkPaths: selectedFiles.filter((candidate) => candidate.path !== file.path).map((candidate) => candidate.path),
+          maxTags: this.settings.maxTags,
+          maxLinked: this.settings.maxLinked,
+          analyzeTags: this.settings.analyzeTags,
+          analyzeTopic: this.settings.analyzeTopic,
+          analyzeLinked: this.settings.analyzeLinked,
+          analyzeIndex: this.settings.analyzeIndex,
+          includeReasons: this.settings.includeReasons
+        };
+        const outcome = await analyzeWithFallback(this.settings, request);
+        if (outcome.meta.usedFallback) {
+          usedFallbackCount += 1;
+        }
+        const currentFrontmatter = (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {};
+        const existingBase = normalizeManagedFrontmatter(
+          extractManagedFrontmatter(currentFrontmatter)
+        );
+        const existingValidated = {
+          tags: existingBase.tags,
+          topic: existingBase.topic,
+          linked: normalizeLinked(this.app, file.path, existingBase.linked),
+          index: existingBase.index
+        };
+        const proposed = {
+          tags: existingValidated.tags,
+          topic: existingValidated.topic,
+          linked: existingValidated.linked,
+          index: existingValidated.index
+        };
+        if (this.settings.analyzeTags) {
+          const proposedTags = normalizeTags(
+            ((_c = outcome.proposal.tags) != null ? _c : []).slice(0, this.settings.maxTags)
+          );
+          proposed.tags = mergeUniqueStrings(existingValidated.tags, proposedTags);
+        }
+        if (this.settings.analyzeTopic) {
+          const maybeTopic = (_d = outcome.proposal.topic) == null ? void 0 : _d.trim();
+          if (maybeTopic) {
+            proposed.topic = maybeTopic;
+          }
+        }
+        if (this.settings.analyzeLinked) {
+          const proposedLinked = normalizeLinked(
+            this.app,
+            file.path,
+            ((_e = outcome.proposal.linked) != null ? _e : []).slice(0, this.settings.maxLinked),
+            selectedPathSet
+          );
+          proposed.linked = mergeUniqueStrings(existingValidated.linked, proposedLinked);
+        }
+        if (this.settings.analyzeIndex) {
+          const maybeIndex = (_f = outcome.proposal.index) == null ? void 0 : _f.trim();
+          if (maybeIndex) {
+            proposed.index = maybeIndex;
+          }
+        }
+        const normalizedProposed = normalizeManagedFrontmatter(proposed);
+        if (!managedFrontmatterChanged(existingValidated, normalizedProposed)) {
+          continue;
+        }
+        suggestions.push({
+          file,
+          existing: existingValidated,
+          proposed: normalizedProposed,
+          reasons: (_g = outcome.proposal.reasons) != null ? _g : {},
+          analysis: outcome.meta
+        });
+        events.push({
+          filePath: file.path,
+          status: "ok",
+          message: normalizedProposed.tags.length > 0 ? "suggested" : "no-change"
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown analysis error";
+        errors.push({ filePath: file.path, message });
+        events.push({ filePath: file.path, status: "error", message });
+      }
     }
+    progressModal.setFinished(
+      cancelled ? "Analysis stopped by user." : `Analysis complete: ${suggestions.length} changed of ${selectedFiles.length}`
+    );
+    progressModal.close();
     const summary = {
       provider: this.settings.provider,
       model: getProviderModelLabel(this.settings),
       totalFiles: selectedFiles.length,
       changedFiles: suggestions.length,
       usedFallbackCount,
-      elapsedMs: Date.now() - runStartedAt
+      elapsedMs: Date.now() - runStartedAt,
+      cancelled,
+      errorCount: errors.length
     };
     this.setStatus(`analysis done (${summary.changedFiles}/${summary.totalFiles} changed)`);
     if (suggestions.length === 0) {
       this.notice(
-        `No metadata changes found. Provider=${summary.provider}, Model=${summary.model}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
-        4500
+        `No metadata changes. Provider=${summary.provider}, Model=${summary.model}, Errors=${summary.errorCount}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
+        5e3
       );
       return;
+    }
+    if (cancelled) {
+      this.notice(
+        `Analysis stopped. Showing partial suggestions (${suggestions.length} file(s)).`,
+        5e3
+      );
     }
     if (this.settings.suggestionMode) {
       new SuggestionPreviewModal(
@@ -1540,53 +1969,101 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
         suggestions,
         this.settings.includeReasons,
         async () => {
-          await this.applySuggestions(suggestions, selectedFiles);
-          if (this.settings.generateMoc) {
+          const applyResult2 = await this.applySuggestions(
+            suggestions,
+            selectedFiles,
+            backupFolder,
+            decision.backupBeforeRun,
+            decision.backupBeforeRun
+          );
+          if (!applyResult2.cancelled && this.settings.generateMoc) {
             await this.generateMocFromSelection(suggestions);
           }
         }
       ).open();
       return;
     }
-    await this.applySuggestions(suggestions, selectedFiles);
-    if (this.settings.generateMoc) {
+    const applyResult = await this.applySuggestions(
+      suggestions,
+      selectedFiles,
+      backupFolder,
+      decision.backupBeforeRun,
+      decision.backupBeforeRun
+    );
+    if (!applyResult.cancelled && this.settings.generateMoc) {
       await this.generateMocFromSelection(suggestions);
     }
   }
-  async applySuggestions(suggestions, selectedFilesForBackup) {
-    let backupFolder = null;
-    if (this.settings.backupBeforeApply) {
+  async applySuggestions(suggestions, selectedFilesForBackup, existingBackupFolder, alreadyBackedUp, backupEnabledForRun) {
+    let backupFolder = existingBackupFolder;
+    if (!alreadyBackedUp && backupEnabledForRun) {
       backupFolder = await this.createBackupForFiles(selectedFilesForBackup);
     }
+    const progressModal = new RunProgressModal(this.app, "Applying suggestions");
+    progressModal.open();
+    const errors = [];
+    const events = [];
+    const startedAt = Date.now();
+    let cancelled = false;
     for (let index = 0; index < suggestions.length; index += 1) {
+      if (progressModal.isCancelled()) {
+        cancelled = true;
+        break;
+      }
       const suggestion = suggestions[index];
-      this.progressNotice("applying", index + 1, suggestions.length);
-      await this.app.fileManager.processFrontMatter(
-        suggestion.file,
-        (frontmatter) => {
-          const current = frontmatter;
-          const next = buildNextFrontmatter(current, suggestion.proposed, {
-            cleanUnknown: this.settings.cleanUnknownFrontmatter,
-            sortArrays: this.settings.sortArrays
-          });
-          for (const key of Object.keys(current)) {
-            delete current[key];
+      progressModal.update({
+        stage: "Applying",
+        current: index + 1,
+        total: suggestions.length,
+        startedAt,
+        currentFile: suggestion.file.path,
+        errors,
+        events
+      });
+      this.setStatus(`applying ${index + 1}/${suggestions.length}`);
+      try {
+        await this.app.fileManager.processFrontMatter(
+          suggestion.file,
+          (frontmatter) => {
+            const current = frontmatter;
+            const next = buildNextFrontmatter(current, suggestion.proposed, {
+              cleanUnknown: this.settings.cleanUnknownFrontmatter,
+              sortArrays: this.settings.sortArrays
+            });
+            for (const key of Object.keys(current)) {
+              delete current[key];
+            }
+            for (const [key, value] of Object.entries(next)) {
+              current[key] = value;
+            }
           }
-          for (const [key, value] of Object.entries(next)) {
-            current[key] = value;
-          }
-        }
-      );
+        );
+        events.push({ filePath: suggestion.file.path, status: "ok", message: "applied" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown apply error";
+        errors.push({ filePath: suggestion.file.path, message });
+        events.push({ filePath: suggestion.file.path, status: "error", message });
+      }
     }
-    this.setStatus(`apply done (${suggestions.length} note(s))`);
+    progressModal.setFinished(
+      cancelled ? "Apply stopped by user." : `Apply complete: ${suggestions.length - errors.length} succeeded`
+    );
+    progressModal.close();
+    this.setStatus(
+      cancelled ? `apply stopped (${suggestions.length - errors.length}/${suggestions.length})` : `apply done (${suggestions.length - errors.length}/${suggestions.length})`
+    );
     if (backupFolder) {
       this.notice(
-        `Applied changes to ${suggestions.length} note(s). Backup: ${backupFolder}`,
-        5e3
+        `Apply finished. Backup: ${backupFolder}. Errors: ${errors.length}${cancelled ? " (stopped early)" : ""}`,
+        6e3
       );
     } else {
-      this.notice(`Applied changes to ${suggestions.length} note(s).`);
+      this.notice(
+        `Apply finished. Errors: ${errors.length}${cancelled ? " (stopped early)" : ""}`,
+        5e3
+      );
     }
+    return { cancelled, errors };
   }
   async createBackupForFiles(files) {
     const uniquePaths = [...new Set(files.map((file) => file.path))].sort(
@@ -1618,7 +2095,28 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     };
     const manifestPath = (0, import_obsidian3.normalizePath)(`${backupFolder}/manifest.json`);
     await this.app.vault.adapter.write(manifestPath, JSON.stringify(manifest, null, 2));
+    await this.pruneOldBackups();
     return backupFolder;
+  }
+  async pruneOldBackups() {
+    const keepCount = this.settings.backupRetentionCount;
+    if (!Number.isFinite(keepCount) || keepCount < 1) {
+      return;
+    }
+    const backupRoot = (0, import_obsidian3.normalizePath)(this.settings.backupRootPath);
+    const exists = await this.app.vault.adapter.exists(backupRoot);
+    if (!exists) {
+      return;
+    }
+    const list = await this.app.vault.adapter.list(backupRoot);
+    if (list.folders.length <= keepCount) {
+      return;
+    }
+    const sorted = [...list.folders].sort((a, b) => b.localeCompare(a));
+    const toDelete = sorted.slice(keepCount);
+    for (const folder of toDelete) {
+      await this.app.vault.adapter.rmdir(folder, true);
+    }
   }
   async getLatestBackupFolder() {
     var _a;
