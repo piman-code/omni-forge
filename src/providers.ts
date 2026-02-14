@@ -1,10 +1,12 @@
 import { requestUrl } from "obsidian";
 import type {
   AIProvider,
+  AnalyzeOutcome,
   AnalyzeRequest,
   FieldReasons,
   KnowledgeWeaverSettings,
   MetadataProposal,
+  OllamaDetectionResult,
   ProviderId,
 } from "./types";
 
@@ -399,6 +401,127 @@ function toOpenAICompatibleBase(baseUrl: string): string {
   return `${cleaned}/v1`;
 }
 
+export function getProviderModelLabel(settings: KnowledgeWeaverSettings): string {
+  switch (settings.provider) {
+    case "ollama":
+      return settings.ollamaModel;
+    case "lmstudio":
+      return settings.lmStudioModel;
+    case "openai":
+      return settings.openAIModel;
+    case "anthropic":
+      return settings.anthropicModel;
+    case "gemini":
+      return settings.geminiModel;
+    default:
+      return "unknown";
+  }
+}
+
+function scoreOllamaModel(modelName: string): number {
+  const lower = modelName.toLowerCase();
+
+  if (/embed|embedding/.test(lower)) {
+    return -100;
+  }
+
+  let score = 0;
+
+  if (/qwen2\.5|qwen3|llama3\.1|llama3\.2|mistral|gemma2|phi-?4/.test(lower)) {
+    score += 20;
+  }
+  if (/instruct|chat|it\b/.test(lower)) {
+    score += 10;
+  }
+  if (/:8b|:7b|:9b/.test(lower)) {
+    score += 8;
+  }
+  if (/:4b|:3b/.test(lower)) {
+    score += 5;
+  }
+  if (/:1b|:0\.[0-9]+b/.test(lower)) {
+    score -= 3;
+  }
+
+  return score;
+}
+
+function recommendOllamaModel(models: string[]): { recommended?: string; reason: string } {
+  if (models.length === 0) {
+    return {
+      reason:
+        "No local Ollama models were detected. Install at least one chat/instruct model first.",
+    };
+  }
+
+  const scored = models
+    .map((name) => ({ name, score: scoreOllamaModel(name) }))
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+
+  const winner = scored[0]?.name;
+  if (!winner) {
+    return { reason: "Could not select a recommended Ollama model." };
+  }
+
+  const reason =
+    scoreOllamaModel(winner) >= 0
+      ? `Recommended '${winner}' based on chat/instruct capability and balanced size.`
+      : `Recommended '${winner}' as fallback among detected models.`;
+
+  return {
+    recommended: winner,
+    reason,
+  };
+}
+
+export async function detectOllamaModels(
+  baseUrl: string,
+): Promise<OllamaDetectionResult> {
+  const url = `${baseUrl.replace(/\/$/, "")}/api/tags`;
+  const response = await requestUrl({
+    url,
+    method: "GET",
+    throw: false,
+  });
+
+  if (response.status >= 300) {
+    throw new Error(`Ollama model detection failed: ${response.status}`);
+  }
+
+  const rawModels: Array<Record<string, unknown>> = Array.isArray(
+    response.json?.models,
+  )
+    ? (response.json.models as Array<Record<string, unknown>>)
+    : [];
+
+  const modelNames: string[] = rawModels
+    .map((item: Record<string, unknown>) => {
+      const nameValue = item.name;
+      if (typeof nameValue === "string") {
+        return nameValue.trim();
+      }
+
+      const modelValue = item.model;
+      if (typeof modelValue === "string") {
+        return modelValue.trim();
+      }
+
+      return "";
+    })
+    .filter((name: string) => name.length > 0);
+
+  const uniqueSorted: string[] = [...new Set(modelNames)].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const recommendation = recommendOllamaModel(uniqueSorted);
+
+  return {
+    models: uniqueSorted,
+    recommended: recommendation.recommended,
+    reason: recommendation.reason,
+  };
+}
+
 export function createProvider(settings: KnowledgeWeaverSettings): AIProvider {
   const providerMap: Record<ProviderId, () => AIProvider> = {
     ollama: () => new OllamaProvider(settings),
@@ -410,7 +533,7 @@ export function createProvider(settings: KnowledgeWeaverSettings): AIProvider {
       }),
     openai: () =>
       new OpenAICompatibleProvider(settings, {
-        baseUrl: settings.openAIBaseUrl,
+        baseUrl: toOpenAICompatibleBase(settings.openAIBaseUrl),
         model: settings.openAIModel,
         apiKey: settings.openAIApiKey.trim(),
       }),
@@ -424,12 +547,33 @@ export function createProvider(settings: KnowledgeWeaverSettings): AIProvider {
 export async function analyzeWithFallback(
   settings: KnowledgeWeaverSettings,
   request: AnalyzeRequest,
-): Promise<MetadataProposal> {
+): Promise<AnalyzeOutcome> {
   const provider = createProvider(settings);
+  const providerModel = getProviderModelLabel(settings);
+  const startedAt = Date.now();
+
   try {
-    return await provider.analyze(request);
+    const proposal = await provider.analyze(request);
+    return {
+      proposal,
+      meta: {
+        provider: settings.provider,
+        model: providerModel,
+        elapsedMs: Date.now() - startedAt,
+        usedFallback: false,
+      },
+    };
   } catch {
     const fallback = new HeuristicFallbackProvider(settings);
-    return fallback.analyze(request);
+    const proposal = await fallback.analyze(request);
+    return {
+      proposal,
+      meta: {
+        provider: settings.provider,
+        model: providerModel,
+        elapsedMs: Date.now() - startedAt,
+        usedFallback: true,
+      },
+    };
   }
 }

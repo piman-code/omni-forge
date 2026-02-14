@@ -2,6 +2,17 @@ import { App, TFile, normalizePath } from "obsidian";
 import type { ManagedFrontmatter } from "./types";
 
 export const MANAGED_KEYS = ["tags", "topic", "linked", "index"] as const;
+export const PROTECTED_FRONTMATTER_KEYS = new Set<string>([
+  "date created",
+  "date modified",
+  "date updated",
+  "date_created",
+  "date_modified",
+  "date_updated",
+  "created",
+  "updated",
+  "modified",
+]);
 
 function toStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
@@ -151,11 +162,17 @@ export function buildNextFrontmatter(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = {};
 
-  if (!options.cleanUnknown) {
-    for (const [key, value] of Object.entries(current)) {
-      if (!(MANAGED_KEYS as readonly string[]).includes(key)) {
-        next[key] = value;
-      }
+  for (const [key, value] of Object.entries(current)) {
+    const normalizedKey = key.trim().toLowerCase();
+    const isManaged = (MANAGED_KEYS as readonly string[]).includes(key);
+    const isProtected = PROTECTED_FRONTMATTER_KEYS.has(normalizedKey);
+
+    if (isManaged) {
+      continue;
+    }
+
+    if (!options.cleanUnknown || isProtected) {
+      next[key] = value;
     }
   }
 

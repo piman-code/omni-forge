@@ -1,72 +1,142 @@
 # Auto-Linker
 
-[한국어 가이드 (README_KO.md)](README_KO.md)
+Language: [English](README.md) | [한국어](README_KO.md)
 
-Auto-Linker is an Obsidian community plugin for selective AI-driven metadata updates.
-It helps users build a cleaner graph-based second brain by proposing metadata changes for only the notes they choose.
+Auto-Linker is an Obsidian community plugin for selective AI-assisted knowledge metadata.
+It analyzes only the notes you choose, then proposes clean frontmatter updates for graph-friendly knowledge management.
 
 ## Core capabilities
 
-- Select target notes manually (no forced full-vault run).
-- Generate `tags`, `topic`, `linked`, and `index` suggestions.
-- Validate `linked` values against real vault files only.
-- Run in suggestion-first mode: preview, inspect reasons, then apply.
-- Optionally generate a grouped MOC from selected notes.
+- Select **files and folders** together as targets.
+- Optional recursive folder expansion.
+- Suggest metadata for:
+  - `tags`
+  - `topic`
+  - `linked`
+  - `index`
+- Validate `linked` so it keeps only real markdown files in the vault.
+- Suggestion-first workflow (preview before apply).
+- Per-run preview summary with:
+  - provider
+  - model
+  - fallback usage count
+  - elapsed time
+- Progress updates while analyzing/applying (count-based notices + status bar text).
+- Backup selected notes before apply, and restore from latest backup.
 
-## Frontmatter policy
+## Frontmatter behavior
 
-Managed keys are intentionally simple and lowercase:
+Managed keys are simple lowercase fields:
 
 - `tags`
 - `topic`
 - `linked`
 - `index`
 
-If **Clean unknown frontmatter keys** is enabled, all other frontmatter keys are removed on apply.
+Default merge behavior is conservative:
 
-## Provider support
+- Existing metadata is preserved when possible.
+- `tags` and `linked` are additive (existing + suggestions, deduplicated).
+- Existing unknown keys are preserved by default.
+- Linter-like date keys (for example `date created`, `date updated`) are preserved.
 
-Local-first:
+If you enable **Clean unknown frontmatter keys**, non-managed keys are removed except protected date keys.
 
-- Ollama
-- LM Studio (OpenAI-compatible endpoint)
+## Setup (important)
 
-Cloud adapters included:
+### 1) Install and enable plugin
 
-- OpenAI / Codex-compatible
-- Anthropic Claude
-- Google Gemini
+Use BRAT beta installation with repo:
 
-When provider calls fail, Auto-Linker falls back to a deterministic local heuristic so workflows are not blocked.
+- `piman-code/auto-linker`
+
+### 2) Open Auto-Linker settings
+
+Go to:
+
+- `Settings -> Community plugins -> Auto-Linker`
+
+### 3) Choose provider
+
+- Recommended local-first:
+  - `Ollama`
+  - `LM Studio`
+- Cloud options:
+  - OpenAI/Codex-compatible
+  - Claude
+  - Gemini
+
+### 4) Ollama auto model detection
+
+Key settings:
+
+- `Ollama base URL`
+- `Ollama model`
+- `Auto-pick recommended Ollama model`
+- `Detected Ollama models -> Refresh`
+
+How auto-pick works:
+
+1. Plugin calls Ollama `GET /api/tags`.
+2. It scores detected models (chat/instruct-friendly models are preferred; embedding-only models are deprioritized).
+3. If current model is empty or missing from installed models, it auto-sets a recommended model.
+4. Detection runs on startup (best effort) and before analysis when provider is Ollama.
+
+### 5) Configure analysis behavior
+
+Main toggles:
+
+- `Suggestion mode (recommended)`
+- `Show reasons for each field`
+- `Show progress notices`
+- `Analyze tags/topic/linked/index`
+- `Max tags`, `Max linked`
+
+### 6) Configure selection and safety
+
+- `Include subfolders for selected folders`
+- `Backup selected notes before apply`
+- `Backup root path`
+
+### 7) Optional MOC generation
+
+- `Generate MOC after apply`
+- `MOC file path`
 
 ## Commands
 
-- `Auto-Linker: Select target notes`
+- `Auto-Linker: Select target notes/folders`
 - `Auto-Linker: Analyze selected notes (suggestions by default)`
-- `Auto-Linker: Clear selected target notes`
+- `Auto-Linker: Clear selected target notes/folders`
+- `Auto-Linker: Backup selected notes`
+- `Auto-Linker: Restore from latest backup`
+- `Auto-Linker: Refresh Ollama model detection`
 - `Auto-Linker: Generate MOC from selected notes`
 
-## Build
+## Typical workflow
+
+1. Select targets (files/folders).
+2. Run analyze command.
+3. Review preview summary and per-field changes.
+4. Apply changes.
+5. If needed, restore from latest backup.
+
+## Development
 
 ```bash
 npm install
 npm run build
-```
-
-For development watch mode:
-
-```bash
 npm run dev
 ```
 
-## Security and release
-
-Run the built-in secret/path checks before release:
+## Release checks
 
 ```bash
-npm run security:check
+npm run release:check
 ```
 
-See `SECURITY.md` for full release hygiene guidance.
-See `RELEASE.md` for release steps and tagging rules.
-See `COMMUNITY_SUBMISSION_CHECKLIST.md` for submission readiness.
+Additional docs:
+
+- Security: `SECURITY.md`
+- Release process: `RELEASE.md`
+- Community checklist: `COMMUNITY_SUBMISSION_CHECKLIST.md`

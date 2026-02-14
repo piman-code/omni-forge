@@ -34,6 +34,7 @@ export interface NoteSuggestion {
   existing: ManagedFrontmatter;
   proposed: ManagedFrontmatter;
   reasons: FieldReasons;
+  analysis: SuggestionAnalysisMeta;
 }
 
 export interface AnalyzeRequest {
@@ -53,10 +54,38 @@ export interface AIProvider {
   analyze(request: AnalyzeRequest): Promise<MetadataProposal>;
 }
 
+export interface SuggestionAnalysisMeta {
+  provider: ProviderId;
+  model: string;
+  elapsedMs: number;
+  usedFallback: boolean;
+}
+
+export interface AnalysisRunSummary {
+  provider: ProviderId;
+  model: string;
+  totalFiles: number;
+  changedFiles: number;
+  usedFallbackCount: number;
+  elapsedMs: number;
+}
+
+export interface AnalyzeOutcome {
+  proposal: MetadataProposal;
+  meta: SuggestionAnalysisMeta;
+}
+
+export interface OllamaDetectionResult {
+  models: string[];
+  recommended?: string;
+  reason: string;
+}
+
 export interface KnowledgeWeaverSettings {
   provider: ProviderId;
   ollamaBaseUrl: string;
   ollamaModel: string;
+  ollamaAutoPickEnabled: boolean;
   lmStudioBaseUrl: string;
   lmStudioModel: string;
   lmStudioApiKey: string;
@@ -78,6 +107,11 @@ export interface KnowledgeWeaverSettings {
   maxTags: number;
   maxLinked: number;
   targetFilePaths: string[];
+  targetFolderPaths: string[];
+  includeSubfoldersInFolderSelection: boolean;
+  backupBeforeApply: boolean;
+  backupRootPath: string;
+  showProgressNotices: boolean;
   generateMoc: boolean;
   mocPath: string;
 }
