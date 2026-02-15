@@ -1297,6 +1297,7 @@ var DEFAULT_SETTINGS = {
   qaTopK: 5,
   qaMaxContextChars: 12e3,
   qaAllowNonLocalEndpoint: false,
+  chatTranscriptRootPath: "Auto-Linker Chats",
   propertyCleanupEnabled: false,
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
@@ -1317,7 +1318,6 @@ var LOCAL_QA_VIEW_TYPE = "auto-linker-local-qa-view";
 var ANALYSIS_CACHE_FILE = "analysis-proposal-cache.json";
 var ANALYSIS_CACHE_VERSION = 1;
 var ANALYSIS_CACHE_MAX_ENTRIES = 4e3;
-var LOCAL_QA_TRANSCRIPT_FOLDER = "Auto-Linker Chats";
 var ANALYSIS_HARD_MAX_CANDIDATES = 120;
 function stringifyValue(value) {
   if (value === void 0 || value === null) {
@@ -2054,7 +2054,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     return "message-square";
   }
   async onOpen() {
+    await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
     this.render();
+    this.refreshModelOptions();
     await this.refreshScopeLabel();
   }
   async onClose() {
@@ -2062,25 +2064,62 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   render() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
-    this.scopeEl = contentEl.createEl("div");
-    this.scopeEl.style.marginBottom = "8px";
-    this.scopeEl.style.fontSize = "12px";
-    this.scopeEl.style.opacity = "0.9";
-    const actionRow = contentEl.createDiv();
-    actionRow.style.display = "flex";
-    actionRow.style.gap = "8px";
-    actionRow.style.marginBottom = "8px";
+    contentEl.addClass("auto-linker-chat-view");
+    const root = contentEl.createDiv({ cls: "auto-linker-chat-root" });
+    const header = root.createDiv({ cls: "auto-linker-chat-header" });
+    header.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
+    this.scopeEl = header.createDiv({ cls: "auto-linker-chat-scope" });
+    const actionRow = root.createDiv({ cls: "auto-linker-chat-actions" });
     const selectButton = actionRow.createEl("button", { text: "Select notes" });
+    selectButton.addClass("auto-linker-chat-btn");
     selectButton.onclick = async () => {
       await this.plugin.openSelectionForQa();
       await this.refreshScopeLabel();
     };
-    const refreshButton = actionRow.createEl("button", { text: "Refresh scope" });
-    refreshButton.onclick = async () => {
+    const cleanupPickerButton = actionRow.createEl("button", { text: "Cleanup keys" });
+    cleanupPickerButton.addClass("auto-linker-chat-btn");
+    cleanupPickerButton.onclick = async () => {
+      await this.plugin.openCleanupKeyPickerForQa();
       await this.refreshScopeLabel();
     };
-    const saveButton = actionRow.createEl("button", { text: "Save chat to note" });
+    const cleanupApplyButton = actionRow.createEl("button", { text: "Run cleanup" });
+    cleanupApplyButton.addClass("auto-linker-chat-btn");
+    cleanupApplyButton.onclick = async () => {
+      await this.plugin.runCleanupForQa(false);
+      await this.refreshScopeLabel();
+    };
+    const cleanupDryRunButton = actionRow.createEl("button", { text: "Cleanup dry-run" });
+    cleanupDryRunButton.addClass("auto-linker-chat-btn");
+    cleanupDryRunButton.onclick = async () => {
+      await this.plugin.runCleanupForQa(true);
+      await this.refreshScopeLabel();
+    };
+    const refreshButton = actionRow.createEl("button", { text: "Refresh scope" });
+    refreshButton.addClass("auto-linker-chat-btn");
+    refreshButton.onclick = async () => {
+      await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
+      this.refreshModelOptions();
+      await this.refreshScopeLabel();
+    };
+    const folderButton = actionRow.createEl("button", { text: "Chat folder" });
+    folderButton.addClass("auto-linker-chat-btn");
+    folderButton.onclick = async () => {
+      const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto-Linker Chats";
+      const next = window.prompt("Chat transcript folder (vault-relative)", current);
+      if (next === null) {
+        return;
+      }
+      try {
+        await this.plugin.setChatTranscriptRootPathForQa(next);
+        new import_obsidian4.Notice(`Chat folder set: ${this.plugin.getChatTranscriptRootPathForQa()}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown transcript folder error";
+        new import_obsidian4.Notice(`Invalid chat folder: ${message}`, 7e3);
+      }
+      await this.refreshScopeLabel();
+    };
+    const saveButton = actionRow.createEl("button", { text: "Save chat" });
+    saveButton.addClass("auto-linker-chat-btn");
     saveButton.onclick = async () => {
       if (this.messages.length === 0) {
         new import_obsidian4.Notice("No chat messages to save.");
@@ -2094,34 +2133,42 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         new import_obsidian4.Notice(`Failed to save chat: ${message}`, 7e3);
       }
     };
-    const topKRow = contentEl.createDiv();
-    topKRow.style.display = "flex";
-    topKRow.style.gap = "8px";
-    topKRow.style.alignItems = "center";
-    topKRow.style.marginBottom = "8px";
-    topKRow.createEl("label", { text: "Top sources" });
-    this.topKInput = topKRow.createEl("input", { type: "number" });
+    const controlRow = root.createDiv({ cls: "auto-linker-chat-controls" });
+    const modelWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
+    modelWrap.createEl("label", { text: "Model" });
+    this.modelSelect = modelWrap.createEl("select", { cls: "auto-linker-chat-model-select" });
+    this.modelSelect.onchange = async () => {
+      const next = this.modelSelect.value;
+      await this.plugin.setQaModelOverrideForQa(next === "__fallback__" ? "" : next);
+      await this.refreshScopeLabel();
+    };
+    const topKWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
+    topKWrap.createEl("label", { text: "Top sources" });
+    this.topKInput = topKWrap.createEl("input", {
+      type: "number",
+      cls: "auto-linker-chat-topk-input"
+    });
     this.topKInput.min = "1";
     this.topKInput.max = "15";
     this.topKInput.value = String(this.plugin.settings.qaTopK);
-    this.threadEl = contentEl.createDiv();
-    this.threadEl.style.minHeight = "320px";
-    this.threadEl.style.maxHeight = "58vh";
-    this.threadEl.style.overflow = "auto";
-    this.threadEl.style.border = "1px solid var(--background-modifier-border)";
-    this.threadEl.style.borderRadius = "8px";
-    this.threadEl.style.padding = "10px";
-    this.threadEl.style.marginBottom = "8px";
+    this.topKInput.onchange = async () => {
+      const parsed = Number.parseInt(this.topKInput.value, 10);
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        this.topKInput.value = String(this.plugin.settings.qaTopK);
+        return;
+      }
+      this.plugin.settings.qaTopK = Math.min(15, parsed);
+      await this.plugin.saveSettings();
+    };
+    this.threadEl = root.createDiv({ cls: "auto-linker-chat-thread" });
     this.threadEl.createEl("div", { text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694." });
-    this.inputEl = contentEl.createEl("textarea");
-    this.inputEl.style.width = "100%";
-    this.inputEl.style.minHeight = "88px";
+    this.inputEl = root.createEl("textarea", {
+      cls: "auto-linker-chat-input"
+    });
     this.inputEl.placeholder = "\uC120\uD0DD\uB41C \uB178\uD2B8/\uD3F4\uB354 \uBC94\uC704\uC5D0\uC11C \uC9C8\uBB38\uD558\uC138\uC694...";
-    const footer = contentEl.createDiv();
-    footer.style.display = "flex";
-    footer.style.justifyContent = "flex-end";
-    footer.style.marginTop = "8px";
+    const footer = root.createDiv({ cls: "auto-linker-chat-footer" });
     this.sendButton = footer.createEl("button", { text: "Send", cls: "mod-cta" });
+    this.sendButton.addClass("auto-linker-chat-send");
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
     };
@@ -2131,6 +2178,21 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         await this.submitQuestion();
       }
     });
+  }
+  refreshModelOptions() {
+    const currentOverride = this.plugin.getQaModelOverrideForQa();
+    const fallbackLabel = this.plugin.getQaModelLabelForQa();
+    const options = this.plugin.getQaModelOptionsForQa();
+    this.modelSelect.empty();
+    this.modelSelect.createEl("option", {
+      text: `Use main model (${fallbackLabel})`,
+      value: "__fallback__"
+    });
+    for (const model of options) {
+      this.modelSelect.createEl("option", { text: model, value: model });
+    }
+    const selected = currentOverride && options.includes(currentOverride) ? currentOverride : "__fallback__";
+    this.modelSelect.value = selected;
   }
   formatTime(iso) {
     const date = new Date(iso);
@@ -2146,24 +2208,19 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       return;
     }
     for (const message of this.messages) {
-      const box = this.threadEl.createDiv();
-      box.style.marginBottom = "12px";
-      box.style.padding = "8px";
-      box.style.borderRadius = "8px";
-      box.style.background = message.role === "user" ? "var(--background-secondary)" : message.role === "assistant" ? "var(--background-primary-alt)" : "var(--background-modifier-hover)";
+      const box = this.threadEl.createDiv({
+        cls: `auto-linker-chat-message auto-linker-chat-message-${message.role}`
+      });
       const title = box.createEl("strong", {
         text: message.role === "assistant" ? "Assistant" : message.role === "user" ? "You" : "System"
       });
       const time = box.createEl("small", { text: ` ${this.formatTime(message.timestamp)}` });
-      time.style.opacity = "0.8";
+      time.addClass("auto-linker-chat-message-time");
       title.appendChild(time);
-      const body = box.createDiv();
-      body.style.whiteSpace = "pre-wrap";
-      body.style.marginTop = "4px";
+      const body = box.createDiv({ cls: "auto-linker-chat-message-body" });
       body.setText(message.text);
       if (message.role === "assistant" && message.sources && message.sources.length > 0) {
-        const src = box.createDiv();
-        src.style.marginTop = "6px";
+        const src = box.createDiv({ cls: "auto-linker-chat-sources" });
         src.createEl("small", { text: "Sources" });
         for (const source of message.sources) {
           src.createEl("div", {
@@ -2202,8 +2259,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
     const model = this.plugin.getQaModelLabelForQa();
     const embedding = this.plugin.getQaEmbeddingModelForQa();
+    const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set)";
     this.scopeEl.setText(
-      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"}`
+      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"} | chats=${chatFolder}`
     );
   }
   async submitQuestion() {
@@ -2645,6 +2703,12 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Chat transcript folder path").setDesc("Vault-relative path for saving chat transcripts.").addText(
+      (text) => text.setPlaceholder("Auto-Linker Chats").setValue(this.plugin.settings.chatTranscriptRootPath).onChange(async (value) => {
+        this.plugin.settings.chatTranscriptRootPath = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Allow non-local Q&A endpoint (danger)").setDesc("Off by default. Keep disabled to prevent note data leaving localhost.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.qaAllowNonLocalEndpoint).onChange(async (value) => {
         this.plugin.settings.qaAllowNonLocalEndpoint = value;
@@ -2691,7 +2755,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Run cleanup command").setDesc(
-      "Use command palette: apply='Auto-Linker: Cleanup frontmatter properties for selected notes', preview='Auto-Linker: Dry-run cleanup frontmatter properties for selected notes'."
+      "Use command palette: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'."
     );
     new import_obsidian4.Setting(containerEl).setName("Sort tags and linked arrays").setDesc("Helps keep stable output and reduce linter churn.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.sortArrays).onChange(async (value) => {
@@ -2779,19 +2843,22 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       (leaf) => new LocalQAWorkspaceView(leaf, this)
     );
     await this.cleanupLegacyCacheArtifacts();
+    this.addRibbonIcon("message-square", "Open Auto-Linker Local Chat", () => {
+      void this.openLocalQaWorkspaceView();
+    });
     this.addCommand({
       id: "select-target-notes",
-      name: "Auto-Linker: Select target notes/folders",
+      name: "Select target notes/folders",
       callback: async () => this.openSelectionModal()
     });
     this.addCommand({
       id: "analyze-target-notes",
-      name: "Auto-Linker: Analyze selected notes (suggestions by default)",
+      name: "Analyze selected notes (suggestions by default)",
       callback: async () => this.runAnalysis()
     });
     this.addCommand({
       id: "clear-target-notes",
-      name: "Auto-Linker: Clear selected target notes/folders",
+      name: "Clear selected target notes/folders",
       callback: async () => {
         this.settings.targetFilePaths = [];
         this.settings.targetFolderPaths = [];
@@ -2801,46 +2868,46 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     });
     this.addCommand({
       id: "backup-selected-notes",
-      name: "Auto-Linker: Backup selected notes",
+      name: "Backup selected notes",
       callback: async () => this.backupSelectedNotesNow()
     });
     this.addCommand({
       id: "restore-latest-backup",
-      name: "Auto-Linker: Restore from latest backup",
+      name: "Restore from latest backup",
       callback: async () => this.restoreFromLatestBackup()
     });
     this.addCommand({
       id: "cleanup-selected-frontmatter",
-      name: "Auto-Linker: Cleanup frontmatter properties for selected notes",
+      name: "Cleanup frontmatter properties for selected notes",
       callback: async () => this.runPropertyCleanup(false)
     });
     this.addCommand({
       id: "cleanup-selected-frontmatter-dry-run",
-      name: "Auto-Linker: Dry-run cleanup frontmatter properties for selected notes",
+      name: "Dry-run cleanup frontmatter properties for selected notes",
       callback: async () => this.runPropertyCleanup(true)
     });
     this.addCommand({
       id: "select-cleanup-keys-from-selected-notes",
-      name: "Auto-Linker: Select cleanup keys from selected notes",
+      name: "Select cleanup keys from selected notes",
       callback: async () => this.openCleanupKeyPicker()
     });
     this.addCommand({
       id: "refresh-ollama-models",
-      name: "Auto-Linker: Refresh Ollama model detection",
+      name: "Refresh Ollama model detection",
       callback: async () => {
         await this.refreshOllamaDetection({ notify: true, autoApply: true });
       }
     });
     this.addCommand({
       id: "refresh-embedding-models",
-      name: "Auto-Linker: Refresh embedding model detection",
+      name: "Refresh embedding model detection",
       callback: async () => {
         await this.refreshEmbeddingModelDetection({ notify: true, autoApply: true });
       }
     });
     this.addCommand({
       id: "generate-moc-now",
-      name: "Auto-Linker: Generate MOC from selected notes",
+      name: "Generate MOC from selected notes",
       callback: async () => this.generateMocFromSelection()
     });
     this.addCommand({
@@ -2890,14 +2957,61 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getSelectedFolderPathsForQa() {
     return [...this.settings.targetFolderPaths];
   }
+  getQaModelOverrideForQa() {
+    return this.settings.qaOllamaModel.trim();
+  }
   getQaModelLabelForQa() {
     return this.resolveQaModel() || "(not set)";
   }
   getQaEmbeddingModelForQa() {
     return this.settings.semanticOllamaModel.trim();
   }
+  getQaModelOptionsForQa() {
+    const models = this.ollamaDetectionOptions.map((option) => option.model).filter((model) => isOllamaModelAnalyzable(model));
+    const deduped = [...new Set(models)];
+    const current = this.settings.qaOllamaModel.trim();
+    if (current && !deduped.includes(current)) {
+      deduped.unshift(current);
+    }
+    return deduped;
+  }
+  async setQaModelOverrideForQa(modelOverride) {
+    this.settings.qaOllamaModel = modelOverride.trim();
+    await this.saveSettings();
+  }
   async openSelectionForQa() {
     await this.openSelectionModal();
+  }
+  async openCleanupKeyPickerForQa() {
+    await this.openCleanupKeyPicker();
+  }
+  async runCleanupForQa(dryRun) {
+    await this.runPropertyCleanup(dryRun);
+  }
+  getChatTranscriptRootPathForQa() {
+    return this.settings.chatTranscriptRootPath.trim();
+  }
+  isSafeVaultRelativePath(path) {
+    const normalized = (0, import_obsidian4.normalizePath)(path.trim());
+    if (!normalized) {
+      return false;
+    }
+    if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) {
+      return false;
+    }
+    const segments = normalized.split("/");
+    if (segments.some((segment) => segment === "..")) {
+      return false;
+    }
+    return true;
+  }
+  async setChatTranscriptRootPathForQa(path) {
+    const next = (0, import_obsidian4.normalizePath)(path.trim());
+    if (!this.isSafeVaultRelativePath(next)) {
+      throw new Error("Chat transcript path must be a safe vault-relative folder path.");
+    }
+    this.settings.chatTranscriptRootPath = next;
+    await this.saveSettings();
   }
   escapeYamlValue(value) {
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -2905,7 +3019,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   async saveLocalQaTranscript(messages) {
     const timestamp = /* @__PURE__ */ new Date();
     const stamp = formatBackupStamp(timestamp);
-    const folder = (0, import_obsidian4.normalizePath)(LOCAL_QA_TRANSCRIPT_FOLDER);
+    const folderRaw = this.settings.chatTranscriptRootPath.trim() || "Auto-Linker Chats";
+    const folder = (0, import_obsidian4.normalizePath)(folderRaw);
+    if (!this.isSafeVaultRelativePath(folder)) {
+      throw new Error("Chat transcript root path is invalid. Check settings.");
+    }
     let outputPath = (0, import_obsidian4.normalizePath)(`${folder}/chat-${stamp}.md`);
     let suffix = 1;
     while (await this.app.vault.adapter.exists(outputPath)) {
@@ -3150,6 +3268,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
       this.settings.qaAllowNonLocalEndpoint = DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
+    }
+    if (typeof this.settings.chatTranscriptRootPath !== "string") {
+      this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;
+    }
+    if (!this.settings.chatTranscriptRootPath.trim()) {
+      this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;
     }
     if (typeof this.settings.propertyCleanupKeys !== "string") {
       this.settings.propertyCleanupKeys = DEFAULT_SETTINGS.propertyCleanupKeys;

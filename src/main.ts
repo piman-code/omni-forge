@@ -95,6 +95,7 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaTopK: 5,
   qaMaxContextChars: 12000,
   qaAllowNonLocalEndpoint: false,
+  chatTranscriptRootPath: "Auto-Linker Chats",
   propertyCleanupEnabled: false,
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
@@ -116,7 +117,6 @@ const LOCAL_QA_VIEW_TYPE = "auto-linker-local-qa-view";
 const ANALYSIS_CACHE_FILE = "analysis-proposal-cache.json";
 const ANALYSIS_CACHE_VERSION = 1;
 const ANALYSIS_CACHE_MAX_ENTRIES = 4000;
-const LOCAL_QA_TRANSCRIPT_FOLDER = "Auto-Linker Chats";
 const ANALYSIS_HARD_MAX_CANDIDATES = 120;
 
 function stringifyValue(value: unknown): string {
@@ -1283,6 +1283,7 @@ class LocalQAChatModal extends Modal {
 class LocalQAWorkspaceView extends ItemView {
   private readonly plugin: KnowledgeWeaverPlugin;
   private topKInput!: HTMLInputElement;
+  private modelSelect!: HTMLSelectElement;
   private inputEl!: HTMLTextAreaElement;
   private threadEl!: HTMLElement;
   private sendButton!: HTMLButtonElement;
@@ -1308,7 +1309,9 @@ class LocalQAWorkspaceView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
     this.render();
+    this.refreshModelOptions();
     await this.refreshScopeLabel();
   }
 
@@ -1317,30 +1320,72 @@ class LocalQAWorkspaceView extends ItemView {
   private render(): void {
     const { contentEl } = this;
     contentEl.empty();
+    contentEl.addClass("auto-linker-chat-view");
 
-    contentEl.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
-    this.scopeEl = contentEl.createEl("div");
-    this.scopeEl.style.marginBottom = "8px";
-    this.scopeEl.style.fontSize = "12px";
-    this.scopeEl.style.opacity = "0.9";
+    const root = contentEl.createDiv({ cls: "auto-linker-chat-root" });
+    const header = root.createDiv({ cls: "auto-linker-chat-header" });
+    header.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
+    this.scopeEl = header.createDiv({ cls: "auto-linker-chat-scope" });
 
-    const actionRow = contentEl.createDiv();
-    actionRow.style.display = "flex";
-    actionRow.style.gap = "8px";
-    actionRow.style.marginBottom = "8px";
+    const actionRow = root.createDiv({ cls: "auto-linker-chat-actions" });
 
     const selectButton = actionRow.createEl("button", { text: "Select notes" });
+    selectButton.addClass("auto-linker-chat-btn");
     selectButton.onclick = async () => {
       await this.plugin.openSelectionForQa();
       await this.refreshScopeLabel();
     };
 
-    const refreshButton = actionRow.createEl("button", { text: "Refresh scope" });
-    refreshButton.onclick = async () => {
+    const cleanupPickerButton = actionRow.createEl("button", { text: "Cleanup keys" });
+    cleanupPickerButton.addClass("auto-linker-chat-btn");
+    cleanupPickerButton.onclick = async () => {
+      await this.plugin.openCleanupKeyPickerForQa();
       await this.refreshScopeLabel();
     };
 
-    const saveButton = actionRow.createEl("button", { text: "Save chat to note" });
+    const cleanupApplyButton = actionRow.createEl("button", { text: "Run cleanup" });
+    cleanupApplyButton.addClass("auto-linker-chat-btn");
+    cleanupApplyButton.onclick = async () => {
+      await this.plugin.runCleanupForQa(false);
+      await this.refreshScopeLabel();
+    };
+
+    const cleanupDryRunButton = actionRow.createEl("button", { text: "Cleanup dry-run" });
+    cleanupDryRunButton.addClass("auto-linker-chat-btn");
+    cleanupDryRunButton.onclick = async () => {
+      await this.plugin.runCleanupForQa(true);
+      await this.refreshScopeLabel();
+    };
+
+    const refreshButton = actionRow.createEl("button", { text: "Refresh scope" });
+    refreshButton.addClass("auto-linker-chat-btn");
+    refreshButton.onclick = async () => {
+      await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
+      this.refreshModelOptions();
+      await this.refreshScopeLabel();
+    };
+
+    const folderButton = actionRow.createEl("button", { text: "Chat folder" });
+    folderButton.addClass("auto-linker-chat-btn");
+    folderButton.onclick = async () => {
+      const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto-Linker Chats";
+      const next = window.prompt("Chat transcript folder (vault-relative)", current);
+      if (next === null) {
+        return;
+      }
+      try {
+        await this.plugin.setChatTranscriptRootPathForQa(next);
+        new Notice(`Chat folder set: ${this.plugin.getChatTranscriptRootPathForQa()}`);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown transcript folder error";
+        new Notice(`Invalid chat folder: ${message}`, 7000);
+      }
+      await this.refreshScopeLabel();
+    };
+
+    const saveButton = actionRow.createEl("button", { text: "Save chat" });
+    saveButton.addClass("auto-linker-chat-btn");
     saveButton.onclick = async () => {
       if (this.messages.length === 0) {
         new Notice("No chat messages to save.");
@@ -1356,38 +1401,47 @@ class LocalQAWorkspaceView extends ItemView {
       }
     };
 
-    const topKRow = contentEl.createDiv();
-    topKRow.style.display = "flex";
-    topKRow.style.gap = "8px";
-    topKRow.style.alignItems = "center";
-    topKRow.style.marginBottom = "8px";
-    topKRow.createEl("label", { text: "Top sources" });
-    this.topKInput = topKRow.createEl("input", { type: "number" });
+    const controlRow = root.createDiv({ cls: "auto-linker-chat-controls" });
+    const modelWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
+    modelWrap.createEl("label", { text: "Model" });
+    this.modelSelect = modelWrap.createEl("select", { cls: "auto-linker-chat-model-select" });
+    this.modelSelect.onchange = async () => {
+      const next = this.modelSelect.value;
+      await this.plugin.setQaModelOverrideForQa(next === "__fallback__" ? "" : next);
+      await this.refreshScopeLabel();
+    };
+
+    const topKWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
+    topKWrap.createEl("label", { text: "Top sources" });
+    this.topKInput = topKWrap.createEl("input", {
+      type: "number",
+      cls: "auto-linker-chat-topk-input",
+    });
     this.topKInput.min = "1";
     this.topKInput.max = "15";
     this.topKInput.value = String(this.plugin.settings.qaTopK);
+    this.topKInput.onchange = async () => {
+      const parsed = Number.parseInt(this.topKInput.value, 10);
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        this.topKInput.value = String(this.plugin.settings.qaTopK);
+        return;
+      }
+      this.plugin.settings.qaTopK = Math.min(15, parsed);
+      await this.plugin.saveSettings();
+    };
 
-    this.threadEl = contentEl.createDiv();
-    this.threadEl.style.minHeight = "320px";
-    this.threadEl.style.maxHeight = "58vh";
-    this.threadEl.style.overflow = "auto";
-    this.threadEl.style.border = "1px solid var(--background-modifier-border)";
-    this.threadEl.style.borderRadius = "8px";
-    this.threadEl.style.padding = "10px";
-    this.threadEl.style.marginBottom = "8px";
+    this.threadEl = root.createDiv({ cls: "auto-linker-chat-thread" });
     this.threadEl.createEl("div", { text: "질문을 입력해 대화를 시작하세요." });
 
-    this.inputEl = contentEl.createEl("textarea");
-    this.inputEl.style.width = "100%";
-    this.inputEl.style.minHeight = "88px";
+    this.inputEl = root.createEl("textarea", {
+      cls: "auto-linker-chat-input",
+    });
     this.inputEl.placeholder = "선택된 노트/폴더 범위에서 질문하세요...";
 
-    const footer = contentEl.createDiv();
-    footer.style.display = "flex";
-    footer.style.justifyContent = "flex-end";
-    footer.style.marginTop = "8px";
+    const footer = root.createDiv({ cls: "auto-linker-chat-footer" });
 
     this.sendButton = footer.createEl("button", { text: "Send", cls: "mod-cta" });
+    this.sendButton.addClass("auto-linker-chat-send");
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
     };
@@ -1398,6 +1452,26 @@ class LocalQAWorkspaceView extends ItemView {
         await this.submitQuestion();
       }
     });
+  }
+
+  private refreshModelOptions(): void {
+    const currentOverride = this.plugin.getQaModelOverrideForQa();
+    const fallbackLabel = this.plugin.getQaModelLabelForQa();
+    const options = this.plugin.getQaModelOptionsForQa();
+
+    this.modelSelect.empty();
+    this.modelSelect.createEl("option", {
+      text: `Use main model (${fallbackLabel})`,
+      value: "__fallback__",
+    });
+    for (const model of options) {
+      this.modelSelect.createEl("option", { text: model, value: model });
+    }
+
+    const selected = currentOverride && options.includes(currentOverride)
+      ? currentOverride
+      : "__fallback__";
+    this.modelSelect.value = selected;
   }
 
   private formatTime(iso: string): string {
@@ -1416,16 +1490,9 @@ class LocalQAWorkspaceView extends ItemView {
     }
 
     for (const message of this.messages) {
-      const box = this.threadEl.createDiv();
-      box.style.marginBottom = "12px";
-      box.style.padding = "8px";
-      box.style.borderRadius = "8px";
-      box.style.background =
-        message.role === "user"
-          ? "var(--background-secondary)"
-          : message.role === "assistant"
-            ? "var(--background-primary-alt)"
-            : "var(--background-modifier-hover)";
+      const box = this.threadEl.createDiv({
+        cls: `auto-linker-chat-message auto-linker-chat-message-${message.role}`,
+      });
 
       const title = box.createEl("strong", {
         text:
@@ -1436,17 +1503,14 @@ class LocalQAWorkspaceView extends ItemView {
               : "System",
       });
       const time = box.createEl("small", { text: ` ${this.formatTime(message.timestamp)}` });
-      time.style.opacity = "0.8";
+      time.addClass("auto-linker-chat-message-time");
       title.appendChild(time);
 
-      const body = box.createDiv();
-      body.style.whiteSpace = "pre-wrap";
-      body.style.marginTop = "4px";
+      const body = box.createDiv({ cls: "auto-linker-chat-message-body" });
       body.setText(message.text);
 
       if (message.role === "assistant" && message.sources && message.sources.length > 0) {
-        const src = box.createDiv();
-        src.style.marginTop = "6px";
+        const src = box.createDiv({ cls: "auto-linker-chat-sources" });
         src.createEl("small", { text: "Sources" });
         for (const source of message.sources) {
           src.createEl("div", {
@@ -1492,8 +1556,9 @@ class LocalQAWorkspaceView extends ItemView {
     const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
     const model = this.plugin.getQaModelLabelForQa();
     const embedding = this.plugin.getQaEmbeddingModelForQa();
+    const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set)";
     this.scopeEl.setText(
-      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"}`,
+      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"} | chats=${chatFolder}`,
     );
   }
 
@@ -2204,6 +2269,19 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Chat transcript folder path")
+      .setDesc("Vault-relative path for saving chat transcripts.")
+      .addText((text) =>
+        text
+          .setPlaceholder("Auto-Linker Chats")
+          .setValue(this.plugin.settings.chatTranscriptRootPath)
+          .onChange(async (value) => {
+            this.plugin.settings.chatTranscriptRootPath = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Allow non-local Q&A endpoint (danger)")
       .setDesc("Off by default. Keep disabled to prevent note data leaving localhost.")
       .addToggle((toggle) =>
@@ -2295,7 +2373,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Run cleanup command")
       .setDesc(
-        "Use command palette: apply='Auto-Linker: Cleanup frontmatter properties for selected notes', preview='Auto-Linker: Dry-run cleanup frontmatter properties for selected notes'.",
+        "Use command palette: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'.",
       );
 
     new Setting(containerEl)
@@ -2478,22 +2556,25 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       (leaf) => new LocalQAWorkspaceView(leaf, this),
     );
     await this.cleanupLegacyCacheArtifacts();
+    this.addRibbonIcon("message-square", "Open Auto-Linker Local Chat", () => {
+      void this.openLocalQaWorkspaceView();
+    });
 
     this.addCommand({
       id: "select-target-notes",
-      name: "Auto-Linker: Select target notes/folders",
+      name: "Select target notes/folders",
       callback: async () => this.openSelectionModal(),
     });
 
     this.addCommand({
       id: "analyze-target-notes",
-      name: "Auto-Linker: Analyze selected notes (suggestions by default)",
+      name: "Analyze selected notes (suggestions by default)",
       callback: async () => this.runAnalysis(),
     });
 
     this.addCommand({
       id: "clear-target-notes",
-      name: "Auto-Linker: Clear selected target notes/folders",
+      name: "Clear selected target notes/folders",
       callback: async () => {
         this.settings.targetFilePaths = [];
         this.settings.targetFolderPaths = [];
@@ -2504,37 +2585,37 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     this.addCommand({
       id: "backup-selected-notes",
-      name: "Auto-Linker: Backup selected notes",
+      name: "Backup selected notes",
       callback: async () => this.backupSelectedNotesNow(),
     });
 
     this.addCommand({
       id: "restore-latest-backup",
-      name: "Auto-Linker: Restore from latest backup",
+      name: "Restore from latest backup",
       callback: async () => this.restoreFromLatestBackup(),
     });
 
     this.addCommand({
       id: "cleanup-selected-frontmatter",
-      name: "Auto-Linker: Cleanup frontmatter properties for selected notes",
+      name: "Cleanup frontmatter properties for selected notes",
       callback: async () => this.runPropertyCleanup(false),
     });
 
     this.addCommand({
       id: "cleanup-selected-frontmatter-dry-run",
-      name: "Auto-Linker: Dry-run cleanup frontmatter properties for selected notes",
+      name: "Dry-run cleanup frontmatter properties for selected notes",
       callback: async () => this.runPropertyCleanup(true),
     });
 
     this.addCommand({
       id: "select-cleanup-keys-from-selected-notes",
-      name: "Auto-Linker: Select cleanup keys from selected notes",
+      name: "Select cleanup keys from selected notes",
       callback: async () => this.openCleanupKeyPicker(),
     });
 
     this.addCommand({
       id: "refresh-ollama-models",
-      name: "Auto-Linker: Refresh Ollama model detection",
+      name: "Refresh Ollama model detection",
       callback: async () => {
         await this.refreshOllamaDetection({ notify: true, autoApply: true });
       },
@@ -2542,7 +2623,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     this.addCommand({
       id: "refresh-embedding-models",
-      name: "Auto-Linker: Refresh embedding model detection",
+      name: "Refresh embedding model detection",
       callback: async () => {
         await this.refreshEmbeddingModelDetection({ notify: true, autoApply: true });
       },
@@ -2550,7 +2631,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     this.addCommand({
       id: "generate-moc-now",
-      name: "Auto-Linker: Generate MOC from selected notes",
+      name: "Generate MOC from selected notes",
       callback: async () => this.generateMocFromSelection(),
     });
 
@@ -2612,6 +2693,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return [...this.settings.targetFolderPaths];
   }
 
+  getQaModelOverrideForQa(): string {
+    return this.settings.qaOllamaModel.trim();
+  }
+
   getQaModelLabelForQa(): string {
     return this.resolveQaModel() || "(not set)";
   }
@@ -2620,8 +2705,61 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return this.settings.semanticOllamaModel.trim();
   }
 
+  getQaModelOptionsForQa(): string[] {
+    const models = this.ollamaDetectionOptions
+      .map((option) => option.model)
+      .filter((model) => isOllamaModelAnalyzable(model));
+    const deduped = [...new Set(models)];
+    const current = this.settings.qaOllamaModel.trim();
+    if (current && !deduped.includes(current)) {
+      deduped.unshift(current);
+    }
+    return deduped;
+  }
+
+  async setQaModelOverrideForQa(modelOverride: string): Promise<void> {
+    this.settings.qaOllamaModel = modelOverride.trim();
+    await this.saveSettings();
+  }
+
   async openSelectionForQa(): Promise<void> {
     await this.openSelectionModal();
+  }
+
+  async openCleanupKeyPickerForQa(): Promise<void> {
+    await this.openCleanupKeyPicker();
+  }
+
+  async runCleanupForQa(dryRun: boolean): Promise<void> {
+    await this.runPropertyCleanup(dryRun);
+  }
+
+  getChatTranscriptRootPathForQa(): string {
+    return this.settings.chatTranscriptRootPath.trim();
+  }
+
+  private isSafeVaultRelativePath(path: string): boolean {
+    const normalized = normalizePath(path.trim());
+    if (!normalized) {
+      return false;
+    }
+    if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) {
+      return false;
+    }
+    const segments = normalized.split("/");
+    if (segments.some((segment) => segment === "..")) {
+      return false;
+    }
+    return true;
+  }
+
+  async setChatTranscriptRootPathForQa(path: string): Promise<void> {
+    const next = normalizePath(path.trim());
+    if (!this.isSafeVaultRelativePath(next)) {
+      throw new Error("Chat transcript path must be a safe vault-relative folder path.");
+    }
+    this.settings.chatTranscriptRootPath = next;
+    await this.saveSettings();
   }
 
   private escapeYamlValue(value: string): string {
@@ -2631,7 +2769,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   async saveLocalQaTranscript(messages: LocalQAViewMessage[]): Promise<string> {
     const timestamp = new Date();
     const stamp = formatBackupStamp(timestamp);
-    const folder = normalizePath(LOCAL_QA_TRANSCRIPT_FOLDER);
+    const folderRaw = this.settings.chatTranscriptRootPath.trim() || "Auto-Linker Chats";
+    const folder = normalizePath(folderRaw);
+    if (!this.isSafeVaultRelativePath(folder)) {
+      throw new Error("Chat transcript root path is invalid. Check settings.");
+    }
     let outputPath = normalizePath(`${folder}/chat-${stamp}.md`);
     let suffix = 1;
     while (await this.app.vault.adapter.exists(outputPath)) {
@@ -2915,6 +3057,12 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
       this.settings.qaAllowNonLocalEndpoint =
         DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
+    }
+    if (typeof this.settings.chatTranscriptRootPath !== "string") {
+      this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;
+    }
+    if (!this.settings.chatTranscriptRootPath.trim()) {
+      this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;
     }
     if (typeof this.settings.propertyCleanupKeys !== "string") {
       this.settings.propertyCleanupKeys = DEFAULT_SETTINGS.propertyCleanupKeys;

@@ -143,6 +143,7 @@ export interface KnowledgeWeaverSettings {
   qaTopK: number;
   qaMaxContextChars: number;
   qaAllowNonLocalEndpoint: boolean;
+  chatTranscriptRootPath: string;
   propertyCleanupEnabled: boolean;
   propertyCleanupKeys: string;
   propertyCleanupPrefixes: string;
