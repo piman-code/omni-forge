@@ -1158,6 +1158,12 @@ interface LocalQaProgressEvent {
 type LocalQaResponseIntent = "default" | "comparison" | "plan" | "sources_only";
 type LocalQaEndpointKind = "chat" | "generate";
 
+interface LocalQaCompletionPayload {
+  answer: string;
+  thinking: string;
+  endpoint: LocalQaEndpointKind;
+}
+
 interface LocalQAResultPayload {
   question: string;
   answer: string;
@@ -1688,21 +1694,25 @@ class LocalQAWorkspaceView extends ItemView {
   }
 
   private renderThinkingCard(parent: HTMLElement, message: LocalQAViewMessage): void {
-    const details = parent.createEl("details", { cls: "auto-linker-chat-thinking-details" });
-    if (message.isDraft) {
-      details.open = true;
-    }
     const timeline = message.timeline ?? [];
     const latest = timeline.length > 0 ? timeline[timeline.length - 1] : undefined;
-    const summaryPrefix = message.isDraft ? "Thinking (live)" : "Thinking timeline";
+    const panel = parent.createDiv({ cls: "auto-linker-chat-thinking-panel" });
+    const head = panel.createDiv({ cls: "auto-linker-chat-thinking-head" });
     const summaryText = latest
-      ? `${summaryPrefix} · ${timeline.length} events · ${this.formatThinkingStage(latest.stage)}`
-      : summaryPrefix;
-    details.createEl("summary", {
+      ? `Thinking timeline · ${timeline.length} events · ${this.formatThinkingStage(latest.stage)}`
+      : "Thinking timeline";
+    head.createDiv({
       text: summaryText,
       cls: "auto-linker-chat-thinking-summary",
     });
-    const body = details.createDiv({ cls: "auto-linker-chat-thinking-body" });
+    if (message.isDraft) {
+      head.createDiv({
+        cls: "auto-linker-chat-thinking-live",
+        text: "LIVE",
+      });
+    }
+
+    const body = panel.createDiv({ cls: "auto-linker-chat-thinking-body" });
     if (timeline.length > 0) {
       const timelineEl = body.createDiv({ cls: "auto-linker-chat-thinking-timeline" });
       for (const event of timeline.slice(-24)) {
@@ -4781,7 +4791,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     history: LocalQAConversationTurn[];
     onToken?: (token: string) => void;
     onEvent?: (event: LocalQaProgressEvent) => void;
-  }): Promise<{ answer: string; thinking: string; endpoint: LocalQaEndpointKind }> {
+  }): Promise<LocalQaCompletionPayload> {
     const {
       qaBaseUrl,
       qaModel,
@@ -4804,10 +4814,15 @@ export default class KnowledgeWeaverPlugin extends Plugin {
           onToken,
           onEvent,
         });
-        return {
-          ...chatResult,
-          endpoint: "chat",
-        };
+        if (chatResult.answer.trim()) {
+          return {
+            ...chatResult,
+            endpoint: "chat",
+          };
+        }
+        this.emitQaEvent(onEvent, "warning", "/api/chat returned an empty answer", {
+          detail: "Fallback to /api/generate",
+        });
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Unknown /api/chat error";

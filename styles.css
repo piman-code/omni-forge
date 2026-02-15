@@ -274,22 +274,40 @@
   margin: 0.7em 0;
 }
 
-.auto-linker-chat-thinking-details {
+.auto-linker-chat-thinking-panel {
   border: 1px solid var(--background-modifier-border);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--background-primary) 92%, var(--interactive-accent) 8%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--background-primary) 90%, var(--interactive-accent) 10%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+}
+
+.auto-linker-chat-thinking-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px dashed var(--background-modifier-border);
 }
 
 .auto-linker-chat-thinking-summary {
-  cursor: pointer;
   font-weight: 700;
   font-size: 13px;
   color: var(--text-muted);
-  padding: 6px 8px;
+}
+
+.auto-linker-chat-thinking-live {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--interactive-accent);
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 48%, var(--background-modifier-border));
+  border-radius: 999px;
+  padding: 1px 6px;
 }
 
 .auto-linker-chat-thinking-body {
-  padding: 0 8px 8px;
+  padding: 8px;
   white-space: pre-wrap;
   line-height: 1.45;
   font-size: 12px;

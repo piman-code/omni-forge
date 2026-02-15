@@ -2333,19 +2333,22 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   renderThinkingCard(parent, message) {
     var _a, _b;
-    const details = parent.createEl("details", { cls: "auto-linker-chat-thinking-details" });
-    if (message.isDraft) {
-      details.open = true;
-    }
     const timeline = (_a = message.timeline) != null ? _a : [];
     const latest = timeline.length > 0 ? timeline[timeline.length - 1] : void 0;
-    const summaryPrefix = message.isDraft ? "Thinking (live)" : "Thinking timeline";
-    const summaryText = latest ? `${summaryPrefix} \xB7 ${timeline.length} events \xB7 ${this.formatThinkingStage(latest.stage)}` : summaryPrefix;
-    details.createEl("summary", {
+    const panel = parent.createDiv({ cls: "auto-linker-chat-thinking-panel" });
+    const head = panel.createDiv({ cls: "auto-linker-chat-thinking-head" });
+    const summaryText = latest ? `Thinking timeline \xB7 ${timeline.length} events \xB7 ${this.formatThinkingStage(latest.stage)}` : "Thinking timeline";
+    head.createDiv({
       text: summaryText,
       cls: "auto-linker-chat-thinking-summary"
     });
-    const body = details.createDiv({ cls: "auto-linker-chat-thinking-body" });
+    if (message.isDraft) {
+      head.createDiv({
+        cls: "auto-linker-chat-thinking-live",
+        text: "LIVE"
+      });
+    }
+    const body = panel.createDiv({ cls: "auto-linker-chat-thinking-body" });
     if (timeline.length > 0) {
       const timelineEl = body.createDiv({ cls: "auto-linker-chat-thinking-timeline" });
       for (const event of timeline.slice(-24)) {
@@ -4628,10 +4631,15 @@ ${item.content}`
           onToken,
           onEvent
         });
-        return {
-          ...chatResult,
-          endpoint: "chat"
-        };
+        if (chatResult.answer.trim()) {
+          return {
+            ...chatResult,
+            endpoint: "chat"
+          };
+        }
+        this.emitQaEvent(onEvent, "warning", "/api/chat returned an empty answer", {
+          detail: "Fallback to /api/generate"
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown /api/chat error";
         this.emitQaEvent(onEvent, "warning", "Falling back to /api/generate", {

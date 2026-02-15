@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.10] - 2026-02-15
+
+### Changed
+
+- Local AI Chat now renders thinking progress as always-visible timeline cards with clearer stage labels and live status.
+- Local Q&A generation keeps `/api/chat` as primary path while preserving automatic `/api/generate` fallback behavior.
+- Markdown answer styling was further stabilized for tables/checklists/code/blockquote rendering across themes.
+
+### Fixed
+
+- Fixed empty-answer failure path by falling back when `/api/chat` returns no final text.
+- Reduced “improvement not visible” UX issue by removing dependence on collapsed thinking details UI.
+
+## [0.2.9] - 2026-02-15
+
+### Changed
+
+- Thinking UI now renders as always-visible timeline cards (no collapsed details dependency).
+- Thinking card header now shows live status badge while generation is in progress.
+
+### Fixed
+
+- If Ollama `/api/chat` returns an empty answer, local Q&A now automatically falls back to `/api/generate`.
+- Reduced empty-answer failure path for local chat by strengthening endpoint fallback behavior.
+
 ## [0.2.8] - 2026-02-15
 
 ### Added
