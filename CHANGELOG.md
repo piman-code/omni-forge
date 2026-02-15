@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.17] - 2026-02-15
+
+### Changed
+
+- Corrected release packaging alignment for `0.2.17`:
+  - release tag now points to the `0.2.17` version commit
+  - bundled `manifest.json` version set to `0.2.17`
+  - `versions.json` includes `0.2.17`
+- Functional changes are the same as `0.2.16` (UI alignment fixes, bilingual UI updates, role-specific model and pipeline controls).
+
+### Security
+
+- Re-ran full release checks with local-endpoint-first policy unchanged.
+
 ## [0.2.16] - 2026-02-15
 
 ### Added
