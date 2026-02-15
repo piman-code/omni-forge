@@ -23,11 +23,15 @@ Auto Link takes the opposite approach:
 - Selected-scope analysis only (files/folders you chose)
 - Suggestion-first workflow (preview before apply)
 - Local AI chat over selected notes with markdown answers
+- Send/Stop control for long-running local chat generation
 - Source links for traceability (`[[note path]]`)
 - Thinking/progress timeline during retrieval and generation
+- Custom system prompt + role preset (orchestrator/coder/debugger/architect/safeguard/ask)
 - Semantic candidate ranking (Ollama embeddings)
+- Selection inventory context for large-scope questions
 - Cleanup rules for frontmatter properties
 - Backup + restore workflow before risky operations
+- Optional auto-tagging for active note (tags only)
 - MOC generation from selected notes
 
 ## Security-First Defaults
@@ -78,9 +82,13 @@ See [SECURITY.md](SECURITY.md) for policy details.
 | Safety | Allow non-local Q&A endpoint | OFF |
 | Q&A | Prefer Ollama /api/chat (with fallback) | ON |
 | Q&A | Structured answer guard | ON |
+| Q&A | Always detailed answers | ON |
+| Q&A | Preferred response language | Korean (if primary language is Korean) |
+| Q&A | Include selection inventory | ON (large scopes) |
 | Chat | Auto-sync chat thread | ON |
 | Analysis | Analyze changed notes only | ON (for large vaults) |
 | Watcher | Watch folders for new notes | ON for inbox workflows |
+| Auto-tag | Auto-tag active note | ON (optional, tags-only automation) |
 | Backup | Backup selected notes before apply | ON |
 
 ## Performance Tips
@@ -107,6 +115,7 @@ This helps maintain metadata freshness without full rescans.
 
 - `Select target notes/folders`
 - `Analyze selected notes (suggestions by default)`
+- `Auto-tag active note (tags only)`
 - `Clear selected target notes/folders`
 - `Backup selected notes`
 - `Restore from latest backup`
@@ -127,7 +136,9 @@ This helps maintain metadata freshness without full rescans.
 - `Embedding model is not suitable`
   - Choose an embedding-capable model and refresh detection.
 - Empty or too short answers
-  - Keep structured answer guard enabled and verify source scope quality.
+  - Keep structured answer guard enabled, use always-detailed mode, and set minimum answer chars.
+- Large selection asks (for example 100+ files) return sparse evidence
+  - Enable selection inventory context and increase Q&A max context chars if your hardware allows.
 
 ## Privacy Notes
 

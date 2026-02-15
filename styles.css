@@ -471,10 +471,17 @@
 .auto-linker-chat-footer {
   display: flex;
   align-items: flex-end;
+  gap: 8px;
 }
 
 .auto-linker-chat-send {
   min-width: 96px;
+  min-height: 38px;
+  border-radius: 10px;
+}
+
+.auto-linker-chat-stop {
+  min-width: 84px;
   min-height: 38px;
   border-radius: 10px;
 }

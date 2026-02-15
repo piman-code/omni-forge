@@ -1419,7 +1419,16 @@ var DEFAULT_SETTINGS = {
   qaAllowNonLocalEndpoint: false,
   qaPreferChatApi: true,
   qaStructureGuardEnabled: true,
+  qaAlwaysDetailedAnswer: true,
+  qaMinAnswerChars: 320,
+  qaPreferredResponseLanguage: "korean",
+  qaCustomSystemPrompt: "",
+  qaRolePreset: "ask",
+  qaIncludeSelectionInventory: true,
+  qaSelectionInventoryMaxFiles: 200,
   qaThreadAutoSyncEnabled: true,
+  autoTagActiveNoteEnabled: false,
+  autoTagActiveNoteCooldownSec: 90,
   watchNewNotesEnabled: false,
   watchNewNotesFolders: "",
   chatTranscriptRootPath: "Auto Link Chats",
@@ -2253,6 +2262,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.running = false;
+    this.activeRequestController = null;
     this.messages = [];
     this.threadPath = null;
     this.threadId = "";
@@ -2283,6 +2293,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.refreshThreadMeta();
   }
   async onClose() {
+    var _a;
+    (_a = this.activeRequestController) == null ? void 0 : _a.abort();
+    this.activeRequestController = null;
     if (this.syncTimer !== null) {
       window.clearTimeout(this.syncTimer);
       this.syncTimer = null;
@@ -2425,6 +2438,13 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.sendButton.addClass("auto-linker-chat-send");
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
+    };
+    this.stopButton = footer.createEl("button", { text: "Stop" });
+    this.stopButton.addClass("auto-linker-chat-stop");
+    this.stopButton.disabled = true;
+    this.stopButton.onclick = () => {
+      var _a;
+      (_a = this.activeRequestController) == null ? void 0 : _a.abort();
     };
     this.inputEl.addEventListener("keydown", async (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
@@ -2778,6 +2798,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     });
     this.running = true;
     this.sendButton.disabled = true;
+    this.stopButton.disabled = false;
+    const abortController = new AbortController();
+    this.activeRequestController = abortController;
     const thinkingMessage = {
       role: "thinking",
       text: "- Retrieving relevant notes...",
@@ -2873,7 +2896,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
             return;
           }
           pushTimelineEvent(event);
-        }
+        },
+        abortController.signal
       );
       const draft = this.messages[draftIndex];
       if (draft && draft.role === "assistant") {
@@ -2929,7 +2953,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       this.renderMessages();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown local QA error";
+      const cancelled = this.plugin.isAbortError(error);
+      const message = cancelled ? "\uC694\uCCAD\uC774 \uC911\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4." : error instanceof Error ? error.message : "Unknown local QA error";
       const draft = this.messages[draftIndex];
       if (draft && draft.role === "assistant" && !draft.text.trim()) {
         this.messages.splice(draftIndex, 1);
@@ -2939,21 +2964,25 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       const thinking = this.messages[thinkingIndex];
       if (thinking && thinking.role === "thinking") {
         pushTimelineEvent({
-          stage: "error",
-          message: `Error: ${message}`
+          stage: cancelled ? "warning" : "error",
+          message: cancelled ? "Request cancelled by user" : `Error: ${message}`
         });
         thinking.isDraft = false;
         thinking.timestamp = (/* @__PURE__ */ new Date()).toISOString();
       }
       this.pushMessage({
         role: "system",
-        text: `\uC624\uB958: ${message}`,
+        text: cancelled ? `\uC911\uC9C0: ${message}` : `\uC624\uB958: ${message}`,
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
-      new import_obsidian4.Notice(`Local Q&A failed: ${message}`, 7e3);
+      if (!cancelled) {
+        new import_obsidian4.Notice(`Local Q&A failed: ${message}`, 7e3);
+      }
     } finally {
       this.running = false;
       this.sendButton.disabled = false;
+      this.stopButton.disabled = true;
+      this.activeRequestController = null;
       if (this.streamRenderTimer !== null) {
         window.clearTimeout(this.streamRenderTimer);
         this.streamRenderTimer = null;
@@ -2970,9 +2999,9 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Auto Link Settings" });
+    containerEl.createEl("h2", { text: "Auto Link Settings / Auto Link \uC124\uC815" });
     containerEl.createEl("p", {
-      text: "Language docs: README.md (index) | README_KO.md (Korean quick access)"
+      text: "Language docs / \uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)"
     });
     new import_obsidian4.Setting(containerEl).setName("Provider").setDesc("Choose AI provider. Local providers are recommended first.").addDropdown(
       (dropdown) => dropdown.addOption("ollama", "Ollama (local)").addOption("lmstudio", "LM Studio (local)").addOption("openai", "OpenAI / Codex").addOption("anthropic", "Claude").addOption("gemini", "Gemini").setValue(this.plugin.settings.provider).onChange(async (value) => {
@@ -3164,8 +3193,8 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Analyze changed notes only").setDesc(
-      "Skip unchanged notes when cache metadata matches. Turn off to include cached notes in every run."
+    new import_obsidian4.Setting(containerEl).setName("Analyze changed notes only / \uBCC0\uACBD\uB41C \uB178\uD2B8\uB9CC \uBD84\uC11D").setDesc(
+      "Skip unchanged notes when cache metadata matches. Turn off to include cached notes in every run. / \uCE90\uC2DC\uC640 \uB3D9\uC77C\uD558\uBA74 \uC2A4\uD0B5\uD569\uB2C8\uB2E4."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.analysisOnlyChangedNotes).onChange(async (value) => {
         this.plugin.settings.analysisOnlyChangedNotes = value;
@@ -3278,7 +3307,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    containerEl.createEl("h3", { text: "Local Q&A (security-first)" });
+    containerEl.createEl("h3", { text: "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)" });
     new import_obsidian4.Setting(containerEl).setName("Q&A Ollama base URL").setDesc("Leave empty to use main Ollama base URL.").addText(
       (text) => text.setPlaceholder("http://127.0.0.1:11434").setValue(this.plugin.settings.qaOllamaBaseUrl).onChange(async (value) => {
         this.plugin.settings.qaOllamaBaseUrl = value.trim();
@@ -3297,7 +3326,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Q&A retrieval top-k").addText(
+    new import_obsidian4.Setting(containerEl).setName("Q&A retrieval top-k / \uAC80\uC0C9 \uC18C\uC2A4 \uC218").addText(
       (text) => text.setPlaceholder("5").setValue(String(this.plugin.settings.qaTopK)).onChange(async (value) => {
         this.plugin.settings.qaTopK = parsePositiveInt(
           value,
@@ -3306,7 +3335,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Q&A max context chars").setDesc("Maximum total note characters to send to local LLM.").addText(
+    new import_obsidian4.Setting(containerEl).setName("Q&A max context chars / \uCD5C\uB300 \uCEE8\uD14D\uC2A4\uD2B8 \uAE38\uC774").setDesc("Maximum total note characters to send to local LLM. / \uB85C\uCEEC LLM\uC5D0 \uC804\uB2EC\uD560 \uCD5C\uB300 \uBB38\uC790 \uC218").addText(
       (text) => text.setPlaceholder("12000").setValue(String(this.plugin.settings.qaMaxContextChars)).onChange(async (value) => {
         this.plugin.settings.qaMaxContextChars = parsePositiveInt(
           value,
@@ -3315,9 +3344,57 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Structured answer guard").setDesc("Enforce table/checklist/link structure for comparison/plan/source questions.").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Structured answer guard / \uAD6C\uC870\uD654 \uCD9C\uB825 \uAC00\uB4DC").setDesc("Enforce table/checklist/link structure for comparison/plan/source questions. / \uD45C\xB7\uCCB4\uD06C\uB9AC\uC2A4\uD2B8\xB7\uB9C1\uD06C \uD615\uC2DD\uC744 \uAC15\uC81C\uD569\uB2C8\uB2E4.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.qaStructureGuardEnabled).onChange(async (value) => {
         this.plugin.settings.qaStructureGuardEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Always detailed answers / \uD56D\uC0C1 \uC790\uC138\uD55C \uB2F5\uBCC0").setDesc("Prefer long, structured answers unless user explicitly asks for brief output. / \uC0AC\uC6A9\uC790\uAC00 \uC9E7\uAC8C \uC694\uCCAD\uD558\uC9C0 \uC54A\uC73C\uBA74 \uC0C1\uC138 \uB2F5\uBCC0\uC744 \uC6B0\uC120\uD569\uB2C8\uB2E4.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaAlwaysDetailedAnswer).onChange(async (value) => {
+        this.plugin.settings.qaAlwaysDetailedAnswer = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Minimum answer chars / \uCD5C\uC18C \uB2F5\uBCC0 \uAE38\uC774").setDesc("Used by structured guard depth repair. / \uAD6C\uC870\uD654 \uAC00\uB4DC\uC758 \uAE38\uC774 \uBCF4\uC815 \uAE30\uC900").addText(
+      (text) => text.setPlaceholder("320").setValue(String(this.plugin.settings.qaMinAnswerChars)).onChange(async (value) => {
+        this.plugin.settings.qaMinAnswerChars = parsePositiveInt(
+          value,
+          this.plugin.settings.qaMinAnswerChars
+        );
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Preferred response language / \uB2F5\uBCC0 \uC5B8\uC5B4 \uC6B0\uC120").setDesc("Applies to local Q&A prompt. / \uB85C\uCEEC Q&A \uD504\uB86C\uD504\uD2B8\uC5D0 \uC801\uC6A9").addDropdown(
+      (dropdown) => dropdown.addOption("auto", "Auto / \uC790\uB3D9").addOption("korean", "Korean / \uD55C\uAD6D\uC5B4").addOption("english", "English / \uC601\uC5B4").setValue(this.plugin.settings.qaPreferredResponseLanguage).onChange(async (value) => {
+        this.plugin.settings.qaPreferredResponseLanguage = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Role preset / \uC5ED\uD560 \uD504\uB9AC\uC14B").setDesc("Prompt style preset for local Q&A. / \uB85C\uCEEC Q&A \uB2F5\uBCC0 \uC131\uD5A5 \uD504\uB9AC\uC14B").addDropdown(
+      (dropdown) => dropdown.addOption("ask", "Ask (default)").addOption("orchestrator", "Orchestrator").addOption("coder", "Coder").addOption("debugger", "Debugger").addOption("architect", "Architect").addOption("safeguard", "Safeguard (security)").setValue(this.plugin.settings.qaRolePreset).onChange(async (value) => {
+        this.plugin.settings.qaRolePreset = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Custom system prompt / \uC0AC\uC6A9\uC790 \uC2DC\uC2A4\uD15C \uD504\uB86C\uD504\uD2B8").setDesc("Optional policy/style instructions (e.g., 'Explain with Feynman method in Korean'). / \uC608: \uD55C\uAD6D\uC5B4, \uD30C\uC778\uB9CC\uC2DD \uC124\uBA85").addTextArea(
+      (text) => text.setPlaceholder("Optional. Applied after built-in safety/policy prompt.").setValue(this.plugin.settings.qaCustomSystemPrompt).onChange(async (value) => {
+        this.plugin.settings.qaCustomSystemPrompt = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Include selection inventory / \uC120\uD0DD \uD30C\uC77C \uC778\uBCA4\uD1A0\uB9AC \uD3EC\uD568").setDesc("For large scopes, include selected-file metadata list to reduce 'insufficient evidence' answers. / \uB300\uADDC\uBAA8 \uC120\uD0DD \uC2DC \uC804\uCCB4 \uD30C\uC77C \uBA54\uD0C0 \uBAA9\uB85D\uC744 \uCEE8\uD14D\uC2A4\uD2B8\uC5D0 \uCD94\uAC00").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaIncludeSelectionInventory).onChange(async (value) => {
+        this.plugin.settings.qaIncludeSelectionInventory = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Inventory max files / \uC778\uBCA4\uD1A0\uB9AC \uCD5C\uB300 \uD30C\uC77C \uC218").setDesc("Upper bound for selected-file metadata snapshot in Q&A context. / Q&A \uCEE8\uD14D\uC2A4\uD2B8\uC5D0 \uB123\uC744 \uCD5C\uB300 \uD30C\uC77C \uC218").addText(
+      (text) => text.setPlaceholder("200").setValue(String(this.plugin.settings.qaSelectionInventoryMaxFiles)).onChange(async (value) => {
+        this.plugin.settings.qaSelectionInventoryMaxFiles = parsePositiveInt(
+          value,
+          this.plugin.settings.qaSelectionInventoryMaxFiles
+        );
         await this.plugin.saveSettings();
       })
     );
@@ -3402,17 +3479,32 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Watch folders for new notes").setDesc(
-      "When a new markdown file appears in watched folders, prompt to add/analyze it."
+    new import_obsidian4.Setting(containerEl).setName("Watch folders for new notes / \uC2E0\uADDC \uB178\uD2B8 \uD3F4\uB354 \uAC10\uC2DC").setDesc(
+      "When a new markdown file appears in watched folders, prompt to add/analyze it. / \uC2E0\uADDC \uBB38\uC11C \uC0DD\uC131 \uC2DC \uC120\uD0DD/\uBD84\uC11D \uC5EC\uBD80\uB97C \uBB3B\uC2B5\uB2C8\uB2E4."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.watchNewNotesEnabled).onChange(async (value) => {
         this.plugin.settings.watchNewNotesEnabled = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Watched folders").setDesc("Comma/newline separated vault-relative folder paths. Example: Inbox,Clippings").addTextArea(
+    new import_obsidian4.Setting(containerEl).setName("Watched folders / \uAC10\uC2DC \uD3F4\uB354").setDesc("Comma/newline separated vault-relative folder paths. Example: Inbox,Clippings / \uC608: Inbox,Clippings").addTextArea(
       (text) => text.setPlaceholder("Inbox,Clippings").setValue(this.plugin.settings.watchNewNotesFolders).onChange(async (value) => {
         this.plugin.settings.watchNewNotesFolders = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Auto-tag active note / \uD604\uC7AC \uBB38\uC11C \uC790\uB3D9 \uD0DC\uAE45").setDesc("On file-open, auto-analyze and merge tags for the active markdown note. / \uBB38\uC11C \uC5F4\uAE30 \uC2DC \uD0DC\uADF8\uB9CC \uC790\uB3D9 \uBD84\uC11D\xB7\uBCD1\uD569").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.autoTagActiveNoteEnabled).onChange(async (value) => {
+        this.plugin.settings.autoTagActiveNoteEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Auto-tag cooldown seconds / \uC790\uB3D9 \uD0DC\uAE45 \uCFE8\uB2E4\uC6B4(\uCD08)").setDesc("Minimum interval before re-tagging the same note. / \uAC19\uC740 \uB178\uD2B8 \uC7AC\uD0DC\uAE45 \uCD5C\uC18C \uAC04\uACA9").addText(
+      (text) => text.setPlaceholder("90").setValue(String(this.plugin.settings.autoTagActiveNoteCooldownSec)).onChange(async (value) => {
+        this.plugin.settings.autoTagActiveNoteCooldownSec = parsePositiveInt(
+          value,
+          this.plugin.settings.autoTagActiveNoteCooldownSec
+        );
         await this.plugin.saveSettings();
       })
     );
@@ -3490,6 +3582,8 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.analysisCache = null;
     this.analysisCacheDirty = false;
     this.pendingNewNoteWatchPrompts = /* @__PURE__ */ new Set();
+    this.autoTagInFlightPaths = /* @__PURE__ */ new Set();
+    this.autoTagLastRunByPath = /* @__PURE__ */ new Map();
   }
   async onload() {
     await this.loadSettings();
@@ -3511,6 +3605,14 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         void this.handleWatchedNewFile(entry);
       })
     );
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        if (!(file instanceof import_obsidian4.TFile) || file.extension !== "md") {
+          return;
+        }
+        void this.handleAutoTagOnFileOpen(file);
+      })
+    );
     this.addCommand({
       id: "select-target-notes",
       name: "Select target notes/folders",
@@ -3520,6 +3622,18 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       id: "analyze-target-notes",
       name: "Analyze selected notes (suggestions by default)",
       callback: async () => this.runAnalysis()
+    });
+    this.addCommand({
+      id: "auto-tag-active-note",
+      name: "Auto-tag active note (tags only)",
+      callback: async () => {
+        const active = this.app.workspace.getActiveFile();
+        if (!(active instanceof import_obsidian4.TFile) || active.extension !== "md") {
+          this.notice("No active markdown note.");
+          return;
+        }
+        await this.runAutoTagForFile(active, "manual");
+      }
     });
     this.addCommand({
       id: "clear-target-notes",
@@ -4035,8 +4149,35 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaStructureGuardEnabled !== "boolean") {
       this.settings.qaStructureGuardEnabled = DEFAULT_SETTINGS.qaStructureGuardEnabled;
     }
+    if (typeof this.settings.qaAlwaysDetailedAnswer !== "boolean") {
+      this.settings.qaAlwaysDetailedAnswer = DEFAULT_SETTINGS.qaAlwaysDetailedAnswer;
+    }
+    if (!Number.isFinite(this.settings.qaMinAnswerChars)) {
+      this.settings.qaMinAnswerChars = DEFAULT_SETTINGS.qaMinAnswerChars;
+    }
+    if (this.settings.qaPreferredResponseLanguage !== "auto" && this.settings.qaPreferredResponseLanguage !== "korean" && this.settings.qaPreferredResponseLanguage !== "english") {
+      this.settings.qaPreferredResponseLanguage = DEFAULT_SETTINGS.qaPreferredResponseLanguage;
+    }
+    if (typeof this.settings.qaCustomSystemPrompt !== "string") {
+      this.settings.qaCustomSystemPrompt = DEFAULT_SETTINGS.qaCustomSystemPrompt;
+    }
+    if (this.settings.qaRolePreset !== "ask" && this.settings.qaRolePreset !== "orchestrator" && this.settings.qaRolePreset !== "coder" && this.settings.qaRolePreset !== "debugger" && this.settings.qaRolePreset !== "architect" && this.settings.qaRolePreset !== "safeguard") {
+      this.settings.qaRolePreset = DEFAULT_SETTINGS.qaRolePreset;
+    }
+    if (typeof this.settings.qaIncludeSelectionInventory !== "boolean") {
+      this.settings.qaIncludeSelectionInventory = DEFAULT_SETTINGS.qaIncludeSelectionInventory;
+    }
+    if (!Number.isFinite(this.settings.qaSelectionInventoryMaxFiles)) {
+      this.settings.qaSelectionInventoryMaxFiles = DEFAULT_SETTINGS.qaSelectionInventoryMaxFiles;
+    }
     if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
       this.settings.qaThreadAutoSyncEnabled = DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
+    }
+    if (typeof this.settings.autoTagActiveNoteEnabled !== "boolean") {
+      this.settings.autoTagActiveNoteEnabled = DEFAULT_SETTINGS.autoTagActiveNoteEnabled;
+    }
+    if (!Number.isFinite(this.settings.autoTagActiveNoteCooldownSec)) {
+      this.settings.autoTagActiveNoteCooldownSec = DEFAULT_SETTINGS.autoTagActiveNoteCooldownSec;
     }
     if (typeof this.settings.watchNewNotesEnabled !== "boolean") {
       this.settings.watchNewNotesEnabled = DEFAULT_SETTINGS.watchNewNotesEnabled;
@@ -4448,6 +4589,18 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const collapsed = source.replace(/\s+/g, " ").trim();
     return collapsed.slice(0, Math.max(400, maxChars));
   }
+  isAbortError(error) {
+    if (!error) {
+      return false;
+    }
+    if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+      return error.name === "AbortError";
+    }
+    if (error instanceof Error) {
+      return error.name === "AbortError" || /aborted|abort/i.test(error.message);
+    }
+    return false;
+  }
   emitQaEvent(onEvent, stage, message, options = {}) {
     if (!onEvent) {
       return;
@@ -4673,6 +4826,9 @@ ${segment}` : segment;
     if (intent === "sources_only") {
       return false;
     }
+    if (this.settings.qaAlwaysDetailedAnswer) {
+      return true;
+    }
     if (intent === "comparison" || intent === "plan") {
       return true;
     }
@@ -4689,7 +4845,8 @@ ${segment}` : segment;
     }
     const paragraphCount = answer.split(/\n{2,}/).map((chunk) => chunk.trim()).filter((chunk) => chunk.length > 0).length;
     const bulletCount = ((_a = answer.match(/^\s*[-*]\s+/gm)) != null ? _a : []).length;
-    if (compact.length < 300) {
+    const minChars = Math.max(140, this.settings.qaMinAnswerChars);
+    if (compact.length < minChars) {
       return true;
     }
     if (paragraphCount < 2 && bulletCount < 4) {
@@ -4750,25 +4907,105 @@ Content:
 ${item.content}`
     ).join("\n\n---\n\n");
   }
+  shouldIncludeSelectionInventory(question, selectedCount, intent) {
+    if (!this.settings.qaIncludeSelectionInventory) {
+      return false;
+    }
+    if (selectedCount >= 80) {
+      return true;
+    }
+    if (intent === "comparison" || intent === "plan") {
+      return true;
+    }
+    const normalized = question.toLowerCase();
+    if (/(전체|모든|파일\s*목록|목록|리스트|요약표|테이블|표로|all\s+files?|file\s+list|inventory|table)/i.test(
+      normalized
+    )) {
+      return true;
+    }
+    return false;
+  }
+  buildSelectionInventoryContext(files) {
+    var _a, _b;
+    const maxFiles = Math.max(20, Math.min(600, this.settings.qaSelectionInventoryMaxFiles));
+    const charBudget = Math.max(1800, Math.min(12e3, Math.floor(this.settings.qaMaxContextChars * 0.6)));
+    const lines = [];
+    lines.push(`Total selected files: ${files.length}`);
+    lines.push("Listed files: 0");
+    lines.push("");
+    let listed = 0;
+    for (const file of files.slice(0, maxFiles)) {
+      const frontmatter = (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {};
+      const tags = this.readRawFrontmatterTags(frontmatter).slice(0, 6).join(", ");
+      const topic = typeof frontmatter.topic === "string" ? frontmatter.topic.trim() : "";
+      const index = typeof frontmatter.index === "string" ? frontmatter.index.trim() : "";
+      const row = `- path=${file.path} | size=${file.stat.size} | mtime=${new Date(file.stat.mtime).toISOString()} | tags=${tags || "(none)"} | topic=${topic || "(none)"} | index=${index || "(none)"}`;
+      const nextText = [...lines, row].join("\n");
+      if (nextText.length > charBudget) {
+        break;
+      }
+      lines.push(row);
+      listed += 1;
+    }
+    if (files.length > listed) {
+      lines.push("");
+      lines.push(`...and ${files.length - listed} more selected files not listed.`);
+    }
+    lines[1] = `Listed files: ${listed}`;
+    return lines.join("\n");
+  }
+  getQaRolePresetInstruction() {
+    switch (this.settings.qaRolePreset) {
+      case "orchestrator":
+        return "Role preset: Orchestrator. Break work into phases, dependencies, risks, and clear execution order.";
+      case "coder":
+        return "Role preset: Coder. Prefer implementation-level guidance, code-path reasoning, and practical next steps.";
+      case "debugger":
+        return "Role preset: Debugger. Prioritize root-cause analysis, reproducible checks, and verification steps.";
+      case "architect":
+        return "Role preset: Architect. Emphasize system design trade-offs, interfaces, scalability, and maintainability.";
+      case "safeguard":
+        return "Role preset: Safeguard. Prioritize security, privacy, and failure-mode analysis before recommendations.";
+      case "ask":
+      default:
+        return "Role preset: Ask. Balanced assistant mode with concise, useful structure.";
+    }
+  }
+  getQaPreferredLanguageInstruction() {
+    switch (this.settings.qaPreferredResponseLanguage) {
+      case "korean":
+        return "Always answer in Korean unless user explicitly requests another language.";
+      case "english":
+        return "Always answer in English unless user explicitly requests another language.";
+      case "auto":
+      default:
+        return "Use the same language as the user's question.";
+    }
+  }
   buildLocalQaSystemPrompt(intent, preferDetailed) {
     const toneLine = preferDetailed ? "Keep tone natural, direct, and sufficiently detailed." : "Keep tone natural, direct, and concise.";
     return [
       "You are a local-note assistant for Obsidian.",
       "Answer only from the provided sources.",
-      "Use the same language as the user's question.",
+      this.getQaPreferredLanguageInstruction(),
+      this.getQaRolePresetInstruction(),
       toneLine,
       "Output in markdown.",
       "When making claims, cite source paths inline in parentheses.",
       "If evidence is insufficient, state it clearly and do not invent facts.",
-      ...this.getQaContractLines(intent, preferDetailed)
-    ].join("\n");
+      ...this.getQaContractLines(intent, preferDetailed),
+      this.settings.qaCustomSystemPrompt.trim() ? `Custom system prompt:
+${this.settings.qaCustomSystemPrompt.trim()}` : ""
+    ].filter((line) => line.length > 0).join("\n");
   }
-  buildLocalQaUserPrompt(question, sourceContext) {
+  buildLocalQaUserPrompt(question, sourceContext, selectionInventoryContext) {
+    const inventoryBlock = (selectionInventoryContext == null ? void 0 : selectionInventoryContext.trim()) ? ["", "Selection inventory metadata:", selectionInventoryContext.trim()] : [];
     return [
       `Question: ${question}`,
       "",
       "Sources:",
-      sourceContext
+      sourceContext,
+      ...inventoryBlock
     ].join("\n");
   }
   buildLocalQaGeneratePrompt(systemPrompt, userPrompt, history) {
@@ -4866,12 +5103,13 @@ ${item.content}`
     return { answer, thinking };
   }
   async requestLocalQaGenerate(params) {
-    const { qaBaseUrl, qaModel, prompt, onToken, onEvent } = params;
+    const { qaBaseUrl, qaModel, prompt, onToken, onEvent, abortSignal } = params;
     const base = qaBaseUrl.replace(/\/$/, "");
     if (onToken) {
       const streamResponse = await fetch(`${base}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortSignal,
         body: JSON.stringify({
           model: qaModel,
           prompt,
@@ -4913,7 +5151,8 @@ ${item.content}`
       userPrompt,
       history,
       onToken,
-      onEvent
+      onEvent,
+      abortSignal
     } = params;
     const messages = this.buildLocalQaChatMessages(systemPrompt, userPrompt, history);
     const base = qaBaseUrl.replace(/\/$/, "");
@@ -4921,6 +5160,7 @@ ${item.content}`
       const streamResponse = await fetch(`${base}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortSignal,
         body: JSON.stringify({
           model: qaModel,
           messages,
@@ -4962,7 +5202,8 @@ ${item.content}`
       userPrompt,
       history,
       onToken,
-      onEvent
+      onEvent,
+      abortSignal
     } = params;
     if (this.settings.qaPreferChatApi) {
       try {
@@ -4974,7 +5215,8 @@ ${item.content}`
           userPrompt,
           history,
           onToken,
-          onEvent
+          onEvent,
+          abortSignal
         });
         if (chatResult.answer.trim()) {
           return {
@@ -4999,7 +5241,8 @@ ${item.content}`
       qaModel,
       prompt,
       onToken,
-      onEvent
+      onEvent,
+      abortSignal
     });
     return {
       ...generateResult,
@@ -5079,7 +5322,7 @@ ${item.content}`
   async openLocalQaChatModal() {
     await this.openLocalQaWorkspaceView();
   }
-  async askLocalQa(question, topK, history = [], onToken, onEvent) {
+  async askLocalQa(question, topK, history = [], onToken, onEvent, abortSignal) {
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
       throw new Error("No target notes selected. Open selector first.");
@@ -5190,8 +5433,17 @@ ${item.content}`
         throw new Error("Relevant notes found but no readable content extracted.");
       }
       const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
+      const selectionInventoryContext = this.shouldIncludeSelectionInventory(
+        safeQuestion,
+        selectedFiles.length,
+        intent
+      ) ? this.buildSelectionInventoryContext(selectedFiles) : void 0;
       const systemPrompt = this.buildLocalQaSystemPrompt(intent, preferDetailed);
-      const userPrompt = this.buildLocalQaUserPrompt(safeQuestion, sourceContext);
+      const userPrompt = this.buildLocalQaUserPrompt(
+        safeQuestion,
+        sourceContext,
+        selectionInventoryContext
+      );
       this.emitQaEvent(onEvent, "generation", "Generation started");
       this.setStatus("asking local qa model...");
       const completion = await this.requestLocalQaCompletion({
@@ -5201,8 +5453,12 @@ ${item.content}`
         userPrompt,
         history,
         onToken,
-        onEvent
+        onEvent,
+        abortSignal
       });
+      if (abortSignal == null ? void 0 : abortSignal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
       const split = splitThinkingBlocks(completion.answer);
       const initialAnswer = split.answer.trim() || completion.answer.trim();
       if (!initialAnswer) {
@@ -5414,6 +5670,134 @@ ${item.content}`
     } finally {
       this.pendingNewNoteWatchPrompts.delete(file.path);
     }
+  }
+  buildAutoTagCandidatePaths(file) {
+    const selected = this.getSelectedFiles().filter((candidate) => candidate.path !== file.path).map((candidate) => candidate.path);
+    if (selected.length > 0) {
+      return selected.slice(0, ANALYSIS_HARD_MAX_CANDIDATES);
+    }
+    return this.getAllMarkdownFiles().filter((candidate) => candidate.path !== file.path).sort((a, b) => {
+      const scoreDiff = this.scoreCandidatePath(file.path, b.path) - this.scoreCandidatePath(file.path, a.path);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+      return a.path.localeCompare(b.path);
+    }).slice(0, ANALYSIS_HARD_MAX_CANDIDATES).map((candidate) => candidate.path);
+  }
+  async runAutoTagForFile(file, source) {
+    var _a, _b, _c, _d;
+    if (this.isPathExcluded(file.path)) {
+      return;
+    }
+    if (this.autoTagInFlightPaths.has(file.path)) {
+      return;
+    }
+    const cooldownSec = Math.max(10, this.settings.autoTagActiveNoteCooldownSec);
+    const cooldownMs = cooldownSec * 1e3;
+    const now = Date.now();
+    const lastRun = (_a = this.autoTagLastRunByPath.get(file.path)) != null ? _a : 0;
+    if (source === "auto" && now - lastRun < cooldownMs) {
+      return;
+    }
+    if (this.settings.provider === "ollama") {
+      await this.refreshOllamaDetection({ notify: false, autoApply: true });
+      const selectedModel = this.settings.ollamaModel.trim();
+      if (!selectedModel || !isOllamaModelAnalyzable(selectedModel)) {
+        if (source === "manual") {
+          this.notice("Auto-tag skipped: select an analyzable Ollama model first.", 5e3);
+        }
+        return;
+      }
+    }
+    this.autoTagInFlightPaths.add(file.path);
+    this.autoTagLastRunByPath.set(file.path, now);
+    try {
+      const analysisCache = await this.loadAnalysisCache();
+      const providerCacheSignature = this.getProviderCacheSignature();
+      const settingsSignature = this.buildAnalysisSettingsSignature(providerCacheSignature);
+      const candidateLinkPaths = this.buildAutoTagCandidatePaths(file);
+      const selectionSignature = this.hashString(
+        JSON.stringify([file.path, ...candidateLinkPaths])
+      );
+      const signatureInput = {
+        sourcePath: file.path,
+        candidateLinkPaths,
+        maxTags: this.settings.maxTags,
+        maxLinked: this.settings.maxLinked,
+        analyzeTags: true,
+        analyzeTopic: false,
+        analyzeLinked: false,
+        analyzeIndex: false,
+        includeReasons: this.settings.includeReasons
+      };
+      const cacheKey = this.buildAnalysisCacheKey(providerCacheSignature, file.path);
+      const requestSignature = this.buildAnalysisRequestSignature(
+        providerCacheSignature,
+        signatureInput
+      );
+      const cachedOutcome = this.getCachedAnalysisOutcome(
+        analysisCache,
+        cacheKey,
+        requestSignature,
+        file,
+        settingsSignature,
+        selectionSignature
+      );
+      let outcome;
+      if (cachedOutcome) {
+        outcome = cachedOutcome;
+      } else {
+        outcome = await analyzeWithFallback(this.settings, {
+          ...signatureInput,
+          sourceText: await this.app.vault.cachedRead(file)
+        });
+        this.storeAnalysisOutcome(
+          analysisCache,
+          cacheKey,
+          requestSignature,
+          settingsSignature,
+          selectionSignature,
+          file,
+          outcome
+        );
+      }
+      const existingFrontmatter = (_c = (_b = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _b.frontmatter) != null ? _c : {};
+      const existingTags = normalizeTags(this.readRawFrontmatterTags(existingFrontmatter));
+      const proposedTags = normalizeTags(
+        ((_d = outcome.proposal.tags) != null ? _d : []).slice(0, this.settings.maxTags)
+      );
+      const mergedTags = normalizeTags(mergeUniqueStrings(existingTags, proposedTags));
+      const unchanged = mergedTags.length === existingTags.length && mergedTags.every((item, idx) => item === existingTags[idx]);
+      if (unchanged || mergedTags.length === 0) {
+        if (source === "manual") {
+          this.notice("Auto-tag: no tag changes for active note.", 4e3);
+        }
+      } else {
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+          const current = frontmatter;
+          current.tags = mergedTags;
+        });
+        if (source === "manual") {
+          this.notice(`Auto-tag applied: ${file.path} (${mergedTags.length} tags)`, 5e3);
+        }
+      }
+      if (this.analysisCacheDirty) {
+        await this.flushAnalysisCache();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown auto-tag error";
+      if (source === "manual") {
+        this.notice(`Auto-tag failed: ${message}`, 6e3);
+      }
+    } finally {
+      this.autoTagInFlightPaths.delete(file.path);
+    }
+  }
+  async handleAutoTagOnFileOpen(file) {
+    if (!this.settings.autoTagActiveNoteEnabled) {
+      return;
+    }
+    await this.runAutoTagForFile(file, "auto");
   }
   parseExcludedPatterns() {
     return this.settings.excludedFolderPatterns.split(/[\n,;]+/).map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);

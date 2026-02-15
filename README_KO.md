@@ -25,11 +25,15 @@ Auto Link는 반대로 동작합니다.
 - 선택 범위 분석(선택한 파일/폴더만)
 - 제안 우선 워크플로우(미리보기 후 적용)
 - 선택 노트 기반 로컬 AI 챗(markdown 렌더링)
+- 장시간 생성 중 `Send/Stop` 제어 지원
 - 출처 링크(`[[노트 경로]]`) 제공
 - 검색/생성 진행 타임라인 카드
+- 사용자 시스템 프롬프트 + 역할 프리셋(orchestrator/coder/debugger/architect/safeguard/ask)
 - semantic 후보 랭킹(Ollama 임베딩)
+- 대규모 선택 질문용 selection inventory 컨텍스트
 - frontmatter 정리 규칙(cleanup)
 - 백업/복구 워크플로우
+- 현재 문서 자동 태깅(옵션, tags 전용)
 - 선택 노트 기반 MOC 생성
 
 ## 보안 기본값
@@ -80,9 +84,13 @@ Auto Link는 반대로 동작합니다.
 | 안전 | Allow non-local Q&A endpoint | OFF |
 | Q&A | Prefer Ollama /api/chat (with fallback) | ON |
 | Q&A | Structured answer guard | ON |
+| Q&A | Always detailed answers | ON |
+| Q&A | Preferred response language | 한국어 중심이면 Korean |
+| Q&A | Include selection inventory | ON (대규모 선택 시) |
 | Chat | Auto-sync chat thread | ON |
 | 분석 | Analyze changed notes only | ON (대형 볼트 권장) |
 | 감시 | Watch folders for new notes | Inbox 워크플로우면 ON |
+| 자동 태깅 | Auto-tag active note | ON (선택, 태그 자동화) |
 | 백업 | Backup selected notes before apply | ON |
 
 ## 성능 최적화 팁
@@ -108,6 +116,7 @@ Auto Link는 반대로 동작합니다.
 
 - `Select target notes/folders`
 - `Analyze selected notes (suggestions by default)`
+- `Auto-tag active note (tags only)`
 - `Clear selected target notes/folders`
 - `Backup selected notes`
 - `Restore from latest backup`
@@ -128,7 +137,9 @@ Auto Link는 반대로 동작합니다.
 - `Embedding model is not suitable`
   - 임베딩 가능한 모델로 변경 후 감지 새로고침을 실행하세요.
 - 답변이 비어 있거나 너무 짧음
-  - Structured answer guard를 켜고, 선택된 소스 범위 품질을 점검하세요.
+  - Structured answer guard + Always detailed 모드 + 최소 답변 길이 설정을 함께 점검하세요.
+- 100개 이상 대규모 선택에서 근거가 부족하다고 나옴
+  - selection inventory를 켜고, 하드웨어가 허용하면 Q&A max context chars를 올려보세요.
 
 ## 개인정보/보안 주의
 

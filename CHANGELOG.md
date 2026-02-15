@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.14] - 2026-02-15
+
+### Added
+
+- Added `Stop` control in Local AI Chat to cancel in-flight streaming generation.
+- Added Q&A response control settings:
+  - `Always detailed answers`
+  - `Minimum answer chars`
+  - `Preferred response language`
+  - `Role preset` (`ask`, `orchestrator`, `coder`, `debugger`, `architect`, `safeguard`)
+  - `Custom system prompt`
+- Added selection inventory context option for large-scope Q&A to reduce sparse-evidence failures.
+- Added active-note auto-tagging workflow:
+  - `Auto-tag active note`
+  - cooldown control
+  - manual command `Auto-tag active note (tags only)`
+
+### Changed
+
+- Expanded settings labels with Korean/English bilingual wording for key controls.
+- Updated README (EN/KO) to include long-answer tuning, inventory guidance, Stop control, and auto-tag usage.
+
+### Security
+
+- Re-verified release with repeated security checks while preserving local-endpoint guard and vault-relative path validation.
+
 ## [0.2.13] - 2026-02-15
 
 ### Changed

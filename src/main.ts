@@ -99,7 +99,16 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaAllowNonLocalEndpoint: false,
   qaPreferChatApi: true,
   qaStructureGuardEnabled: true,
+  qaAlwaysDetailedAnswer: true,
+  qaMinAnswerChars: 320,
+  qaPreferredResponseLanguage: "korean",
+  qaCustomSystemPrompt: "",
+  qaRolePreset: "ask",
+  qaIncludeSelectionInventory: true,
+  qaSelectionInventoryMaxFiles: 200,
   qaThreadAutoSyncEnabled: true,
+  autoTagActiveNoteEnabled: false,
+  autoTagActiveNoteCooldownSec: 90,
   watchNewNotesEnabled: false,
   watchNewNotesFolders: "",
   chatTranscriptRootPath: "Auto Link Chats",
@@ -1456,10 +1465,12 @@ class LocalQAWorkspaceView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private threadEl!: HTMLElement;
   private sendButton!: HTMLButtonElement;
+  private stopButton!: HTMLButtonElement;
   private scopeEl!: HTMLElement;
   private threadInfoEl!: HTMLElement;
   private syncInfoEl!: HTMLElement;
   private running = false;
+  private activeRequestController: AbortController | null = null;
   private messages: LocalQAViewMessage[] = [];
   private threadPath: string | null = null;
   private threadId = "";
@@ -1498,6 +1509,8 @@ class LocalQAWorkspaceView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.activeRequestController?.abort();
+    this.activeRequestController = null;
     if (this.syncTimer !== null) {
       window.clearTimeout(this.syncTimer);
       this.syncTimer = null;
@@ -1665,6 +1678,12 @@ class LocalQAWorkspaceView extends ItemView {
     this.sendButton.addClass("auto-linker-chat-send");
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
+    };
+    this.stopButton = footer.createEl("button", { text: "Stop" });
+    this.stopButton.addClass("auto-linker-chat-stop");
+    this.stopButton.disabled = true;
+    this.stopButton.onclick = () => {
+      this.activeRequestController?.abort();
     };
 
     this.inputEl.addEventListener("keydown", async (event) => {
@@ -2082,6 +2101,9 @@ class LocalQAWorkspaceView extends ItemView {
     });
     this.running = true;
     this.sendButton.disabled = true;
+    this.stopButton.disabled = false;
+    const abortController = new AbortController();
+    this.activeRequestController = abortController;
     const thinkingMessage: LocalQAViewMessage = {
       role: "thinking",
       text: "- Retrieving relevant notes...",
@@ -2190,6 +2212,7 @@ class LocalQAWorkspaceView extends ItemView {
           }
           pushTimelineEvent(event);
         },
+        abortController.signal,
       );
       const draft = this.messages[draftIndex];
       if (draft && draft.role === "assistant") {
@@ -2246,7 +2269,12 @@ class LocalQAWorkspaceView extends ItemView {
       }
       this.renderMessages();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown local QA error";
+      const cancelled = this.plugin.isAbortError(error);
+      const message = cancelled
+        ? "요청이 중지되었습니다."
+        : error instanceof Error
+          ? error.message
+          : "Unknown local QA error";
       const draft = this.messages[draftIndex];
       if (draft && draft.role === "assistant" && !draft.text.trim()) {
         this.messages.splice(draftIndex, 1);
@@ -2256,21 +2284,25 @@ class LocalQAWorkspaceView extends ItemView {
       const thinking = this.messages[thinkingIndex];
       if (thinking && thinking.role === "thinking") {
         pushTimelineEvent({
-          stage: "error",
-          message: `Error: ${message}`,
+          stage: cancelled ? "warning" : "error",
+          message: cancelled ? "Request cancelled by user" : `Error: ${message}`,
         });
         thinking.isDraft = false;
         thinking.timestamp = new Date().toISOString();
       }
       this.pushMessage({
         role: "system",
-        text: `오류: ${message}`,
+        text: cancelled ? `중지: ${message}` : `오류: ${message}`,
         timestamp: new Date().toISOString(),
       });
-      new Notice(`Local Q&A failed: ${message}`, 7000);
+      if (!cancelled) {
+        new Notice(`Local Q&A failed: ${message}`, 7000);
+      }
     } finally {
       this.running = false;
       this.sendButton.disabled = false;
+      this.stopButton.disabled = true;
+      this.activeRequestController = null;
       if (this.streamRenderTimer !== null) {
         window.clearTimeout(this.streamRenderTimer);
         this.streamRenderTimer = null;
@@ -2291,10 +2323,10 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Auto Link Settings" });
+    containerEl.createEl("h2", { text: "Auto Link Settings / Auto Link 설정" });
 
     containerEl.createEl("p", {
-      text: "Language docs: README.md (index) | README_KO.md (Korean quick access)",
+      text: "Language docs / 언어 문서: README.md (EN) | README_KO.md (KO)",
     });
 
     new Setting(containerEl)
@@ -2648,9 +2680,9 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Analyze changed notes only")
+      .setName("Analyze changed notes only / 변경된 노트만 분석")
       .setDesc(
-        "Skip unchanged notes when cache metadata matches. Turn off to include cached notes in every run.",
+        "Skip unchanged notes when cache metadata matches. Turn off to include cached notes in every run. / 캐시와 동일하면 스킵합니다.",
       )
       .addToggle((toggle) =>
         toggle
@@ -2833,7 +2865,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h3", { text: "Local Q&A (security-first)" });
+    containerEl.createEl("h3", { text: "Local Q&A (security-first) / 로컬 Q&A (보안 우선)" });
 
     new Setting(containerEl)
       .setName("Q&A Ollama base URL")
@@ -2874,7 +2906,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Q&A retrieval top-k")
+      .setName("Q&A retrieval top-k / 검색 소스 수")
       .addText((text) =>
         text
           .setPlaceholder("5")
@@ -2889,8 +2921,8 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Q&A max context chars")
-      .setDesc("Maximum total note characters to send to local LLM.")
+      .setName("Q&A max context chars / 최대 컨텍스트 길이")
+      .setDesc("Maximum total note characters to send to local LLM. / 로컬 LLM에 전달할 최대 문자 수")
       .addText((text) =>
         text
           .setPlaceholder("12000")
@@ -2905,13 +2937,124 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Structured answer guard")
-      .setDesc("Enforce table/checklist/link structure for comparison/plan/source questions.")
+      .setName("Structured answer guard / 구조화 출력 가드")
+      .setDesc("Enforce table/checklist/link structure for comparison/plan/source questions. / 표·체크리스트·링크 형식을 강제합니다.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.qaStructureGuardEnabled)
           .onChange(async (value) => {
             this.plugin.settings.qaStructureGuardEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Always detailed answers / 항상 자세한 답변")
+      .setDesc("Prefer long, structured answers unless user explicitly asks for brief output. / 사용자가 짧게 요청하지 않으면 상세 답변을 우선합니다.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaAlwaysDetailedAnswer)
+          .onChange(async (value) => {
+            this.plugin.settings.qaAlwaysDetailedAnswer = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Minimum answer chars / 최소 답변 길이")
+      .setDesc("Used by structured guard depth repair. / 구조화 가드의 길이 보정 기준")
+      .addText((text) =>
+        text
+          .setPlaceholder("320")
+          .setValue(String(this.plugin.settings.qaMinAnswerChars))
+          .onChange(async (value) => {
+            this.plugin.settings.qaMinAnswerChars = parsePositiveInt(
+              value,
+              this.plugin.settings.qaMinAnswerChars,
+            );
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Preferred response language / 답변 언어 우선")
+      .setDesc("Applies to local Q&A prompt. / 로컬 Q&A 프롬프트에 적용")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("auto", "Auto / 자동")
+          .addOption("korean", "Korean / 한국어")
+          .addOption("english", "English / 영어")
+          .setValue(this.plugin.settings.qaPreferredResponseLanguage)
+          .onChange(async (value) => {
+            this.plugin.settings.qaPreferredResponseLanguage = value as
+              | "auto"
+              | "korean"
+              | "english";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Role preset / 역할 프리셋")
+      .setDesc("Prompt style preset for local Q&A. / 로컬 Q&A 답변 성향 프리셋")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("ask", "Ask (default)")
+          .addOption("orchestrator", "Orchestrator")
+          .addOption("coder", "Coder")
+          .addOption("debugger", "Debugger")
+          .addOption("architect", "Architect")
+          .addOption("safeguard", "Safeguard (security)")
+          .setValue(this.plugin.settings.qaRolePreset)
+          .onChange(async (value) => {
+            this.plugin.settings.qaRolePreset = value as
+              | "ask"
+              | "orchestrator"
+              | "coder"
+              | "debugger"
+              | "architect"
+              | "safeguard";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Custom system prompt / 사용자 시스템 프롬프트")
+      .setDesc("Optional policy/style instructions (e.g., 'Explain with Feynman method in Korean'). / 예: 한국어, 파인만식 설명")
+      .addTextArea((text) =>
+        text
+          .setPlaceholder("Optional. Applied after built-in safety/policy prompt.")
+          .setValue(this.plugin.settings.qaCustomSystemPrompt)
+          .onChange(async (value) => {
+            this.plugin.settings.qaCustomSystemPrompt = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Include selection inventory / 선택 파일 인벤토리 포함")
+      .setDesc("For large scopes, include selected-file metadata list to reduce 'insufficient evidence' answers. / 대규모 선택 시 전체 파일 메타 목록을 컨텍스트에 추가")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaIncludeSelectionInventory)
+          .onChange(async (value) => {
+            this.plugin.settings.qaIncludeSelectionInventory = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Inventory max files / 인벤토리 최대 파일 수")
+      .setDesc("Upper bound for selected-file metadata snapshot in Q&A context. / Q&A 컨텍스트에 넣을 최대 파일 수")
+      .addText((text) =>
+        text
+          .setPlaceholder("200")
+          .setValue(String(this.plugin.settings.qaSelectionInventoryMaxFiles))
+          .onChange(async (value) => {
+            this.plugin.settings.qaSelectionInventoryMaxFiles = parsePositiveInt(
+              value,
+              this.plugin.settings.qaSelectionInventoryMaxFiles,
+            );
             await this.plugin.saveSettings();
           }),
       );
@@ -3077,9 +3220,9 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Watch folders for new notes")
+      .setName("Watch folders for new notes / 신규 노트 폴더 감시")
       .setDesc(
-        "When a new markdown file appears in watched folders, prompt to add/analyze it.",
+        "When a new markdown file appears in watched folders, prompt to add/analyze it. / 신규 문서 생성 시 선택/분석 여부를 묻습니다.",
       )
       .addToggle((toggle) =>
         toggle
@@ -3091,14 +3234,42 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Watched folders")
-      .setDesc("Comma/newline separated vault-relative folder paths. Example: Inbox,Clippings")
+      .setName("Watched folders / 감시 폴더")
+      .setDesc("Comma/newline separated vault-relative folder paths. Example: Inbox,Clippings / 예: Inbox,Clippings")
       .addTextArea((text) =>
         text
           .setPlaceholder("Inbox,Clippings")
           .setValue(this.plugin.settings.watchNewNotesFolders)
           .onChange(async (value) => {
             this.plugin.settings.watchNewNotesFolders = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-tag active note / 현재 문서 자동 태깅")
+      .setDesc("On file-open, auto-analyze and merge tags for the active markdown note. / 문서 열기 시 태그만 자동 분석·병합")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.autoTagActiveNoteEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.autoTagActiveNoteEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-tag cooldown seconds / 자동 태깅 쿨다운(초)")
+      .setDesc("Minimum interval before re-tagging the same note. / 같은 노트 재태깅 최소 간격")
+      .addText((text) =>
+        text
+          .setPlaceholder("90")
+          .setValue(String(this.plugin.settings.autoTagActiveNoteCooldownSec))
+          .onChange(async (value) => {
+            this.plugin.settings.autoTagActiveNoteCooldownSec = parsePositiveInt(
+              value,
+              this.plugin.settings.autoTagActiveNoteCooldownSec,
+            );
             await this.plugin.saveSettings();
           }),
       );
@@ -3261,6 +3432,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   private analysisCache: AnalysisCacheData | null = null;
   private analysisCacheDirty = false;
   private pendingNewNoteWatchPrompts = new Set<string>();
+  private autoTagInFlightPaths = new Set<string>();
+  private autoTagLastRunByPath = new Map<string, number>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -3283,6 +3456,14 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         void this.handleWatchedNewFile(entry);
       }),
     );
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        if (!(file instanceof TFile) || file.extension !== "md") {
+          return;
+        }
+        void this.handleAutoTagOnFileOpen(file);
+      }),
+    );
 
     this.addCommand({
       id: "select-target-notes",
@@ -3294,6 +3475,19 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       id: "analyze-target-notes",
       name: "Analyze selected notes (suggestions by default)",
       callback: async () => this.runAnalysis(),
+    });
+
+    this.addCommand({
+      id: "auto-tag-active-note",
+      name: "Auto-tag active note (tags only)",
+      callback: async () => {
+        const active = this.app.workspace.getActiveFile();
+        if (!(active instanceof TFile) || active.extension !== "md") {
+          this.notice("No active markdown note.");
+          return;
+        }
+        await this.runAutoTagForFile(active, "manual");
+      },
     });
 
     this.addCommand({
@@ -3916,9 +4110,48 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (typeof this.settings.qaStructureGuardEnabled !== "boolean") {
       this.settings.qaStructureGuardEnabled = DEFAULT_SETTINGS.qaStructureGuardEnabled;
     }
+    if (typeof this.settings.qaAlwaysDetailedAnswer !== "boolean") {
+      this.settings.qaAlwaysDetailedAnswer = DEFAULT_SETTINGS.qaAlwaysDetailedAnswer;
+    }
+    if (!Number.isFinite(this.settings.qaMinAnswerChars)) {
+      this.settings.qaMinAnswerChars = DEFAULT_SETTINGS.qaMinAnswerChars;
+    }
+    if (
+      this.settings.qaPreferredResponseLanguage !== "auto" &&
+      this.settings.qaPreferredResponseLanguage !== "korean" &&
+      this.settings.qaPreferredResponseLanguage !== "english"
+    ) {
+      this.settings.qaPreferredResponseLanguage =
+        DEFAULT_SETTINGS.qaPreferredResponseLanguage;
+    }
+    if (typeof this.settings.qaCustomSystemPrompt !== "string") {
+      this.settings.qaCustomSystemPrompt = DEFAULT_SETTINGS.qaCustomSystemPrompt;
+    }
+    if (
+      this.settings.qaRolePreset !== "ask" &&
+      this.settings.qaRolePreset !== "orchestrator" &&
+      this.settings.qaRolePreset !== "coder" &&
+      this.settings.qaRolePreset !== "debugger" &&
+      this.settings.qaRolePreset !== "architect" &&
+      this.settings.qaRolePreset !== "safeguard"
+    ) {
+      this.settings.qaRolePreset = DEFAULT_SETTINGS.qaRolePreset;
+    }
+    if (typeof this.settings.qaIncludeSelectionInventory !== "boolean") {
+      this.settings.qaIncludeSelectionInventory = DEFAULT_SETTINGS.qaIncludeSelectionInventory;
+    }
+    if (!Number.isFinite(this.settings.qaSelectionInventoryMaxFiles)) {
+      this.settings.qaSelectionInventoryMaxFiles = DEFAULT_SETTINGS.qaSelectionInventoryMaxFiles;
+    }
     if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
       this.settings.qaThreadAutoSyncEnabled =
         DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
+    }
+    if (typeof this.settings.autoTagActiveNoteEnabled !== "boolean") {
+      this.settings.autoTagActiveNoteEnabled = DEFAULT_SETTINGS.autoTagActiveNoteEnabled;
+    }
+    if (!Number.isFinite(this.settings.autoTagActiveNoteCooldownSec)) {
+      this.settings.autoTagActiveNoteCooldownSec = DEFAULT_SETTINGS.autoTagActiveNoteCooldownSec;
     }
     if (typeof this.settings.watchNewNotesEnabled !== "boolean") {
       this.settings.watchNewNotesEnabled = DEFAULT_SETTINGS.watchNewNotesEnabled;
@@ -4439,6 +4672,22 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return collapsed.slice(0, Math.max(400, maxChars));
   }
 
+  isAbortError(error: unknown): boolean {
+    if (!error) {
+      return false;
+    }
+    if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+      return error.name === "AbortError";
+    }
+    if (error instanceof Error) {
+      return (
+        error.name === "AbortError" ||
+        /aborted|abort/i.test(error.message)
+      );
+    }
+    return false;
+  }
+
   private emitQaEvent(
     onEvent: ((event: LocalQaProgressEvent) => void) | undefined,
     stage: LocalQaProgressStage,
@@ -4728,6 +4977,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (intent === "sources_only") {
       return false;
     }
+    if (this.settings.qaAlwaysDetailedAnswer) {
+      return true;
+    }
     if (intent === "comparison" || intent === "plan") {
       return true;
     }
@@ -4751,7 +5003,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       .map((chunk) => chunk.trim())
       .filter((chunk) => chunk.length > 0).length;
     const bulletCount = (answer.match(/^\s*[-*]\s+/gm) ?? []).length;
-    if (compact.length < 300) {
+    const minChars = Math.max(140, this.settings.qaMinAnswerChars);
+    if (compact.length < minChars) {
       return true;
     }
     if (paragraphCount < 2 && bulletCount < 4) {
@@ -4819,6 +5072,98 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       .join("\n\n---\n\n");
   }
 
+  private shouldIncludeSelectionInventory(
+    question: string,
+    selectedCount: number,
+    intent: LocalQaResponseIntent,
+  ): boolean {
+    if (!this.settings.qaIncludeSelectionInventory) {
+      return false;
+    }
+    if (selectedCount >= 80) {
+      return true;
+    }
+    if (intent === "comparison" || intent === "plan") {
+      return true;
+    }
+    const normalized = question.toLowerCase();
+    if (
+      /(전체|모든|파일\s*목록|목록|리스트|요약표|테이블|표로|all\s+files?|file\s+list|inventory|table)/i.test(
+        normalized,
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private buildSelectionInventoryContext(files: TFile[]): string {
+    const maxFiles = Math.max(20, Math.min(600, this.settings.qaSelectionInventoryMaxFiles));
+    const charBudget = Math.max(1800, Math.min(12000, Math.floor(this.settings.qaMaxContextChars * 0.6)));
+    const lines: string[] = [];
+    lines.push(`Total selected files: ${files.length}`);
+    lines.push("Listed files: 0");
+    lines.push("");
+
+    let listed = 0;
+    for (const file of files.slice(0, maxFiles)) {
+      const frontmatter =
+        (this.app.metadataCache.getFileCache(file)?.frontmatter as
+          | Record<string, unknown>
+          | undefined) ?? {};
+      const tags = this.readRawFrontmatterTags(frontmatter).slice(0, 6).join(", ");
+      const topic =
+        typeof frontmatter.topic === "string" ? frontmatter.topic.trim() : "";
+      const index =
+        typeof frontmatter.index === "string" ? frontmatter.index.trim() : "";
+      const row =
+        `- path=${file.path} | size=${file.stat.size} | mtime=${new Date(file.stat.mtime).toISOString()} | tags=${tags || "(none)"} | topic=${topic || "(none)"} | index=${index || "(none)"}`;
+      const nextText = [...lines, row].join("\n");
+      if (nextText.length > charBudget) {
+        break;
+      }
+      lines.push(row);
+      listed += 1;
+    }
+
+    if (files.length > listed) {
+      lines.push("");
+      lines.push(`...and ${files.length - listed} more selected files not listed.`);
+    }
+    lines[1] = `Listed files: ${listed}`;
+    return lines.join("\n");
+  }
+
+  private getQaRolePresetInstruction(): string {
+    switch (this.settings.qaRolePreset) {
+      case "orchestrator":
+        return "Role preset: Orchestrator. Break work into phases, dependencies, risks, and clear execution order.";
+      case "coder":
+        return "Role preset: Coder. Prefer implementation-level guidance, code-path reasoning, and practical next steps.";
+      case "debugger":
+        return "Role preset: Debugger. Prioritize root-cause analysis, reproducible checks, and verification steps.";
+      case "architect":
+        return "Role preset: Architect. Emphasize system design trade-offs, interfaces, scalability, and maintainability.";
+      case "safeguard":
+        return "Role preset: Safeguard. Prioritize security, privacy, and failure-mode analysis before recommendations.";
+      case "ask":
+      default:
+        return "Role preset: Ask. Balanced assistant mode with concise, useful structure.";
+    }
+  }
+
+  private getQaPreferredLanguageInstruction(): string {
+    switch (this.settings.qaPreferredResponseLanguage) {
+      case "korean":
+        return "Always answer in Korean unless user explicitly requests another language.";
+      case "english":
+        return "Always answer in English unless user explicitly requests another language.";
+      case "auto":
+      default:
+        return "Use the same language as the user's question.";
+    }
+  }
+
   private buildLocalQaSystemPrompt(
     intent: LocalQaResponseIntent,
     preferDetailed: boolean,
@@ -4829,21 +5174,35 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return [
       "You are a local-note assistant for Obsidian.",
       "Answer only from the provided sources.",
-      "Use the same language as the user's question.",
+      this.getQaPreferredLanguageInstruction(),
+      this.getQaRolePresetInstruction(),
       toneLine,
       "Output in markdown.",
       "When making claims, cite source paths inline in parentheses.",
       "If evidence is insufficient, state it clearly and do not invent facts.",
       ...this.getQaContractLines(intent, preferDetailed),
-    ].join("\n");
+      this.settings.qaCustomSystemPrompt.trim()
+        ? `Custom system prompt:\n${this.settings.qaCustomSystemPrompt.trim()}`
+        : "",
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n");
   }
 
-  private buildLocalQaUserPrompt(question: string, sourceContext: string): string {
+  private buildLocalQaUserPrompt(
+    question: string,
+    sourceContext: string,
+    selectionInventoryContext?: string,
+  ): string {
+    const inventoryBlock = selectionInventoryContext?.trim()
+      ? ["", "Selection inventory metadata:", selectionInventoryContext.trim()]
+      : [];
     return [
       `Question: ${question}`,
       "",
       "Sources:",
       sourceContext,
+      ...inventoryBlock,
     ].join("\n");
   }
 
@@ -4982,13 +5341,15 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     prompt: string;
     onToken?: (token: string) => void;
     onEvent?: (event: LocalQaProgressEvent) => void;
+    abortSignal?: AbortSignal;
   }): Promise<{ answer: string; thinking: string }> {
-    const { qaBaseUrl, qaModel, prompt, onToken, onEvent } = params;
+    const { qaBaseUrl, qaModel, prompt, onToken, onEvent, abortSignal } = params;
     const base = qaBaseUrl.replace(/\/$/, "");
     if (onToken) {
       const streamResponse = await fetch(`${base}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortSignal,
         body: JSON.stringify({
           model: qaModel,
           prompt,
@@ -5036,6 +5397,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     history: LocalQAConversationTurn[];
     onToken?: (token: string) => void;
     onEvent?: (event: LocalQaProgressEvent) => void;
+    abortSignal?: AbortSignal;
   }): Promise<{ answer: string; thinking: string }> {
     const {
       qaBaseUrl,
@@ -5045,6 +5407,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       history,
       onToken,
       onEvent,
+      abortSignal,
     } = params;
     const messages = this.buildLocalQaChatMessages(systemPrompt, userPrompt, history);
     const base = qaBaseUrl.replace(/\/$/, "");
@@ -5053,6 +5416,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       const streamResponse = await fetch(`${base}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortSignal,
         body: JSON.stringify({
           model: qaModel,
           messages,
@@ -5099,6 +5463,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     history: LocalQAConversationTurn[];
     onToken?: (token: string) => void;
     onEvent?: (event: LocalQaProgressEvent) => void;
+    abortSignal?: AbortSignal;
   }): Promise<LocalQaCompletionPayload> {
     const {
       qaBaseUrl,
@@ -5108,6 +5473,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       history,
       onToken,
       onEvent,
+      abortSignal,
     } = params;
 
     if (this.settings.qaPreferChatApi) {
@@ -5121,6 +5487,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
           history,
           onToken,
           onEvent,
+          abortSignal,
         });
         if (chatResult.answer.trim()) {
           return {
@@ -5148,6 +5515,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       prompt,
       onToken,
       onEvent,
+      abortSignal,
     });
     return {
       ...generateResult,
@@ -5254,6 +5622,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     history: LocalQAConversationTurn[] = [],
     onToken?: (token: string) => void,
     onEvent?: (event: LocalQaProgressEvent) => void,
+    abortSignal?: AbortSignal,
   ): Promise<LocalQAResultPayload> {
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
@@ -5391,8 +5760,19 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
 
       const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
+      const selectionInventoryContext = this.shouldIncludeSelectionInventory(
+        safeQuestion,
+        selectedFiles.length,
+        intent,
+      )
+        ? this.buildSelectionInventoryContext(selectedFiles)
+        : undefined;
       const systemPrompt = this.buildLocalQaSystemPrompt(intent, preferDetailed);
-      const userPrompt = this.buildLocalQaUserPrompt(safeQuestion, sourceContext);
+      const userPrompt = this.buildLocalQaUserPrompt(
+        safeQuestion,
+        sourceContext,
+        selectionInventoryContext,
+      );
       this.emitQaEvent(onEvent, "generation", "Generation started");
 
       this.setStatus("asking local qa model...");
@@ -5404,7 +5784,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         history,
         onToken,
         onEvent,
+        abortSignal,
       });
+      if (abortSignal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
       const split = splitThinkingBlocks(completion.answer);
       const initialAnswer = split.answer.trim() || completion.answer.trim();
       if (!initialAnswer) {
@@ -5668,6 +6052,155 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     } finally {
       this.pendingNewNoteWatchPrompts.delete(file.path);
     }
+  }
+
+  private buildAutoTagCandidatePaths(file: TFile): string[] {
+    const selected = this.getSelectedFiles()
+      .filter((candidate) => candidate.path !== file.path)
+      .map((candidate) => candidate.path);
+    if (selected.length > 0) {
+      return selected.slice(0, ANALYSIS_HARD_MAX_CANDIDATES);
+    }
+
+    return this.getAllMarkdownFiles()
+      .filter((candidate) => candidate.path !== file.path)
+      .sort((a, b) => {
+        const scoreDiff = this.scoreCandidatePath(file.path, b.path) -
+          this.scoreCandidatePath(file.path, a.path);
+        if (scoreDiff !== 0) {
+          return scoreDiff;
+        }
+        return a.path.localeCompare(b.path);
+      })
+      .slice(0, ANALYSIS_HARD_MAX_CANDIDATES)
+      .map((candidate) => candidate.path);
+  }
+
+  private async runAutoTagForFile(file: TFile, source: "auto" | "manual"): Promise<void> {
+    if (this.isPathExcluded(file.path)) {
+      return;
+    }
+    if (this.autoTagInFlightPaths.has(file.path)) {
+      return;
+    }
+
+    const cooldownSec = Math.max(10, this.settings.autoTagActiveNoteCooldownSec);
+    const cooldownMs = cooldownSec * 1000;
+    const now = Date.now();
+    const lastRun = this.autoTagLastRunByPath.get(file.path) ?? 0;
+    if (source === "auto" && now - lastRun < cooldownMs) {
+      return;
+    }
+
+    if (this.settings.provider === "ollama") {
+      await this.refreshOllamaDetection({ notify: false, autoApply: true });
+      const selectedModel = this.settings.ollamaModel.trim();
+      if (!selectedModel || !isOllamaModelAnalyzable(selectedModel)) {
+        if (source === "manual") {
+          this.notice("Auto-tag skipped: select an analyzable Ollama model first.", 5000);
+        }
+        return;
+      }
+    }
+
+    this.autoTagInFlightPaths.add(file.path);
+    this.autoTagLastRunByPath.set(file.path, now);
+    try {
+      const analysisCache = await this.loadAnalysisCache();
+      const providerCacheSignature = this.getProviderCacheSignature();
+      const settingsSignature = this.buildAnalysisSettingsSignature(providerCacheSignature);
+      const candidateLinkPaths = this.buildAutoTagCandidatePaths(file);
+      const selectionSignature = this.hashString(
+        JSON.stringify([file.path, ...candidateLinkPaths]),
+      );
+      const signatureInput: AnalysisRequestSignatureInput = {
+        sourcePath: file.path,
+        candidateLinkPaths,
+        maxTags: this.settings.maxTags,
+        maxLinked: this.settings.maxLinked,
+        analyzeTags: true,
+        analyzeTopic: false,
+        analyzeLinked: false,
+        analyzeIndex: false,
+        includeReasons: this.settings.includeReasons,
+      };
+      const cacheKey = this.buildAnalysisCacheKey(providerCacheSignature, file.path);
+      const requestSignature = this.buildAnalysisRequestSignature(
+        providerCacheSignature,
+        signatureInput,
+      );
+      const cachedOutcome = this.getCachedAnalysisOutcome(
+        analysisCache,
+        cacheKey,
+        requestSignature,
+        file,
+        settingsSignature,
+        selectionSignature,
+      );
+
+      let outcome: AnalyzeOutcome;
+      if (cachedOutcome) {
+        outcome = cachedOutcome;
+      } else {
+        outcome = await analyzeWithFallback(this.settings, {
+          ...signatureInput,
+          sourceText: await this.app.vault.cachedRead(file),
+        });
+        this.storeAnalysisOutcome(
+          analysisCache,
+          cacheKey,
+          requestSignature,
+          settingsSignature,
+          selectionSignature,
+          file,
+          outcome,
+        );
+      }
+
+      const existingFrontmatter =
+        (this.app.metadataCache.getFileCache(file)?.frontmatter as
+          | Record<string, unknown>
+          | undefined) ?? {};
+      const existingTags = normalizeTags(this.readRawFrontmatterTags(existingFrontmatter));
+      const proposedTags = normalizeTags(
+        (outcome.proposal.tags ?? []).slice(0, this.settings.maxTags),
+      );
+      const mergedTags = normalizeTags(mergeUniqueStrings(existingTags, proposedTags));
+      const unchanged =
+        mergedTags.length === existingTags.length &&
+        mergedTags.every((item, idx) => item === existingTags[idx]);
+      if (unchanged || mergedTags.length === 0) {
+        if (source === "manual") {
+          this.notice("Auto-tag: no tag changes for active note.", 4000);
+        }
+      } else {
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+          const current = frontmatter as Record<string, unknown>;
+          current.tags = mergedTags;
+        });
+        if (source === "manual") {
+          this.notice(`Auto-tag applied: ${file.path} (${mergedTags.length} tags)`, 5000);
+        }
+      }
+
+      if (this.analysisCacheDirty) {
+        await this.flushAnalysisCache();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown auto-tag error";
+      if (source === "manual") {
+        this.notice(`Auto-tag failed: ${message}`, 6000);
+      }
+    } finally {
+      this.autoTagInFlightPaths.delete(file.path);
+    }
+  }
+
+  private async handleAutoTagOnFileOpen(file: TFile): Promise<void> {
+    if (!this.settings.autoTagActiveNoteEnabled) {
+      return;
+    }
+    await this.runAutoTagForFile(file, "auto");
   }
 
   private parseExcludedPatterns(): string[] {

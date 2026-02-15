@@ -146,7 +146,22 @@ export interface KnowledgeWeaverSettings {
   qaAllowNonLocalEndpoint: boolean;
   qaPreferChatApi: boolean;
   qaStructureGuardEnabled: boolean;
+  qaAlwaysDetailedAnswer: boolean;
+  qaMinAnswerChars: number;
+  qaPreferredResponseLanguage: "auto" | "korean" | "english";
+  qaCustomSystemPrompt: string;
+  qaRolePreset:
+    | "ask"
+    | "orchestrator"
+    | "coder"
+    | "debugger"
+    | "architect"
+    | "safeguard";
+  qaIncludeSelectionInventory: boolean;
+  qaSelectionInventoryMaxFiles: number;
   qaThreadAutoSyncEnabled: boolean;
+  autoTagActiveNoteEnabled: boolean;
+  autoTagActiveNoteCooldownSec: number;
   watchNewNotesEnabled: boolean;
   watchNewNotesFolders: string;
   chatTranscriptRootPath: string;

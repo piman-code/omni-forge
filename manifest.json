@@ -1,7 +1,7 @@
 {
   "id": "auto-linker",
   "name": "Auto Link",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "minAppVersion": "1.5.0",
   "description": "Selective AI suggestions for tags/topic/linked/index metadata and MOC from chosen notes.",
   "author": "piman",
