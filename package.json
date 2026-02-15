@@ -1,6 +1,6 @@
 {
   "name": "obsidian-auto-link",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "description": "Selective AI-assisted metadata and MOC builder for Obsidian",
   "main": "main.js",
   "scripts": {

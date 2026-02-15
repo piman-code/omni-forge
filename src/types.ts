@@ -118,6 +118,7 @@ export type QaRolePreset =
 
 export type QaPipelinePreset =
   | "orchestrator_safeguard"
+  | "orchestrator_auto_route"
   | "orchestrator_coder_safeguard"
   | "orchestrator_architect_safeguard"
   | "orchestrator_architect_coder_safeguard"

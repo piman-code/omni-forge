@@ -1478,6 +1478,8 @@ class LocalQAChatModal extends Modal {
 
 class LocalQAWorkspaceView extends ItemView {
   private readonly plugin: KnowledgeWeaverPlugin;
+  private roleSelect!: HTMLSelectElement;
+  private pipelineSelect!: HTMLSelectElement;
   private topKInput!: HTMLInputElement;
   private modelSelect!: HTMLSelectElement;
   private inputEl!: HTMLTextAreaElement;
@@ -1651,8 +1653,29 @@ class LocalQAWorkspaceView extends ItemView {
     };
 
     const controlRow = root.createDiv({ cls: "auto-linker-chat-controls" });
+    const roleWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
+    roleWrap.createEl("label", { text: "Role / 역할" });
+    this.roleSelect = roleWrap.createEl("select", { cls: "auto-linker-chat-model-select" });
+    this.roleSelect.onchange = async () => {
+      await this.plugin.setQaRolePresetForQa(this.roleSelect.value as QaRolePreset);
+      this.refreshModelOptions();
+      await this.refreshScopeLabel();
+    };
+
+    const pipelineWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
+    pipelineWrap.createEl("label", { text: "Pipeline / 파이프라인" });
+    this.pipelineSelect = pipelineWrap.createEl("select", {
+      cls: "auto-linker-chat-model-select",
+    });
+    this.pipelineSelect.onchange = async () => {
+      await this.plugin.setQaPipelinePresetForQa(
+        this.pipelineSelect.value as QaPipelinePreset,
+      );
+      await this.refreshScopeLabel();
+    };
+
     const modelWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
-    modelWrap.createEl("label", { text: "Model / 모델" });
+    modelWrap.createEl("label", { text: "Q&A fallback model / Q&A 폴백 모델" });
     this.modelSelect = modelWrap.createEl("select", { cls: "auto-linker-chat-model-select" });
     this.modelSelect.onchange = async () => {
       const next = this.modelSelect.value;
@@ -1710,17 +1733,44 @@ class LocalQAWorkspaceView extends ItemView {
       }
     });
 
+    this.refreshRoleOptions();
+    this.refreshPipelineOptions();
     this.refreshThreadMeta();
+  }
+
+  private refreshRoleOptions(): void {
+    const options = this.plugin.getQaRolePresetOptionsForQa();
+    const current = this.plugin.getQaRolePresetForQa();
+    this.roleSelect.empty();
+    for (const option of options) {
+      this.roleSelect.createEl("option", { text: option.label, value: option.value });
+    }
+    this.roleSelect.value = current;
+  }
+
+  private refreshPipelineOptions(): void {
+    const options = this.plugin.getQaPipelinePresetOptionsForQa();
+    const current = this.plugin.getQaPipelinePresetForQa();
+    this.pipelineSelect.empty();
+    for (const option of options) {
+      this.pipelineSelect.createEl("option", {
+        text: option.label,
+        value: option.value,
+      });
+    }
+    this.pipelineSelect.value = current;
   }
 
   private refreshModelOptions(): void {
     const currentOverride = this.plugin.getQaModelOverrideForQa();
-    const fallbackLabel = this.plugin.getQaModelLabelForQa();
+    const role = this.plugin.getQaRolePresetForQa();
+    const roleLabel = getQaRolePresetLabel(role);
+    const fallbackLabel = this.plugin.getQaModelLabelForQa(role);
     const options = this.plugin.getQaModelOptionsForQa();
 
     this.modelSelect.empty();
     this.modelSelect.createEl("option", {
-      text: `Use main model / 메인 모델 사용 (${fallbackLabel})`,
+      text: `Use role/default model / 역할·기본 모델 사용 (${roleLabel}: ${fallbackLabel})`,
       value: "__fallback__",
     });
     for (const model of options) {
@@ -2073,17 +2123,18 @@ class LocalQAWorkspaceView extends ItemView {
   private async refreshScopeLabel(): Promise<void> {
     const fileCount = this.plugin.getSelectedFilesForQa().length;
     const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
-    const model = this.plugin.getQaModelLabelForQa();
+    const role = this.plugin.getQaRolePresetForQa();
+    const roleLabel = getQaRolePresetLabel(role);
+    const model = this.plugin.getQaModelLabelForQa(role);
     const embedding = this.plugin.getQaEmbeddingModelForQa();
     const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa()
       ? "auto / 자동"
       : "manual / 수동";
-    const pipeline = this.plugin.settings.qaPipelinePreset
-      .replace(/_/g, " -> ")
-      .replace("legacy -> auto", "legacy_auto");
+    const pipeline = getQaPipelinePresetLabel(this.plugin.getQaPipelinePresetForQa());
+    const roleModels = this.plugin.getQaRoleModelSummaryForQa();
     const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set / 미설정)";
     this.scopeEl.setText(
-      `Scope / 범위: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set / 미설정)"} | pipeline=${pipeline} | sync=${syncMode} | chats=${chatFolder}`,
+      `Scope / 범위: files=${fileCount}, folders=${folderCount} | role=${roleLabel} | QA=${model} | embedding=${embedding || "(not set / 미설정)"} | pipeline=${pipeline} | role-models=${roleModels} | sync=${syncMode} | chats=${chatFolder}`,
     );
   }
 
@@ -2500,6 +2551,11 @@ interface RoleModelSettingConfig {
   placeholder: string;
 }
 
+interface LabeledOption<T extends string> {
+  value: T;
+  label: string;
+}
+
 const ROLE_MODEL_FALLBACK_VALUE = "__fallback__";
 
 const ROLE_MODEL_SETTING_CONFIGS: ReadonlyArray<RoleModelSettingConfig> = [
@@ -2546,6 +2602,54 @@ const ROLE_MODEL_SETTING_CONFIGS: ReadonlyArray<RoleModelSettingConfig> = [
     placeholder: "qwen3:14b",
   },
 ];
+
+const QA_ROLE_PRESET_OPTIONS: ReadonlyArray<LabeledOption<QaRolePreset>> = [
+  { value: "ask", label: "Ask (default / 기본)" },
+  { value: "ask_vision", label: "Ask (vision / 비전)" },
+  { value: "image_generator", label: "Image generator / 이미지 생성" },
+  { value: "orchestrator", label: "Orchestrator / 오케스트레이터" },
+  { value: "coder", label: "Coder / 코더" },
+  { value: "debugger", label: "Debugger / 디버거" },
+  { value: "architect", label: "Architect / 아키텍트" },
+  { value: "safeguard", label: "Safeguard (security / 보안)" },
+];
+
+const QA_PIPELINE_PRESET_OPTIONS: ReadonlyArray<LabeledOption<QaPipelinePreset>> = [
+  {
+    value: "orchestrator_safeguard",
+    label: "Orchestrator -> Safeguard (default / 기본)",
+  },
+  {
+    value: "orchestrator_auto_route",
+    label: "Orchestrator -> Auto route sub agents -> Safeguard (자동 라우팅)",
+  },
+  {
+    value: "orchestrator_coder_safeguard",
+    label: "Orchestrator -> Coder -> Safeguard",
+  },
+  {
+    value: "orchestrator_architect_safeguard",
+    label: "Orchestrator -> Architect -> Safeguard",
+  },
+  {
+    value: "orchestrator_architect_coder_safeguard",
+    label: "Orchestrator -> Architect -> Coder -> Safeguard",
+  },
+  {
+    value: "legacy_auto",
+    label: "Legacy auto (기존 자동 규칙)",
+  },
+];
+
+function getQaRolePresetLabel(value: QaRolePreset): string {
+  const found = QA_ROLE_PRESET_OPTIONS.find((option) => option.value === value);
+  return found?.label ?? value;
+}
+
+function getQaPipelinePresetLabel(value: QaPipelinePreset): string {
+  const found = QA_PIPELINE_PRESET_OPTIONS.find((option) => option.value === value);
+  return found?.label ?? value;
+}
 
 class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private readonly plugin: KnowledgeWeaverPlugin;
@@ -3283,52 +3387,33 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Role preset / 역할 프리셋")
       .setDesc("Prompt style preset for local Q&A. / 로컬 Q&A 답변 성향 프리셋")
-      .addDropdown((dropdown) =>
+      .addDropdown((dropdown) => {
+        for (const option of QA_ROLE_PRESET_OPTIONS) {
+          dropdown.addOption(option.value, option.label);
+        }
         dropdown
-          .addOption("ask", "Ask (default / 기본)")
-          .addOption("ask_vision", "Ask (vision / 비전)")
-          .addOption("image_generator", "Image generator / 이미지 생성")
-          .addOption("orchestrator", "Orchestrator / 오케스트레이터")
-          .addOption("coder", "Coder / 코더")
-          .addOption("debugger", "Debugger / 디버거")
-          .addOption("architect", "Architect / 아키텍트")
-          .addOption("safeguard", "Safeguard (security / 보안)")
           .setValue(this.plugin.settings.qaRolePreset)
           .onChange(async (value) => {
             this.plugin.settings.qaRolePreset = value as QaRolePreset;
             await this.plugin.saveSettings();
-          }),
-      );
+          });
+      });
 
     new Setting(containerEl)
       .setName("Q&A pipeline preset")
       .setDesc("Select execution pipeline for post-generation passes.")
-      .addDropdown((dropdown) =>
+      .addDropdown((dropdown) => {
+        for (const option of QA_PIPELINE_PRESET_OPTIONS) {
+          dropdown.addOption(option.value, option.label);
+        }
         dropdown
-          .addOption(
-            "orchestrator_safeguard",
-            "Orchestrator -> Safeguard (default / 기본)",
-          )
-          .addOption(
-            "orchestrator_coder_safeguard",
-            "Orchestrator -> Coder -> Safeguard",
-          )
-          .addOption(
-            "orchestrator_architect_safeguard",
-            "Orchestrator -> Architect -> Safeguard",
-          )
-          .addOption(
-            "orchestrator_architect_coder_safeguard",
-            "Orchestrator -> Architect -> Coder -> Safeguard",
-          )
-          .addOption("legacy_auto", "Legacy auto (기존 자동 규칙)")
           .setValue(this.plugin.settings.qaPipelinePreset)
           .onChange(async (value) => {
             this.plugin.settings.qaPipelinePreset = value as QaPipelinePreset;
             await this.plugin.saveSettings();
             this.display();
-          }),
-      );
+          });
+      });
 
     const roleModelOptions = this.plugin.getOllamaModelOptions();
     new Setting(containerEl)
@@ -4023,12 +4108,47 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return this.settings.qaOllamaModel.trim();
   }
 
-  getQaModelLabelForQa(): string {
-    return this.resolveQaModelForRole(this.resolveQaPrimaryRole()) || "(not set)";
+  getQaRolePresetForQa(): QaRolePreset {
+    return this.settings.qaRolePreset;
+  }
+
+  getQaPipelinePresetForQa(): QaPipelinePreset {
+    return this.settings.qaPipelinePreset;
+  }
+
+  getQaRolePresetOptionsForQa(): ReadonlyArray<LabeledOption<QaRolePreset>> {
+    return QA_ROLE_PRESET_OPTIONS;
+  }
+
+  getQaPipelinePresetOptionsForQa(): ReadonlyArray<LabeledOption<QaPipelinePreset>> {
+    return QA_PIPELINE_PRESET_OPTIONS;
+  }
+
+  getQaModelLabelForQa(role?: QaRolePreset): string {
+    const resolvedRole = role ?? this.resolveQaPrimaryRole();
+    return this.resolveQaModelForRole(resolvedRole) || "(not set)";
   }
 
   getQaEmbeddingModelForQa(): string {
     return this.settings.semanticOllamaModel.trim();
+  }
+
+  getQaRoleModelSummaryForQa(): string {
+    const entries: Array<{ role: QaRolePreset; short: string }> = [
+      { role: "ask", short: "ask" },
+      { role: "orchestrator", short: "orch" },
+      { role: "architect", short: "arch" },
+      { role: "coder", short: "coder" },
+      { role: "debugger", short: "debug" },
+      { role: "safeguard", short: "safe" },
+    ];
+    return entries
+      .map((entry) => {
+        const model = this.getQaModelLabelForQa(entry.role);
+        const status = isOllamaModelAnalyzable(model) ? "" : "(불가)";
+        return `${entry.short}=${model}${status}`;
+      })
+      .join(", ");
   }
 
   getQaModelOptionsForQa(): string[] {
@@ -4045,6 +4165,16 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
   async setQaModelOverrideForQa(modelOverride: string): Promise<void> {
     this.settings.qaOllamaModel = modelOverride.trim();
+    await this.saveSettings();
+  }
+
+  async setQaRolePresetForQa(rolePreset: QaRolePreset): Promise<void> {
+    this.settings.qaRolePreset = rolePreset;
+    await this.saveSettings();
+  }
+
+  async setQaPipelinePresetForQa(pipelinePreset: QaPipelinePreset): Promise<void> {
+    this.settings.qaPipelinePreset = pipelinePreset;
     await this.saveSettings();
   }
 
@@ -4535,25 +4665,16 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (typeof this.settings.qaCustomSystemPrompt !== "string") {
       this.settings.qaCustomSystemPrompt = DEFAULT_SETTINGS.qaCustomSystemPrompt;
     }
-    if (
-      this.settings.qaRolePreset !== "ask" &&
-      this.settings.qaRolePreset !== "ask_vision" &&
-      this.settings.qaRolePreset !== "image_generator" &&
-      this.settings.qaRolePreset !== "orchestrator" &&
-      this.settings.qaRolePreset !== "coder" &&
-      this.settings.qaRolePreset !== "debugger" &&
-      this.settings.qaRolePreset !== "architect" &&
-      this.settings.qaRolePreset !== "safeguard"
-    ) {
+    const rolePresetValid = QA_ROLE_PRESET_OPTIONS.some(
+      (option) => option.value === this.settings.qaRolePreset,
+    );
+    if (!rolePresetValid) {
       this.settings.qaRolePreset = DEFAULT_SETTINGS.qaRolePreset;
     }
-    if (
-      this.settings.qaPipelinePreset !== "orchestrator_safeguard" &&
-      this.settings.qaPipelinePreset !== "orchestrator_coder_safeguard" &&
-      this.settings.qaPipelinePreset !== "orchestrator_architect_safeguard" &&
-      this.settings.qaPipelinePreset !== "orchestrator_architect_coder_safeguard" &&
-      this.settings.qaPipelinePreset !== "legacy_auto"
-    ) {
+    const pipelinePresetValid = QA_PIPELINE_PRESET_OPTIONS.some(
+      (option) => option.value === this.settings.qaPipelinePreset,
+    );
+    if (!pipelinePresetValid) {
       this.settings.qaPipelinePreset = DEFAULT_SETTINGS.qaPipelinePreset;
     }
     if (typeof this.settings.qaAskModel !== "string") {
@@ -5678,6 +5799,49 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return [...new Set(stages)];
   }
 
+  private resolveOrchestratorAutoRouteStages(
+    question: string,
+    intent: LocalQaResponseIntent,
+  ): LocalQaPipelineStage[] {
+    const stages: LocalQaPipelineStage[] = ["orchestrator"];
+    const normalized = question.toLowerCase();
+
+    const debugSignals =
+      /(버그|오류|에러|예외|실패|고장|재현|원인|로그|debug|bug|error|exception|trace|crash|failure)/i;
+    const codingSignals =
+      /(코드|구현|함수|클래스|리팩터|테스트|스크립트|쿼리|api|endpoint|typescript|javascript|python|sql|regex|algorithm|implement|code|refactor|test)/i;
+    const architectureSignals =
+      /(아키텍처|설계|구조|시스템|모듈|컴포넌트|인터페이스|확장성|trade[- ]?off|architecture|design|scalability|boundary|topology|pattern)/i;
+    const safeguardSignals =
+      /(보안|개인정보|규정|정책|위험|컴플라이언스|security|privacy|compliance|policy|risk|safety)/i;
+
+    const wantsDebug = debugSignals.test(normalized);
+    const wantsCoding = codingSignals.test(normalized);
+    const wantsArchitecture =
+      architectureSignals.test(normalized) || intent === "plan" || intent === "comparison";
+    const wantsSafeguard = safeguardSignals.test(normalized);
+
+    if (wantsArchitecture) {
+      stages.push("architect");
+    }
+    if (wantsDebug) {
+      stages.push("debugger");
+    } else if (wantsCoding) {
+      stages.push("coder");
+    }
+    if (
+      wantsSafeguard ||
+      intent === "plan" ||
+      intent === "comparison" ||
+      this.settings.qaSafeguardPassEnabled ||
+      stages.length === 1
+    ) {
+      stages.push("safeguard");
+    }
+
+    return [...new Set(stages)];
+  }
+
   private resolveQaPipelineStages(
     question: string,
     intent: LocalQaResponseIntent,
@@ -5685,6 +5849,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     switch (this.settings.qaPipelinePreset) {
       case "orchestrator_safeguard":
         return ["orchestrator", "safeguard"];
+      case "orchestrator_auto_route":
+        return this.resolveOrchestratorAutoRouteStages(question, intent);
       case "orchestrator_coder_safeguard":
         return ["orchestrator", "coder", "safeguard"];
       case "orchestrator_architect_safeguard":

@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.19] - 2026-02-16
+
+### Added
+
+- Added role and pipeline selectors to the Local AI Chat control bar so users can switch `orchestrator`, `architect`, `coder`, `debugger`, and `safeguard` modes directly in chat.
+- Added a new Q&A pipeline preset:
+  - `Orchestrator -> Auto route sub agents -> Safeguard (자동 라우팅)`
+  - routes sub-agents by prompt intent/signals (architecture/coding/debug/security) while preserving source-grounded flow.
+
+### Changed
+
+- Local AI Chat scope header now displays active role/pipeline and role-model mapping summary so configured settings models are visible during chat runs.
+- Refactored role/pipeline option definitions into shared constants for settings/chat UI and settings validation logic.
+
+### Security
+
+- Re-ran local release checks and repository security scan for the plugin path.
+
 ## [0.2.18] - 2026-02-16
 
 ### Changed
