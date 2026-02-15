@@ -3,6 +3,8 @@ import type { KnowledgeWeaverSettings } from "./types";
 
 const EMBEDDING_BATCH_SIZE = 8;
 const EMBEDDING_CACHE_VERSION = 1;
+const RUNTIME_FILE_VECTOR_CACHE_MAX = 15000;
+const RUNTIME_QUERY_VECTOR_CACHE_MAX = 800;
 const EMBEDDING_MODEL_REGEX =
   /(embed|embedding|nomic-embed|mxbai|bge|e5|gte|arctic-embed|jina-emb)/i;
 const NON_EMBEDDING_MODEL_REGEX =
@@ -60,6 +62,22 @@ interface FileVectorBuildResult {
   cacheWrites: number;
   errors: string[];
 }
+
+interface RuntimeFileVectorEntry {
+  vector: number[];
+  mtime: number;
+  size: number;
+  updatedAt: number;
+}
+
+interface RuntimeQueryVectorEntry {
+  vector: number[];
+  updatedAt: number;
+}
+
+const runtimeFileVectorCache = new Map<string, RuntimeFileVectorEntry>();
+const runtimeQueryVectorCache = new Map<string, RuntimeQueryVectorEntry>();
+const embeddingCacheMemory = new Map<string, EmbeddingCacheData>();
 
 export interface OllamaEmbeddingDetectionResult {
   models: string[];
@@ -339,6 +357,89 @@ function buildCacheKey(baseUrl: string, model: string, filePath: string): string
   return `${baseUrl}::${model}::${filePath}`;
 }
 
+function buildRuntimeFileVectorKey(
+  baseUrl: string,
+  model: string,
+  maxChars: number,
+  filePath: string,
+): string {
+  return `${baseUrl}::${model}::${maxChars}::${filePath}`;
+}
+
+function buildRuntimeQueryKey(
+  baseUrl: string,
+  model: string,
+  maxChars: number,
+  queryText: string,
+): string {
+  return `${baseUrl}::${model}::${maxChars}::${queryText}`;
+}
+
+function getAppCacheIdentity(app: App): string {
+  return `${app.vault.configDir}::${app.vault.getName()}`;
+}
+
+function pruneRuntimeFileVectorCache(): void {
+  if (runtimeFileVectorCache.size <= RUNTIME_FILE_VECTOR_CACHE_MAX) {
+    return;
+  }
+
+  const sorted = [...runtimeFileVectorCache.entries()].sort(
+    (a, b) => a[1].updatedAt - b[1].updatedAt || a[0].localeCompare(b[0]),
+  );
+  const removeCount = sorted.length - RUNTIME_FILE_VECTOR_CACHE_MAX;
+  for (let i = 0; i < removeCount; i += 1) {
+    runtimeFileVectorCache.delete(sorted[i][0]);
+  }
+}
+
+function setRuntimeFileVector(
+  key: string,
+  vector: number[],
+  mtime: number,
+  size: number,
+): void {
+  runtimeFileVectorCache.set(key, {
+    vector,
+    mtime,
+    size,
+    updatedAt: Date.now(),
+  });
+  pruneRuntimeFileVectorCache();
+}
+
+function getRuntimeFileVector(
+  key: string,
+  mtime: number,
+  size: number,
+): number[] | null {
+  const hit = runtimeFileVectorCache.get(key);
+  if (!hit) {
+    return null;
+  }
+  if (hit.mtime !== mtime || hit.size !== size || hit.vector.length === 0) {
+    runtimeFileVectorCache.delete(key);
+    return null;
+  }
+
+  hit.updatedAt = Date.now();
+  return hit.vector;
+}
+
+function pruneRuntimeQueryVectorCache(): void {
+  if (runtimeQueryVectorCache.size <= RUNTIME_QUERY_VECTOR_CACHE_MAX) {
+    return;
+  }
+
+  const sorted = [...runtimeQueryVectorCache.entries()].sort(
+    (a, b) => a[1].updatedAt - b[1].updatedAt || a[0].localeCompare(b[0]),
+  );
+  const removeCount = sorted.length - RUNTIME_QUERY_VECTOR_CACHE_MAX;
+  for (let i = 0; i < removeCount; i += 1) {
+    runtimeQueryVectorCache.delete(sorted[i][0]);
+  }
+}
+
 function getEmbeddingCachePath(app: App): string {
   return normalizePath(
     `${app.vault.configDir}/plugins/auto-linker/semantic-embedding-cache.json`,
@@ -365,10 +466,18 @@ async function ensureParentFolder(app: App, path: string): Promise<void> {
 }
 
 async function readEmbeddingCache(app: App): Promise<EmbeddingCacheData> {
+  const memoryKey = getAppCacheIdentity(app);
+  const cached = embeddingCacheMemory.get(memoryKey);
+  if (cached) {
+    return cached;
+  }
+
   const path = getEmbeddingCachePath(app);
   const exists = await app.vault.adapter.exists(path);
   if (!exists) {
-    return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    const empty = { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    embeddingCacheMemory.set(memoryKey, empty);
+    return empty;
   }
 
   try {
@@ -382,12 +491,18 @@ async function readEmbeddingCache(app: App): Promise<EmbeddingCacheData> {
         : {};
 
     if (version !== EMBEDDING_CACHE_VERSION) {
-      return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+      const empty = { version: EMBEDDING_CACHE_VERSION, entries: {} };
+      embeddingCacheMemory.set(memoryKey, empty);
+      return empty;
     }
 
-    return { version, entries };
+    const loaded = { version, entries };
+    embeddingCacheMemory.set(memoryKey, loaded);
+    return loaded;
   } catch {
-    return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    const empty = { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    embeddingCacheMemory.set(memoryKey, empty);
+    return empty;
   }
 }
 
@@ -395,6 +510,7 @@ async function writeEmbeddingCache(app: App, cache: EmbeddingCacheData): Promise
   const path = getEmbeddingCachePath(app);
   await ensureParentFolder(app, path);
   await app.vault.adapter.write(path, JSON.stringify(cache));
+  embeddingCacheMemory.set(getAppCacheIdentity(app), cache);
 }
 
 function normalizeSourceText(raw: string, maxChars: number): string {
@@ -468,6 +584,19 @@ async function buildFileVectorIndex(
   }> = [];
 
   for (const file of files) {
+    const runtimeKey = buildRuntimeFileVectorKey(
+      config.baseUrl,
+      config.model,
+      maxChars,
+      file.path,
+    );
+    const runtimeHit = getRuntimeFileVector(runtimeKey, file.stat.mtime, file.stat.size);
+    if (runtimeHit) {
+      vectorsByPath.set(file.path, runtimeHit);
+      cacheHits += 1;
+      continue;
+    }
+
     const cacheKey = buildCacheKey(config.baseUrl, config.model, file.path);
     const hit = cache.entries[cacheKey];
     if (
@@ -480,6 +609,7 @@ async function buildFileVectorIndex(
       hit.vector.length > 0
     ) {
       vectorsByPath.set(file.path, hit.vector);
+      setRuntimeFileVector(runtimeKey, hit.vector, file.stat.mtime, file.stat.size);
       cacheHits += 1;
       continue;
     }
@@ -500,6 +630,7 @@ async function buildFileVectorIndex(
         size: file.stat.size,
         updatedAt: new Date().toISOString(),
       };
+      setRuntimeFileVector(runtimeKey, hit.vector, file.stat.mtime, file.stat.size);
       cacheHits += 1;
       cacheDirty = true;
       continue;
@@ -533,6 +664,18 @@ async function buildFileVectorIndex(
         const entry = batch[idx];
         const vector = embeddings[idx];
         vectorsByPath.set(entry.file.path, vector);
+        const runtimeKey = buildRuntimeFileVectorKey(
+          config.baseUrl,
+          config.model,
+          maxChars,
+          entry.file.path,
+        );
+        setRuntimeFileVector(
+          runtimeKey,
+          vector,
+          entry.file.stat.mtime,
+          entry.file.stat.size,
+        );
         cache.entries[entry.cacheKey] = {
           fingerprint: entry.fingerprint,
           vector,
@@ -677,11 +820,32 @@ export async function searchSemanticNotesByQuery(
   const errors = [...vectorBuild.errors];
 
   let queryVector: number[] | null = null;
+  const queryCacheKey = buildRuntimeQueryKey(
+    config.baseUrl,
+    config.model,
+    maxChars,
+    queryText,
+  );
+  const queryCacheHit = runtimeQueryVectorCache.get(queryCacheKey);
+  if (queryCacheHit && queryCacheHit.vector.length > 0) {
+    queryCacheHit.updatedAt = Date.now();
+    queryVector = queryCacheHit.vector;
+  }
+
   try {
-    const queryEmbeddings = await requestOllamaEmbeddings(config.baseUrl, config.model, [
-      queryText,
-    ]);
-    queryVector = queryEmbeddings[0] ?? null;
+    if (!queryVector) {
+      const queryEmbeddings = await requestOllamaEmbeddings(config.baseUrl, config.model, [
+        queryText,
+      ]);
+      queryVector = queryEmbeddings[0] ?? null;
+      if (queryVector && queryVector.length > 0) {
+        runtimeQueryVectorCache.set(queryCacheKey, {
+          vector: queryVector,
+          updatedAt: Date.now(),
+        });
+        pruneRuntimeQueryVectorCache();
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown query embedding error";
     errors.push(`query: ${message}`);

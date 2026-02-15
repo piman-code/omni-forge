@@ -750,8 +750,13 @@ async function analyzeWithFallback(settings, request) {
 var import_obsidian3 = require("obsidian");
 var EMBEDDING_BATCH_SIZE = 8;
 var EMBEDDING_CACHE_VERSION = 1;
+var RUNTIME_FILE_VECTOR_CACHE_MAX = 15e3;
+var RUNTIME_QUERY_VECTOR_CACHE_MAX = 800;
 var EMBEDDING_MODEL_REGEX = /(embed|embedding|nomic-embed|mxbai|bge|e5|gte|arctic-embed|jina-emb)/i;
 var NON_EMBEDDING_MODEL_REGEX = /(whisper|tts|speech|transcribe|stt|rerank)/i;
+var runtimeFileVectorCache = /* @__PURE__ */ new Map();
+var runtimeQueryVectorCache = /* @__PURE__ */ new Map();
+var embeddingCacheMemory = /* @__PURE__ */ new Map();
 function isOllamaModelEmbeddingCapable(modelName) {
   return EMBEDDING_MODEL_REGEX.test(modelName) && !NON_EMBEDDING_MODEL_REGEX.test(modelName);
 }
@@ -966,6 +971,60 @@ function fingerprintText(text) {
 function buildCacheKey(baseUrl, model, filePath) {
   return `${baseUrl}::${model}::${filePath}`;
 }
+function buildRuntimeFileVectorKey(baseUrl, model, maxChars, filePath) {
+  return `${baseUrl}::${model}::${maxChars}::${filePath}`;
+}
+function buildRuntimeQueryKey(baseUrl, model, maxChars, queryText) {
+  return `${baseUrl}::${model}::${maxChars}::${queryText}`;
+}
+function getAppCacheIdentity(app) {
+  return `${app.vault.configDir}::${app.vault.getName()}`;
+}
+function pruneRuntimeFileVectorCache() {
+  if (runtimeFileVectorCache.size <= RUNTIME_FILE_VECTOR_CACHE_MAX) {
+    return;
+  }
+  const sorted = [...runtimeFileVectorCache.entries()].sort(
+    (a, b) => a[1].updatedAt - b[1].updatedAt || a[0].localeCompare(b[0])
+  );
+  const removeCount = sorted.length - RUNTIME_FILE_VECTOR_CACHE_MAX;
+  for (let i = 0; i < removeCount; i += 1) {
+    runtimeFileVectorCache.delete(sorted[i][0]);
+  }
+}
+function setRuntimeFileVector(key, vector, mtime, size) {
+  runtimeFileVectorCache.set(key, {
+    vector,
+    mtime,
+    size,
+    updatedAt: Date.now()
+  });
+  pruneRuntimeFileVectorCache();
+}
+function getRuntimeFileVector(key, mtime, size) {
+  const hit = runtimeFileVectorCache.get(key);
+  if (!hit) {
+    return null;
+  }
+  if (hit.mtime !== mtime || hit.size !== size || hit.vector.length === 0) {
+    runtimeFileVectorCache.delete(key);
+    return null;
+  }
+  hit.updatedAt = Date.now();
+  return hit.vector;
+}
+function pruneRuntimeQueryVectorCache() {
+  if (runtimeQueryVectorCache.size <= RUNTIME_QUERY_VECTOR_CACHE_MAX) {
+    return;
+  }
+  const sorted = [...runtimeQueryVectorCache.entries()].sort(
+    (a, b) => a[1].updatedAt - b[1].updatedAt || a[0].localeCompare(b[0])
+  );
+  const removeCount = sorted.length - RUNTIME_QUERY_VECTOR_CACHE_MAX;
+  for (let i = 0; i < removeCount; i += 1) {
+    runtimeQueryVectorCache.delete(sorted[i][0]);
+  }
+}
 function getEmbeddingCachePath(app) {
   return (0, import_obsidian3.normalizePath)(
     `${app.vault.configDir}/plugins/auto-linker/semantic-embedding-cache.json`
@@ -989,10 +1048,17 @@ async function ensureParentFolder(app, path) {
   }
 }
 async function readEmbeddingCache(app) {
+  const memoryKey = getAppCacheIdentity(app);
+  const cached = embeddingCacheMemory.get(memoryKey);
+  if (cached) {
+    return cached;
+  }
   const path = getEmbeddingCachePath(app);
   const exists = await app.vault.adapter.exists(path);
   if (!exists) {
-    return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    const empty = { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    embeddingCacheMemory.set(memoryKey, empty);
+    return empty;
   }
   try {
     const raw = await app.vault.adapter.read(path);
@@ -1000,17 +1066,24 @@ async function readEmbeddingCache(app) {
     const version = typeof parsed.version === "number" ? parsed.version : EMBEDDING_CACHE_VERSION;
     const entries = parsed.entries && typeof parsed.entries === "object" ? parsed.entries : {};
     if (version !== EMBEDDING_CACHE_VERSION) {
-      return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+      const empty = { version: EMBEDDING_CACHE_VERSION, entries: {} };
+      embeddingCacheMemory.set(memoryKey, empty);
+      return empty;
     }
-    return { version, entries };
+    const loaded = { version, entries };
+    embeddingCacheMemory.set(memoryKey, loaded);
+    return loaded;
   } catch (e) {
-    return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    const empty = { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    embeddingCacheMemory.set(memoryKey, empty);
+    return empty;
   }
 }
 async function writeEmbeddingCache(app, cache) {
   const path = getEmbeddingCachePath(app);
   await ensureParentFolder(app, path);
   await app.vault.adapter.write(path, JSON.stringify(cache));
+  embeddingCacheMemory.set(getAppCacheIdentity(app), cache);
 }
 function normalizeSourceText(raw, maxChars) {
   const collapsed = raw.replace(/\s+/g, " ").trim();
@@ -1060,10 +1133,23 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
   let cacheDirty = false;
   const missing = [];
   for (const file of files) {
+    const runtimeKey = buildRuntimeFileVectorKey(
+      config.baseUrl,
+      config.model,
+      maxChars,
+      file.path
+    );
+    const runtimeHit = getRuntimeFileVector(runtimeKey, file.stat.mtime, file.stat.size);
+    if (runtimeHit) {
+      vectorsByPath.set(file.path, runtimeHit);
+      cacheHits += 1;
+      continue;
+    }
     const cacheKey = buildCacheKey(config.baseUrl, config.model, file.path);
     const hit = cache.entries[cacheKey];
     if (hit && typeof hit.mtime === "number" && typeof hit.size === "number" && hit.mtime === file.stat.mtime && hit.size === file.stat.size && Array.isArray(hit.vector) && hit.vector.length > 0) {
       vectorsByPath.set(file.path, hit.vector);
+      setRuntimeFileVector(runtimeKey, hit.vector, file.stat.mtime, file.stat.size);
       cacheHits += 1;
       continue;
     }
@@ -1078,6 +1164,7 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
         size: file.stat.size,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
+      setRuntimeFileVector(runtimeKey, hit.vector, file.stat.mtime, file.stat.size);
       cacheHits += 1;
       cacheDirty = true;
       continue;
@@ -1106,6 +1193,18 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
         const entry = batch[idx];
         const vector = embeddings[idx];
         vectorsByPath.set(entry.file.path, vector);
+        const runtimeKey = buildRuntimeFileVectorKey(
+          config.baseUrl,
+          config.model,
+          maxChars,
+          entry.file.path
+        );
+        setRuntimeFileVector(
+          runtimeKey,
+          vector,
+          entry.file.stat.mtime,
+          entry.file.stat.size
+        );
         cache.entries[entry.cacheKey] = {
           fingerprint: entry.fingerprint,
           vector,
@@ -1223,11 +1322,31 @@ async function searchSemanticNotesByQuery(app, files, settings, query, topK) {
   const hits = [];
   const errors = [...vectorBuild.errors];
   let queryVector = null;
+  const queryCacheKey = buildRuntimeQueryKey(
+    config.baseUrl,
+    config.model,
+    maxChars,
+    queryText
+  );
+  const queryCacheHit = runtimeQueryVectorCache.get(queryCacheKey);
+  if (queryCacheHit && queryCacheHit.vector.length > 0) {
+    queryCacheHit.updatedAt = Date.now();
+    queryVector = queryCacheHit.vector;
+  }
   try {
-    const queryEmbeddings = await requestOllamaEmbeddings(config.baseUrl, config.model, [
-      queryText
-    ]);
-    queryVector = (_a = queryEmbeddings[0]) != null ? _a : null;
+    if (!queryVector) {
+      const queryEmbeddings = await requestOllamaEmbeddings(config.baseUrl, config.model, [
+        queryText
+      ]);
+      queryVector = (_a = queryEmbeddings[0]) != null ? _a : null;
+      if (queryVector && queryVector.length > 0) {
+        runtimeQueryVectorCache.set(queryCacheKey, {
+          vector: queryVector,
+          updatedAt: Date.now()
+        });
+        pruneRuntimeQueryVectorCache();
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown query embedding error";
     errors.push(`query: ${message}`);
@@ -4405,21 +4524,55 @@ ${segment}` : segment;
     }
     return false;
   }
-  getQaContractLines(intent) {
+  shouldPreferDetailedAnswer(question, intent) {
+    const normalized = question.toLowerCase();
+    if (/(짧게|간단히|한줄|brief|short|tl;dr|요약만)/i.test(normalized)) {
+      return false;
+    }
+    if (intent === "sources_only") {
+      return false;
+    }
+    if (intent === "comparison" || intent === "plan") {
+      return true;
+    }
+    return normalized.length >= 18;
+  }
+  needsQaDepthRepair(intent, answer, preferDetailed) {
+    var _a;
+    if (!preferDetailed || intent === "sources_only") {
+      return false;
+    }
+    const compact = answer.replace(/\s+/g, " ").trim();
+    if (!compact) {
+      return true;
+    }
+    const paragraphCount = answer.split(/\n{2,}/).map((chunk) => chunk.trim()).filter((chunk) => chunk.length > 0).length;
+    const bulletCount = ((_a = answer.match(/^\s*[-*]\s+/gm)) != null ? _a : []).length;
+    if (compact.length < 300) {
+      return true;
+    }
+    if (paragraphCount < 2 && bulletCount < 4) {
+      return true;
+    }
+    return false;
+  }
+  getQaContractLines(intent, preferDetailed) {
     if (intent === "comparison") {
       return [
         "Output contract:",
-        "- Start with 1-2 sentence conclusion.",
+        "- Start with 2-3 sentence conclusion.",
         "- Include at least one markdown table for comparison.",
+        "- After the table, add key trade-offs and recommendation.",
         "- If information is missing, fill with '\uC815\uBCF4 \uBD80\uC871' and explain briefly."
       ];
     }
     if (intent === "plan") {
       return [
         "Output contract:",
-        "- Start with 1-2 sentence overview.",
+        "- Start with 2-3 sentence overview.",
         "- Include a checklist using '- [ ]' format.",
-        "- Add priority or order hints for each checklist item."
+        "- Add priority or order hints for each checklist item.",
+        "- Add short rationale for critical steps and risks."
       ];
     }
     if (intent === "sources_only") {
@@ -4427,6 +4580,18 @@ ${segment}` : segment;
         "Output contract:",
         "- Return source links only (bullet list).",
         "- No extra narrative unless required for missing evidence."
+      ];
+    }
+    if (preferDetailed) {
+      return [
+        "Output contract:",
+        "- Start with a direct answer in 2-4 sentences.",
+        "- Then provide detailed explanation with either:",
+        "  a) 2+ short paragraphs, or",
+        "  b) 1 short paragraph + 4+ bullet points.",
+        "- Use short section headings when it improves readability.",
+        "- Include practical implications or next actions when relevant.",
+        "- Avoid one-line answers unless user explicitly asks for brevity."
       ];
     }
     return [
@@ -4444,16 +4609,17 @@ Content:
 ${item.content}`
     ).join("\n\n---\n\n");
   }
-  buildLocalQaSystemPrompt(intent) {
+  buildLocalQaSystemPrompt(intent, preferDetailed) {
+    const toneLine = preferDetailed ? "Keep tone natural, direct, and sufficiently detailed." : "Keep tone natural, direct, and concise.";
     return [
       "You are a local-note assistant for Obsidian.",
       "Answer only from the provided sources.",
       "Use the same language as the user's question.",
-      "Keep tone natural, direct, and concise.",
+      toneLine,
       "Output in markdown.",
       "When making claims, cite source paths inline in parentheses.",
       "If evidence is insufficient, state it clearly and do not invent facts.",
-      ...this.getQaContractLines(intent)
+      ...this.getQaContractLines(intent, preferDetailed)
     ].join("\n");
   }
   buildLocalQaUserPrompt(question, sourceContext) {
@@ -4708,6 +4874,7 @@ ${item.content}`
       intent,
       answer,
       question,
+      preferDetailed,
       sourceBlocks,
       qaBaseUrl,
       qaModel,
@@ -4716,7 +4883,9 @@ ${item.content}`
     if (!this.settings.qaStructureGuardEnabled) {
       return answer;
     }
-    if (!this.needsQaStructureRepair(intent, answer)) {
+    const needsStructure = this.needsQaStructureRepair(intent, answer);
+    const needsDepth = this.needsQaDepthRepair(intent, answer, preferDetailed);
+    if (!needsStructure && !needsDepth) {
       return answer;
     }
     this.emitQaEvent(onEvent, "generation", "Applying structured output guard");
@@ -4727,7 +4896,7 @@ ${item.content}`
       "Do not add facts not present in draft answer or provided source excerpts.",
       "Preserve source path citations whenever possible.",
       "Return markdown only.",
-      ...this.getQaContractLines(intent)
+      ...this.getQaContractLines(intent, preferDetailed)
     ].join("\n");
     const userPrompt = [
       `Question: ${question}`,
@@ -4748,7 +4917,9 @@ ${item.content}`
       });
       const split = splitThinkingBlocks(repaired.answer);
       const normalized = split.answer.trim() || repaired.answer.trim();
-      if (normalized && !this.needsQaStructureRepair(intent, normalized)) {
+      const stillNeedsStructure = this.needsQaStructureRepair(intent, normalized);
+      const stillNeedsDepth = this.needsQaDepthRepair(intent, normalized, preferDetailed);
+      if (normalized && !stillNeedsStructure && !stillNeedsDepth) {
         this.emitQaEvent(onEvent, "generation", "Structured output guard applied");
         return normalized;
       }
@@ -4777,6 +4948,7 @@ ${item.content}`
       throw new Error("Question is empty.");
     }
     const intent = this.detectLocalQaIntent(safeQuestion);
+    const preferDetailed = this.shouldPreferDetailedAnswer(safeQuestion, intent);
     const safeTopK = Math.max(1, Math.min(15, topK));
     const qaBaseUrl = this.resolveQaBaseUrl();
     if (!qaBaseUrl) {
@@ -4877,7 +5049,7 @@ ${item.content}`
         throw new Error("Relevant notes found but no readable content extracted.");
       }
       const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
-      const systemPrompt = this.buildLocalQaSystemPrompt(intent);
+      const systemPrompt = this.buildLocalQaSystemPrompt(intent, preferDetailed);
       const userPrompt = this.buildLocalQaUserPrompt(safeQuestion, sourceContext);
       this.emitQaEvent(onEvent, "generation", "Generation started");
       this.setStatus("asking local qa model...");
@@ -4899,6 +5071,7 @@ ${item.content}`
         intent,
         answer: initialAnswer,
         question: safeQuestion,
+        preferDetailed,
         sourceBlocks,
         qaBaseUrl,
         qaModel,

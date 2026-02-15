@@ -4516,21 +4516,69 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return false;
   }
 
-  private getQaContractLines(intent: LocalQaResponseIntent): string[] {
+  private shouldPreferDetailedAnswer(
+    question: string,
+    intent: LocalQaResponseIntent,
+  ): boolean {
+    const normalized = question.toLowerCase();
+    if (/(짧게|간단히|한줄|brief|short|tl;dr|요약만)/i.test(normalized)) {
+      return false;
+    }
+    if (intent === "sources_only") {
+      return false;
+    }
+    if (intent === "comparison" || intent === "plan") {
+      return true;
+    }
+    return normalized.length >= 18;
+  }
+
+  private needsQaDepthRepair(
+    intent: LocalQaResponseIntent,
+    answer: string,
+    preferDetailed: boolean,
+  ): boolean {
+    if (!preferDetailed || intent === "sources_only") {
+      return false;
+    }
+    const compact = answer.replace(/\s+/g, " ").trim();
+    if (!compact) {
+      return true;
+    }
+    const paragraphCount = answer
+      .split(/\n{2,}/)
+      .map((chunk) => chunk.trim())
+      .filter((chunk) => chunk.length > 0).length;
+    const bulletCount = (answer.match(/^\s*[-*]\s+/gm) ?? []).length;
+    if (compact.length < 300) {
+      return true;
+    }
+    if (paragraphCount < 2 && bulletCount < 4) {
+      return true;
+    }
+    return false;
+  }
+
+  private getQaContractLines(
+    intent: LocalQaResponseIntent,
+    preferDetailed: boolean,
+  ): string[] {
     if (intent === "comparison") {
       return [
         "Output contract:",
-        "- Start with 1-2 sentence conclusion.",
+        "- Start with 2-3 sentence conclusion.",
         "- Include at least one markdown table for comparison.",
+        "- After the table, add key trade-offs and recommendation.",
         "- If information is missing, fill with '정보 부족' and explain briefly.",
       ];
     }
     if (intent === "plan") {
       return [
         "Output contract:",
-        "- Start with 1-2 sentence overview.",
+        "- Start with 2-3 sentence overview.",
         "- Include a checklist using '- [ ]' format.",
         "- Add priority or order hints for each checklist item.",
+        "- Add short rationale for critical steps and risks.",
       ];
     }
     if (intent === "sources_only") {
@@ -4538,6 +4586,18 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         "Output contract:",
         "- Return source links only (bullet list).",
         "- No extra narrative unless required for missing evidence.",
+      ];
+    }
+    if (preferDetailed) {
+      return [
+        "Output contract:",
+        "- Start with a direct answer in 2-4 sentences.",
+        "- Then provide detailed explanation with either:",
+        "  a) 2+ short paragraphs, or",
+        "  b) 1 short paragraph + 4+ bullet points.",
+        "- Use short section headings when it improves readability.",
+        "- Include practical implications or next actions when relevant.",
+        "- Avoid one-line answers unless user explicitly asks for brevity.",
       ];
     }
     return [
@@ -4558,16 +4618,22 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       .join("\n\n---\n\n");
   }
 
-  private buildLocalQaSystemPrompt(intent: LocalQaResponseIntent): string {
+  private buildLocalQaSystemPrompt(
+    intent: LocalQaResponseIntent,
+    preferDetailed: boolean,
+  ): string {
+    const toneLine = preferDetailed
+      ? "Keep tone natural, direct, and sufficiently detailed."
+      : "Keep tone natural, direct, and concise.";
     return [
       "You are a local-note assistant for Obsidian.",
       "Answer only from the provided sources.",
       "Use the same language as the user's question.",
-      "Keep tone natural, direct, and concise.",
+      toneLine,
       "Output in markdown.",
       "When making claims, cite source paths inline in parentheses.",
       "If evidence is insufficient, state it clearly and do not invent facts.",
-      ...this.getQaContractLines(intent),
+      ...this.getQaContractLines(intent, preferDetailed),
     ].join("\n");
   }
 
@@ -4901,6 +4967,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     intent: LocalQaResponseIntent;
     answer: string;
     question: string;
+    preferDetailed: boolean;
     sourceBlocks: Array<{ path: string; similarity: number; content: string }>;
     qaBaseUrl: string;
     qaModel: string;
@@ -4910,6 +4977,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       intent,
       answer,
       question,
+      preferDetailed,
       sourceBlocks,
       qaBaseUrl,
       qaModel,
@@ -4918,7 +4986,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!this.settings.qaStructureGuardEnabled) {
       return answer;
     }
-    if (!this.needsQaStructureRepair(intent, answer)) {
+    const needsStructure = this.needsQaStructureRepair(intent, answer);
+    const needsDepth = this.needsQaDepthRepair(intent, answer, preferDetailed);
+    if (!needsStructure && !needsDepth) {
       return answer;
     }
 
@@ -4930,7 +5000,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       "Do not add facts not present in draft answer or provided source excerpts.",
       "Preserve source path citations whenever possible.",
       "Return markdown only.",
-      ...this.getQaContractLines(intent),
+      ...this.getQaContractLines(intent, preferDetailed),
     ].join("\n");
 
     const userPrompt = [
@@ -4953,7 +5023,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       });
       const split = splitThinkingBlocks(repaired.answer);
       const normalized = split.answer.trim() || repaired.answer.trim();
-      if (normalized && !this.needsQaStructureRepair(intent, normalized)) {
+      const stillNeedsStructure = this.needsQaStructureRepair(intent, normalized);
+      const stillNeedsDepth = this.needsQaDepthRepair(intent, normalized, preferDetailed);
+      if (normalized && !stillNeedsStructure && !stillNeedsDepth) {
         this.emitQaEvent(onEvent, "generation", "Structured output guard applied");
         return normalized;
       }
@@ -4992,6 +5064,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       throw new Error("Question is empty.");
     }
     const intent = this.detectLocalQaIntent(safeQuestion);
+    const preferDetailed = this.shouldPreferDetailedAnswer(safeQuestion, intent);
 
     const safeTopK = Math.max(1, Math.min(15, topK));
     const qaBaseUrl = this.resolveQaBaseUrl();
@@ -5117,7 +5190,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
 
       const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
-      const systemPrompt = this.buildLocalQaSystemPrompt(intent);
+      const systemPrompt = this.buildLocalQaSystemPrompt(intent, preferDetailed);
       const userPrompt = this.buildLocalQaUserPrompt(safeQuestion, sourceContext);
       this.emitQaEvent(onEvent, "generation", "Generation started");
 
@@ -5141,6 +5214,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         intent,
         answer: initialAnswer,
         question: safeQuestion,
+        preferDetailed,
         sourceBlocks,
         qaBaseUrl,
         qaModel,

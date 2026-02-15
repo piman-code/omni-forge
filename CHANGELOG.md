@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.12] - 2026-02-15
+
+### Changed
+
+- Local Q&A now prefers richer answers by default (unless user explicitly asks for brevity), with stronger output contracts for depth and readability.
+- Structured output guard now also repairs overly short answers, not only missing table/checklist/source-list structure.
+- Detailed answer mode now uses a non-conflicting system prompt tone to avoid collapsing into one-line responses.
+
+### Performance
+
+- Added in-memory runtime file-vector cache keyed by endpoint/model/context/file to reduce repeated embedding work across ongoing chat turns.
+- Added in-memory runtime query-vector cache to avoid re-embedding repeated user queries in the same session.
+- Added in-memory embedding-cache object reuse to reduce repeated disk cache reads/parsing during large-scope chat sessions.
+
 ## [0.2.11] - 2026-02-15
 
 ### Security
