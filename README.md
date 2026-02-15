@@ -91,6 +91,36 @@ See [SECURITY.md](SECURITY.md) for policy details.
 | Auto-tag | Auto-tag active note | ON (optional, tags-only automation) |
 | Backup | Backup selected notes before apply | ON |
 
+## Ollama Agent Model Guide (M4 Pro 48GB)
+
+Auto Link Local Q&A is currently a text-note RAG flow.
+It calls Ollama `/api/chat` and `/api/generate` with text prompts/messages, and does not yet send image inputs from the chat UI.
+
+| Agent role | Primary model | Lighter fallback | Notes |
+|---|---|---|---|
+| Orchestrator + Architect | `qwen3:14b` | `qwen3:8b` | Balanced planning quality + speed for long structured outputs. |
+| Coder + Debugger | `qwen3-coder:30b` | `qwen3:14b` | Use `qwen3-coder` when coding quality matters most; switch to `qwen3:14b` if running many agents at once. |
+| Ask (general Q&A) | `gpt-oss:20b` | `qwen3:8b` | Strong default assistant behavior; fallback is faster and lighter. |
+| Safeguard (security/fact check) | `gpt-oss-safeguard:20b` | `llama-guard3:8b` | Dedicated safety model first, guard model fallback for lower memory pressure. |
+| Vision sidecar (optional) | `gemma3:12b` or `llama3.2-vision:11b` | `gemma3:4b` | Keep as sidecar for future image-aware flows; current plugin chat is text-only. |
+
+For 4 concurrent agents on 48GB unified memory, start with mostly 8B/14B models and keep at most one 20B+ model active to avoid memory thrashing.
+
+Image generation note:
+- Ollama has an experimental Images API path (for example `gpt-image-1`) but this plugin does not yet wire image generation in-chat.
+- For production image generation workflows, many users still run a separate stack (ComfyUI/Stable Diffusion).
+
+Official references:
+- [Qwen3](https://ollama.com/library/qwen3)
+- [Qwen3-Coder](https://ollama.com/library/qwen3-coder)
+- [GPT-OSS](https://ollama.com/library/gpt-oss)
+- [GPT-OSS-Safeguard](https://ollama.com/library/gpt-oss-safeguard)
+- [Llama Guard 3](https://ollama.com/library/llama-guard3)
+- [Gemma 3](https://ollama.com/library/gemma3)
+- [Llama 3.2 Vision](https://ollama.com/library/llama3.2-vision)
+- [Ollama Vision docs](https://docs.ollama.com/capabilities/vision)
+- [Ollama Image generation update](https://ollama.com/blog/image-generation)
+
 ## Performance Tips
 
 For large selections and repeated runs:

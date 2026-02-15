@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.15] - 2026-02-15
+
+### Added
+
+- Added optional orchestration/safeguard post-processing controls for Local Q&A:
+  - `Enable orchestrator pipeline`
+  - `Enable safeguard verification`
+- Added full settings-screen bilingual pass (EN/KO) for section headers, setting names, and setting descriptions.
+- Added bilingual labels for key setting controls (provider options, role preset options, model refresh/recommend buttons, cleanup picker button).
+- Added Ollama agent model recommendation guide (EN/KO README) for M4 Pro 48GB, including role-to-model mapping and vision/image-generation notes.
+
+### Changed
+
+- Clarified in docs that current plugin chat pipeline is text-note based (`/api/chat`, `/api/generate`) and image input/generation is not yet wired in-chat.
+- Expanded Korean co-labeling coverage to nearly all setting areas for first-time domestic users.
+
+### Security
+
+- Revalidated release checks with local-endpoint-first policy unchanged and non-local endpoint guard preserved by default.
+
 ## [0.2.14] - 2026-02-15
 
 ### Added

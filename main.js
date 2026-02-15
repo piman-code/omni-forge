@@ -1424,6 +1424,8 @@ var DEFAULT_SETTINGS = {
   qaPreferredResponseLanguage: "korean",
   qaCustomSystemPrompt: "",
   qaRolePreset: "ask",
+  qaOrchestratorEnabled: false,
+  qaSafeguardPassEnabled: false,
   qaIncludeSelectionInventory: true,
   qaSelectionInventoryMaxFiles: 200,
   qaThreadAutoSyncEnabled: true,
@@ -2991,6 +2993,120 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
   }
 };
+var SETTINGS_HEADER_KO_MAP = {
+  "Local provider config": "\uB85C\uCEEC \uC81C\uACF5\uC790 \uC124\uC815",
+  "Cloud provider config": "\uD074\uB77C\uC6B0\uB4DC \uC81C\uACF5\uC790 \uC124\uC815",
+  Behavior: "\uB3D9\uC791 \uC124\uC815",
+  "Semantic linking (Ollama embeddings)": "\uC2DC\uB9E8\uD2F1 \uB9C1\uD06C(\uC62C\uB77C\uB9C8 \uC784\uBCA0\uB529)",
+  "Property cleanup": "\uC18D\uC131 \uC815\uB9AC",
+  "Selection and backup": "\uC120\uD0DD \uBC0F \uBC31\uC5C5",
+  MOC: "MOC"
+};
+var SETTINGS_NAME_KO_MAP = {
+  Provider: "\uC81C\uACF5\uC790",
+  "Ollama base URL": "Ollama \uAE30\uBCF8 URL",
+  "Ollama detected model picker": "Ollama \uAC10\uC9C0 \uBAA8\uB378 \uC120\uD0DD\uAE30",
+  "Ollama model (manual)": "Ollama \uBAA8\uB378(\uC218\uB3D9)",
+  "Auto-pick recommended Ollama model": "\uAD8C\uC7A5 Ollama \uBAA8\uB378 \uC790\uB3D9 \uC120\uD0DD",
+  "Ollama detection summary": "Ollama \uAC10\uC9C0 \uC694\uC57D",
+  "LM Studio base URL": "LM Studio \uAE30\uBCF8 URL",
+  "LM Studio model": "LM Studio \uBAA8\uB378",
+  "LM Studio API key (optional)": "LM Studio API \uD0A4(\uC120\uD0DD)",
+  "OpenAI base URL": "OpenAI \uAE30\uBCF8 URL",
+  "OpenAI model": "OpenAI \uBAA8\uB378",
+  "OpenAI API key": "OpenAI API \uD0A4",
+  "Anthropic model": "Anthropic \uBAA8\uB378",
+  "Anthropic API key": "Anthropic API \uD0A4",
+  "Gemini model": "Gemini \uBAA8\uB378",
+  "Gemini API key": "Gemini API \uD0A4",
+  "Suggestion mode (recommended)": "\uC81C\uC548 \uBAA8\uB4DC(\uAD8C\uC7A5)",
+  "Show reasons for each field": "\uAC01 \uD544\uB4DC \uADFC\uAC70 \uD45C\uC2DC",
+  "Show progress notices": "\uC9C4\uD589 \uC54C\uB9BC \uD45C\uC2DC",
+  "Analyze tags": "\uD0DC\uADF8 \uBD84\uC11D",
+  "Analyze topic": "\uC8FC\uC81C \uBD84\uC11D",
+  "Analyze linked": "\uC5F0\uACB0 \uB178\uD2B8 \uBD84\uC11D",
+  "Analyze index": "\uC778\uB371\uC2A4 \uBD84\uC11D",
+  "Max tags": "\uCD5C\uB300 \uD0DC\uADF8 \uC218",
+  "Max linked": "\uCD5C\uB300 linked \uC218",
+  "Enable semantic candidate ranking": "\uC2DC\uB9E8\uD2F1 \uD6C4\uBCF4 \uB7AD\uD0B9 \uC0AC\uC6A9",
+  "Embedding Ollama base URL": "\uC784\uBCA0\uB529 Ollama \uAE30\uBCF8 URL",
+  "Embedding detected model picker": "\uC784\uBCA0\uB529 \uAC10\uC9C0 \uBAA8\uB378 \uC120\uD0DD\uAE30",
+  "Embedding model (manual)": "\uC784\uBCA0\uB529 \uBAA8\uB378(\uC218\uB3D9)",
+  "Auto-pick recommended embedding model": "\uAD8C\uC7A5 \uC784\uBCA0\uB529 \uBAA8\uB378 \uC790\uB3D9 \uC120\uD0DD",
+  "Embedding detection summary": "\uC784\uBCA0\uB529 \uAC10\uC9C0 \uC694\uC57D",
+  "Semantic top-k candidates": "\uC2DC\uB9E8\uD2F1 top-k \uD6C4\uBCF4 \uC218",
+  "Semantic min similarity": "\uC2DC\uB9E8\uD2F1 \uCD5C\uC18C \uC720\uC0AC\uB3C4",
+  "Semantic source max chars": "\uC2DC\uB9E8\uD2F1 \uC18C\uC2A4 \uCD5C\uB300 \uBB38\uC790 \uC218",
+  "Q&A Ollama base URL": "Q&A Ollama \uAE30\uBCF8 URL",
+  "Q&A model": "Q&A \uBAA8\uB378",
+  "Prefer Ollama /api/chat (with fallback)": "Ollama /api/chat \uC6B0\uC120(\uD3F4\uBC31 \uD3EC\uD568)",
+  "Chat transcript folder path": "\uCC44\uD305 \uAE30\uB85D \uD3F4\uB354 \uACBD\uB85C",
+  "Auto-sync chat thread": "\uCC44\uD305 \uC2A4\uB808\uB4DC \uC790\uB3D9 \uB3D9\uAE30\uD654",
+  "Allow non-local Q&A endpoint (danger)": "\uB85C\uCEEC \uC678 Q&A \uC5D4\uB4DC\uD3EC\uC778\uD2B8 \uD5C8\uC6A9(\uC704\uD5D8)",
+  "Remove legacy AI-prefixed keys": "\uB808\uAC70\uC2DC AI \uC811\uB450 \uD0A4 \uC81C\uAC70",
+  "Enable cleanup rules during apply": "\uC801\uC6A9 \uC2DC \uC815\uB9AC \uADDC\uCE59 \uC0AC\uC6A9",
+  "Cleanup exact keys": "\uC815\uB9AC \uC815\uD655 \uD0A4",
+  "Pick cleanup keys from selected notes": "\uC120\uD0DD \uB178\uD2B8\uC5D0\uC11C \uC815\uB9AC \uD0A4 \uC120\uD0DD",
+  "Cleanup key prefixes": "\uC815\uB9AC \uD0A4 \uC811\uB450\uC5B4",
+  "Never remove these keys": "\uC808\uB300 \uC81C\uAC70\uD558\uC9C0 \uC54A\uC744 \uD0A4",
+  "Run cleanup command": "\uC815\uB9AC \uBA85\uB839 \uC2E4\uD589",
+  "Cleanup dry-run report folder": "\uC815\uB9AC dry-run \uB9AC\uD3EC\uD2B8 \uD3F4\uB354",
+  "Sort tags and linked arrays": "tags/linked \uBC30\uC5F4 \uC815\uB82C",
+  "Include subfolders for selected folders": "\uC120\uD0DD \uD3F4\uB354 \uD558\uC704\uD3F4\uB354 \uD3EC\uD568",
+  "Selection path width percent": "\uC120\uD0DD \uACBD\uB85C \uB108\uBE44 \uBE44\uC728",
+  "Excluded folder patterns": "\uC81C\uC678 \uD3F4\uB354 \uD328\uD134",
+  "Backup selected notes before apply": "\uC801\uC6A9 \uC804 \uC120\uD0DD \uB178\uD2B8 \uBC31\uC5C5",
+  "Backup root path": "\uBC31\uC5C5 \uB8E8\uD2B8 \uACBD\uB85C",
+  "Backup retention count": "\uBC31\uC5C5 \uBCF4\uAD00 \uAC1C\uC218",
+  "Generate MOC after apply": "\uC801\uC6A9 \uD6C4 MOC \uC0DD\uC131",
+  "MOC file path": "MOC \uD30C\uC77C \uACBD\uB85C"
+};
+var SETTINGS_DESC_KO_MAP = {
+  "Choose AI provider. Local providers are recommended first.": "AI \uC81C\uACF5\uC790\uB97C \uC120\uD0DD\uD569\uB2C8\uB2E4. \uB85C\uCEEC \uC81C\uACF5\uC790\uB97C \uC6B0\uC120 \uAD8C\uC7A5\uD569\uB2C8\uB2E4.",
+  "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for analysis.": "\uAC10\uC9C0\uB41C \uBAA8\uB378 \uC911\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. (\uCD94\uCC9C)=\uAD8C\uC7A5, (\uBD88\uAC00)=\uBD84\uC11D \uBD80\uC801\uD569",
+  "Manual override if you want a custom model name.": "\uC0AC\uC6A9\uC790 \uC9C0\uC815 \uBAA8\uB378\uBA85\uC744 \uC9C1\uC811 \uC785\uB825\uD560 \uB54C \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Detect local models and auto-choose recommended when current is missing.": "\uB85C\uCEEC \uBAA8\uB378\uC744 \uAC10\uC9C0\uD574 \uD604\uC7AC \uBAA8\uB378\uC774 \uC5C6\uC73C\uBA74 \uAD8C\uC7A5 \uBAA8\uB378\uC744 \uC790\uB3D9 \uC120\uD0DD\uD569\uB2C8\uB2E4.",
+  "Analyze first, preview changes, and apply only when approved.": "\uBA3C\uC800 \uBD84\uC11D\uD558\uACE0 \uBCC0\uACBD \uBBF8\uB9AC\uBCF4\uAE30\uB97C \uD655\uC778\uD55C \uB4A4 \uC2B9\uC778 \uC2DC\uC5D0\uB9CC \uC801\uC6A9\uD569\uB2C8\uB2E4.",
+  "In addition to persistent progress modal, show short notices.": "\uACE0\uC815 \uC9C4\uD589 \uBAA8\uB2EC \uC678\uC5D0\uB3C4 \uC9E7\uC740 \uC54C\uB9BC\uC744 \uD45C\uC2DC\uD569\uB2C8\uB2E4.",
+  "Use local Ollama embeddings to rank likely related notes before AI linked suggestion.": "AI linked \uC81C\uC548 \uC804\uC5D0 \uB85C\uCEEC Ollama \uC784\uBCA0\uB529\uC73C\uB85C \uAD00\uB828 \uAC00\uB2A5 \uB178\uD2B8\uB97C \uC6B0\uC120 \uC815\uB82C\uD569\uB2C8\uB2E4.",
+  "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for embeddings.": "\uAC10\uC9C0\uB41C \uBAA8\uB378 \uC911\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. (\uCD94\uCC9C)=\uAD8C\uC7A5, (\uBD88\uAC00)=\uC784\uBCA0\uB529 \uBD80\uC801\uD569",
+  "Manual override if you want a custom embedding model name.": "\uC0AC\uC6A9\uC790 \uC9C0\uC815 \uC784\uBCA0\uB529 \uBAA8\uB378\uBA85\uC744 \uC9C1\uC811 \uC785\uB825\uD560 \uB54C \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Range: 0.0 to 1.0": "\uBC94\uC704: 0.0 ~ 1.0",
+  "Trim note text before embedding to keep local runs fast.": "\uB85C\uCEEC \uC2E4\uD589 \uC131\uB2A5\uC744 \uC704\uD574 \uC784\uBCA0\uB529 \uC804 \uB178\uD2B8 \uD14D\uC2A4\uD2B8 \uAE38\uC774\uB97C \uC81C\uD55C\uD569\uB2C8\uB2E4.",
+  "Leave empty to use main Ollama base URL.": "\uBE44\uC6CC\uB450\uBA74 \uBA54\uC778 Ollama \uAE30\uBCF8 URL\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Leave empty to use main analysis model.": "\uBE44\uC6CC\uB450\uBA74 \uBA54\uC778 \uBD84\uC11D \uBAA8\uB378\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Use role-based chat first, then fallback to /api/generate when unavailable.": "\uC5ED\uD560 \uAE30\uBC18 /api/chat\uC744 \uC6B0\uC120 \uC0AC\uC6A9\uD558\uACE0, \uBD88\uAC00\uD558\uBA74 /api/generate\uB85C \uD3F4\uBC31\uD569\uB2C8\uB2E4.",
+  "Vault-relative path for saving chat transcripts.": "\uCC44\uD305 \uAE30\uB85D \uC800\uC7A5\uC6A9 vault-relative \uACBD\uB85C\uC785\uB2C8\uB2E4.",
+  "When enabled, the current chat thread is continuously saved and updated as messages change.": "\uD65C\uC131\uD654\uD558\uBA74 \uD604\uC7AC \uCC44\uD305 \uC2A4\uB808\uB4DC\uB97C \uBA54\uC2DC\uC9C0 \uBCC0\uACBD\uC5D0 \uB9DE\uCDB0 \uACC4\uC18D \uC800\uC7A5/\uB3D9\uAE30\uD654\uD569\uB2C8\uB2E4.",
+  "Off by default. Keep disabled to prevent note data leaving localhost.": "\uAE30\uBCF8\uAC12\uC740 \uAEBC\uC9D0\uC785\uB2C8\uB2E4. \uB178\uD2B8 \uB370\uC774\uD130\uAC00 localhost \uBC16\uC73C\uB85C \uB098\uAC00\uC9C0 \uC54A\uB3C4\uB85D \uBE44\uD65C\uC131 \uC0C1\uD0DC\uB97C \uAD8C\uC7A5\uD569\uB2C8\uB2E4.",
+  "If enabled, removes only legacy keys like ai_*/autolinker_* while preserving other existing keys (including linter date fields).": "\uD65C\uC131\uD654\uD558\uBA74 ai_*/autolinker_* \uAC19\uC740 \uB808\uAC70\uC2DC \uD0A4\uB9CC \uC81C\uAC70\uD558\uACE0, \uB2E4\uB978 \uAE30\uC874 \uD0A4(\uB9B0\uD130 \uB0A0\uC9DC \uD544\uB4DC \uD3EC\uD568)\uB294 \uC720\uC9C0\uD569\uB2C8\uB2E4.",
+  "When applying AI suggestions, also remove frontmatter keys by rules below.": "AI \uC81C\uC548 \uC801\uC6A9 \uC2DC \uC544\uB798 \uADDC\uCE59\uC5D0 \uB530\uB77C frontmatter \uD0A4\uB3C4 \uD568\uAED8 \uC815\uB9AC\uD569\uB2C8\uB2E4.",
+  "Comma/newline separated keys. Example: related, linked_context": "\uC27C\uD45C/\uC904\uBC14\uAFC8\uC73C\uB85C \uAD6C\uBD84\uD55C \uD0A4 \uBAA9\uB85D\uC785\uB2C8\uB2E4. \uC608: related, linked_context",
+  "Scan selected notes and choose keys by checkbox.": "\uC120\uD0DD\uD55C \uB178\uD2B8\uB97C \uC2A4\uCE94\uD574 \uCCB4\uD06C\uBC15\uC2A4\uB85C \uC815\uB9AC \uD0A4\uB97C \uC120\uD0DD\uD569\uB2C8\uB2E4.",
+  "Comma/newline separated prefixes. Example: temp_, draft_": "\uC27C\uD45C/\uC904\uBC14\uAFC8\uC73C\uB85C \uAD6C\uBD84\uD55C \uC811\uB450\uC5B4 \uBAA9\uB85D\uC785\uB2C8\uB2E4. \uC608: temp_, draft_",
+  "Comma/newline separated keys that override cleanup rules.": "\uC815\uB9AC \uADDC\uCE59\uBCF4\uB2E4 \uC6B0\uC120\uD558\uB294 \uD0A4 \uBAA9\uB85D(\uC27C\uD45C/\uC904\uBC14\uAFC8 \uAD6C\uBD84)\uC785\uB2C8\uB2E4.",
+  "Use command palette: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'.": "\uBA85\uB839 \uD314\uB808\uD2B8 \uC0AC\uC6A9: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'.",
+  "Vault-relative folder for cleanup dry-run report files.": "\uC815\uB9AC dry-run \uB9AC\uD3EC\uD2B8 \uC800\uC7A5\uC6A9 vault-relative \uD3F4\uB354\uC785\uB2C8\uB2E4.",
+  "Helps keep stable output and reduce linter churn.": "\uCD9C\uB825 \uC548\uC815\uC131\uC744 \uB192\uC774\uACE0 \uB9B0\uD130 \uBCC0\uACBD \uC7A1\uC74C\uC744 \uC904\uC5EC\uC90D\uB2C8\uB2E4.",
+  "Controls path width in Select target notes/folders modal (45-100).": "Select target notes/folders \uBAA8\uB2EC\uC758 \uACBD\uB85C \uB108\uBE44\uB97C \uC870\uC808\uD569\uB2C8\uB2E4(45-100).",
+  "Comma-separated substrings. Matched folders are ignored during selection/analysis.": "\uC27C\uD45C\uB85C \uAD6C\uBD84\uD55C \uBB38\uC790\uC5F4 \uD328\uD134\uC785\uB2C8\uB2E4. \uC77C\uCE58\uD558\uB294 \uD3F4\uB354\uB294 \uC120\uD0DD/\uBD84\uC11D\uC5D0\uC11C \uC81C\uC678\uB429\uB2C8\uB2E4.",
+  "You can also override this every run from the backup confirmation dialog.": "\uBC31\uC5C5 \uD655\uC778 \uB300\uD654\uC0C1\uC790\uC5D0\uC11C \uC2E4\uD589\uB9C8\uB2E4 \uC774 \uC124\uC815\uC744 \uB36E\uC5B4\uC4F8 \uC218 \uC788\uC2B5\uB2C8\uB2E4.",
+  "Vault-relative folder path used for versioned backups.": "\uBC84\uC804\uD615 \uBC31\uC5C5\uC5D0 \uC0AC\uC6A9\uD558\uB294 vault-relative \uD3F4\uB354 \uACBD\uB85C\uC785\uB2C8\uB2E4.",
+  "Keep only latest N backups (old backups are deleted automatically).": "\uCD5C\uC2E0 N\uAC1C \uBC31\uC5C5\uB9CC \uC720\uC9C0\uD569\uB2C8\uB2E4(\uC624\uB798\uB41C \uBC31\uC5C5\uC740 \uC790\uB3D9 \uC0AD\uC81C).",
+  "Vault-relative markdown path.": "vault-relative \uB9C8\uD06C\uB2E4\uC6B4 \uACBD\uB85C\uC785\uB2C8\uB2E4."
+};
+function toKoreanBilingualLabel(originalText, translationMap) {
+  var _a;
+  const normalized = (_a = originalText == null ? void 0 : originalText.trim()) != null ? _a : "";
+  if (!normalized || normalized.includes(" / ")) {
+    return null;
+  }
+  const translated = translationMap[normalized];
+  if (!translated) {
+    return null;
+  }
+  return `${normalized} / ${translated}`;
+}
 var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -3004,7 +3120,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       text: "Language docs / \uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)"
     });
     new import_obsidian4.Setting(containerEl).setName("Provider").setDesc("Choose AI provider. Local providers are recommended first.").addDropdown(
-      (dropdown) => dropdown.addOption("ollama", "Ollama (local)").addOption("lmstudio", "LM Studio (local)").addOption("openai", "OpenAI / Codex").addOption("anthropic", "Claude").addOption("gemini", "Gemini").setValue(this.plugin.settings.provider).onChange(async (value) => {
+      (dropdown) => dropdown.addOption("ollama", "Ollama (local / \uB85C\uCEEC)").addOption("lmstudio", "LM Studio (local / \uB85C\uCEEC)").addOption("openai", "OpenAI / Codex").addOption("anthropic", "Claude / \uD074\uB85C\uB4DC").addOption("gemini", "Gemini / \uC81C\uBBF8\uB098\uC774").setValue(this.plugin.settings.provider).onChange(async (value) => {
         this.plugin.settings.provider = value;
         await this.plugin.saveSettings();
         this.display();
@@ -3048,12 +3164,12 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         this.display();
       });
     }).addButton(
-      (button) => button.setButtonText("Refresh").onClick(async () => {
+      (button) => button.setButtonText("Refresh / \uC0C8\uB85C\uACE0\uCE68").onClick(async () => {
         await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
         this.display();
       })
     ).addButton(
-      (button) => button.setButtonText("Use recommended").onClick(async () => {
+      (button) => button.setButtonText("Use recommended / \uAD8C\uC7A5\uAC12 \uC0AC\uC6A9").onClick(async () => {
         await this.plugin.applyRecommendedOllamaModel(true);
         this.display();
       })
@@ -3252,7 +3368,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         this.display();
       });
     }).addButton(
-      (button) => button.setButtonText("Refresh").onClick(async () => {
+      (button) => button.setButtonText("Refresh / \uC0C8\uB85C\uACE0\uCE68").onClick(async () => {
         await this.plugin.refreshEmbeddingModelDetection({
           notify: true,
           autoApply: true
@@ -3260,7 +3376,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         this.display();
       })
     ).addButton(
-      (button) => button.setButtonText("Use recommended").onClick(async () => {
+      (button) => button.setButtonText("Use recommended / \uAD8C\uC7A5\uAC12 \uC0AC\uC6A9").onClick(async () => {
         await this.plugin.applyRecommendedEmbeddingModel(true);
         this.display();
       })
@@ -3372,8 +3488,20 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Role preset / \uC5ED\uD560 \uD504\uB9AC\uC14B").setDesc("Prompt style preset for local Q&A. / \uB85C\uCEEC Q&A \uB2F5\uBCC0 \uC131\uD5A5 \uD504\uB9AC\uC14B").addDropdown(
-      (dropdown) => dropdown.addOption("ask", "Ask (default)").addOption("orchestrator", "Orchestrator").addOption("coder", "Coder").addOption("debugger", "Debugger").addOption("architect", "Architect").addOption("safeguard", "Safeguard (security)").setValue(this.plugin.settings.qaRolePreset).onChange(async (value) => {
+      (dropdown) => dropdown.addOption("ask", "Ask (default / \uAE30\uBCF8)").addOption("orchestrator", "Orchestrator / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130").addOption("coder", "Coder / \uCF54\uB354").addOption("debugger", "Debugger / \uB514\uBC84\uAC70").addOption("architect", "Architect / \uC544\uD0A4\uD14D\uD2B8").addOption("safeguard", "Safeguard (security / \uBCF4\uC548)").setValue(this.plugin.settings.qaRolePreset).onChange(async (value) => {
         this.plugin.settings.qaRolePreset = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Enable orchestrator pipeline / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130 \uD30C\uC774\uD504\uB77C\uC778").setDesc("Use an orchestration rewrite pass for planning/report/PPT/game-style tasks. / \uACC4\uD68D\uC11C\xB7\uBCF4\uACE0\uC11C\xB7PPT\xB7\uAC8C\uC784 \uACFC\uC81C\uC5D0 \uCD94\uAC00 \uC815\uB9AC \uD328\uC2A4\uB97C \uC801\uC6A9").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaOrchestratorEnabled).onChange(async (value) => {
+        this.plugin.settings.qaOrchestratorEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Enable safeguard verification / \uC138\uC774\uD504\uAC00\uB4DC \uAC80\uC99D").setDesc("Run a final factual/safety consistency pass against sources before returning answer. / \uCD9C\uCC98 \uAE30\uC900 \uC0AC\uC2E4\xB7\uBCF4\uC548 \uC77C\uAD00\uC131 \uCD5C\uC885 \uC810\uAC80").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaSafeguardPassEnabled).onChange(async (value) => {
+        this.plugin.settings.qaSafeguardPassEnabled = value;
         await this.plugin.saveSettings();
       })
     );
@@ -3440,7 +3568,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Pick cleanup keys from selected notes").setDesc("Scan selected notes and choose keys by checkbox.").addButton(
-      (button) => button.setButtonText("Open picker").onClick(async () => {
+      (button) => button.setButtonText("Open picker / \uC120\uD0DD\uAE30 \uC5F4\uAE30").onClick(async () => {
         await this.plugin.openCleanupKeyPicker();
         this.display();
       })
@@ -3567,6 +3695,30 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         }
       })
     );
+    this.applyBilingualSettingsLabels(containerEl);
+  }
+  applyBilingualSettingsLabels(containerEl) {
+    const headerEls = containerEl.querySelectorAll("h2, h3");
+    for (const headerEl of Array.from(headerEls)) {
+      const localized = toKoreanBilingualLabel(headerEl.textContent, SETTINGS_HEADER_KO_MAP);
+      if (localized) {
+        headerEl.textContent = localized;
+      }
+    }
+    const nameEls = containerEl.querySelectorAll(".setting-item-name");
+    for (const nameEl of Array.from(nameEls)) {
+      const localized = toKoreanBilingualLabel(nameEl.textContent, SETTINGS_NAME_KO_MAP);
+      if (localized) {
+        nameEl.textContent = localized;
+      }
+    }
+    const descEls = containerEl.querySelectorAll(".setting-item-description");
+    for (const descEl of Array.from(descEls)) {
+      const localized = toKoreanBilingualLabel(descEl.textContent, SETTINGS_DESC_KO_MAP);
+      if (localized) {
+        descEl.textContent = localized;
+      }
+    }
   }
 };
 var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
@@ -4163,6 +4315,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (this.settings.qaRolePreset !== "ask" && this.settings.qaRolePreset !== "orchestrator" && this.settings.qaRolePreset !== "coder" && this.settings.qaRolePreset !== "debugger" && this.settings.qaRolePreset !== "architect" && this.settings.qaRolePreset !== "safeguard") {
       this.settings.qaRolePreset = DEFAULT_SETTINGS.qaRolePreset;
+    }
+    if (typeof this.settings.qaOrchestratorEnabled !== "boolean") {
+      this.settings.qaOrchestratorEnabled = DEFAULT_SETTINGS.qaOrchestratorEnabled;
+    }
+    if (typeof this.settings.qaSafeguardPassEnabled !== "boolean") {
+      this.settings.qaSafeguardPassEnabled = DEFAULT_SETTINGS.qaSafeguardPassEnabled;
     }
     if (typeof this.settings.qaIncludeSelectionInventory !== "boolean") {
       this.settings.qaIncludeSelectionInventory = DEFAULT_SETTINGS.qaIncludeSelectionInventory;
@@ -4954,6 +5112,50 @@ ${item.content}`
     lines[1] = `Listed files: ${listed}`;
     return lines.join("\n");
   }
+  isOrchestrationTask(question, intent) {
+    if (intent === "plan" || intent === "comparison") {
+      return true;
+    }
+    const normalized = question.toLowerCase();
+    return /(계획서|보고서|ppt|슬라이드|발표|수업|교안|학습\s*게임|게임\s*개발|roadmap|plan|report|presentation|slides|lesson|game\s*design|project\s*plan)/i.test(normalized);
+  }
+  shouldRunOrchestratorPass(question, intent) {
+    if (this.settings.qaRolePreset === "orchestrator") {
+      return true;
+    }
+    if (!this.settings.qaOrchestratorEnabled) {
+      return false;
+    }
+    return this.isOrchestrationTask(question, intent);
+  }
+  shouldRunSafeguardPass(question, intent) {
+    if (this.settings.qaRolePreset === "safeguard") {
+      return true;
+    }
+    if (this.settings.qaSafeguardPassEnabled) {
+      return true;
+    }
+    const normalized = question.toLowerCase();
+    if (intent === "comparison" || intent === "plan") {
+      return true;
+    }
+    return /(보안|security|개인정보|privacy|위험|risk|규정|compliance|정책|safety)/i.test(normalized);
+  }
+  shouldRunRolePresetRefinement() {
+    return this.settings.qaRolePreset === "coder" || this.settings.qaRolePreset === "architect" || this.settings.qaRolePreset === "debugger";
+  }
+  buildRolePresetRefinementInstruction() {
+    switch (this.settings.qaRolePreset) {
+      case "coder":
+        return "Refine draft as a Coder: produce implementation-ready steps, concrete code/data structure guidance, and verification checklist.";
+      case "architect":
+        return "Refine draft as an Architect: emphasize design options, trade-offs, interface boundaries, phased rollout, and maintainability.";
+      case "debugger":
+        return "Refine draft as a Debugger: prioritize reproducible diagnosis path, likely root causes, test matrix, and rollback-safe fixes.";
+      default:
+        return "Refine draft while preserving factual grounding.";
+    }
+  }
   getQaRolePresetInstruction() {
     switch (this.settings.qaRolePreset) {
       case "orchestrator":
@@ -5319,6 +5521,180 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     }
     return answer;
   }
+  async applyOrchestratorPassIfNeeded(params) {
+    const {
+      question,
+      intent,
+      answer,
+      sourceBlocks,
+      qaBaseUrl,
+      qaModel,
+      onEvent,
+      abortSignal
+    } = params;
+    if (!this.shouldRunOrchestratorPass(question, intent)) {
+      return answer;
+    }
+    this.emitQaEvent(onEvent, "generation", "Running orchestrator pass");
+    const systemPrompt = [
+      "You are an orchestration editor for local-note answers.",
+      "Task: convert draft into execution-ready output without inventing facts.",
+      "Keep language aligned with user's preference.",
+      "Return markdown only.",
+      "When evidence is missing, explicitly mark as '\uC815\uBCF4 \uBD80\uC871'.",
+      "Use this structure when suitable:",
+      "- Objective and scope",
+      "- Core findings",
+      "- Execution plan/checklist",
+      "- Deliverables (report/PPT/materials/code)",
+      "- Risks and safeguards",
+      "- Next actions"
+    ].join("\n");
+    const userPrompt = [
+      `Question: ${question}`,
+      "",
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      this.buildLocalQaSourceContext(sourceBlocks)
+    ].join("\n");
+    try {
+      const improved = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        abortSignal
+      });
+      const split = splitThinkingBlocks(improved.answer);
+      const normalized = split.answer.trim() || improved.answer.trim();
+      if (normalized.length > 0) {
+        this.emitQaEvent(onEvent, "generation", "Orchestrator pass applied");
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", "Orchestrator pass returned empty output");
+      return answer;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown orchestrator error";
+      this.emitQaEvent(onEvent, "warning", "Orchestrator pass failed", { detail: message });
+      return answer;
+    }
+  }
+  async applyRolePresetRefinementIfNeeded(params) {
+    const { question, answer, sourceBlocks, qaBaseUrl, qaModel, onEvent, abortSignal } = params;
+    if (!this.shouldRunRolePresetRefinement()) {
+      return answer;
+    }
+    const roleLabel = this.settings.qaRolePreset;
+    this.emitQaEvent(onEvent, "generation", `Running ${roleLabel} refinement`);
+    const systemPrompt = [
+      "You are a role-specialized editor for local-note answers.",
+      "Keep output factual and grounded in provided sources.",
+      "Do not invent facts. Mark uncertain points as '\uC815\uBCF4 \uBD80\uC871'.",
+      this.buildRolePresetRefinementInstruction(),
+      "Return markdown only."
+    ].join("\n");
+    const userPrompt = [
+      `Question: ${question}`,
+      "",
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      this.buildLocalQaSourceContext(sourceBlocks)
+    ].join("\n");
+    try {
+      const rewritten = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        abortSignal
+      });
+      const split = splitThinkingBlocks(rewritten.answer);
+      const normalized = split.answer.trim() || rewritten.answer.trim();
+      if (normalized.length > 0) {
+        this.emitQaEvent(onEvent, "generation", `${roleLabel} refinement applied`);
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", `${roleLabel} refinement returned empty output`);
+      return answer;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown role refinement error";
+      this.emitQaEvent(onEvent, "warning", `${roleLabel} refinement failed`, {
+        detail: message
+      });
+      return answer;
+    }
+  }
+  async applySafeguardPassIfNeeded(params) {
+    const {
+      question,
+      intent,
+      answer,
+      sourceBlocks,
+      qaBaseUrl,
+      qaModel,
+      onEvent,
+      abortSignal
+    } = params;
+    if (!this.shouldRunSafeguardPass(question, intent)) {
+      return answer;
+    }
+    this.emitQaEvent(onEvent, "generation", "Running safeguard verification");
+    const systemPrompt = [
+      "You are a safeguard verifier for local-note answers.",
+      "Validate draft strictly against provided source excerpts.",
+      "Remove unsupported claims and overconfident wording.",
+      "Keep useful structure but prefer factual correctness and safety.",
+      "If evidence is missing, keep statement conservative and explicit.",
+      "Preserve source-path citations whenever possible.",
+      "Return final markdown answer only."
+    ].join("\n");
+    const userPrompt = [
+      `Question: ${question}`,
+      "",
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      this.buildLocalQaSourceContext(sourceBlocks)
+    ].join("\n");
+    try {
+      const verified = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        abortSignal
+      });
+      const split = splitThinkingBlocks(verified.answer);
+      const normalized = split.answer.trim() || verified.answer.trim();
+      if (normalized.length > 0) {
+        this.emitQaEvent(onEvent, "generation", "Safeguard verification applied");
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", "Safeguard pass returned empty output");
+      return answer;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown safeguard error";
+      this.emitQaEvent(onEvent, "warning", "Safeguard pass failed", { detail: message });
+      return answer;
+    }
+  }
   async openLocalQaChatModal() {
     await this.openLocalQaWorkspaceView();
   }
@@ -5464,7 +5840,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       if (!initialAnswer) {
         throw new Error("Local Q&A returned an empty answer.");
       }
-      const repairedAnswer = await this.repairQaStructureIfNeeded({
+      let finalAnswer = await this.repairQaStructureIfNeeded({
         intent,
         answer: initialAnswer,
         question: safeQuestion,
@@ -5474,6 +5850,35 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
         qaModel,
         onEvent
       });
+      finalAnswer = await this.applyRolePresetRefinementIfNeeded({
+        question: safeQuestion,
+        answer: finalAnswer,
+        sourceBlocks,
+        qaBaseUrl,
+        qaModel,
+        onEvent,
+        abortSignal
+      });
+      finalAnswer = await this.applyOrchestratorPassIfNeeded({
+        question: safeQuestion,
+        intent,
+        answer: finalAnswer,
+        sourceBlocks,
+        qaBaseUrl,
+        qaModel,
+        onEvent,
+        abortSignal
+      });
+      finalAnswer = await this.applySafeguardPassIfNeeded({
+        question: safeQuestion,
+        intent,
+        answer: finalAnswer,
+        sourceBlocks,
+        qaBaseUrl,
+        qaModel,
+        onEvent,
+        abortSignal
+      });
       const mergedThinking = [completion.thinking.trim(), split.thinking.trim()].filter((item) => item.length > 0).join("\n\n").trim();
       this.emitQaEvent(onEvent, "generation", `Generation completed (${completion.endpoint})`);
       const sourceList = sourceBlocks.map((item) => ({
@@ -5482,7 +5887,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       }));
       return {
         question: safeQuestion,
-        answer: repairedAnswer,
+        answer: finalAnswer,
         thinking: mergedThinking,
         model: qaModel,
         embeddingModel,

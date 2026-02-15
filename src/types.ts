@@ -157,6 +157,8 @@ export interface KnowledgeWeaverSettings {
     | "debugger"
     | "architect"
     | "safeguard";
+  qaOrchestratorEnabled: boolean;
+  qaSafeguardPassEnabled: boolean;
   qaIncludeSelectionInventory: boolean;
   qaSelectionInventoryMaxFiles: number;
   qaThreadAutoSyncEnabled: boolean;

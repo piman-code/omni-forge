@@ -104,6 +104,8 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaPreferredResponseLanguage: "korean",
   qaCustomSystemPrompt: "",
   qaRolePreset: "ask",
+  qaOrchestratorEnabled: false,
+  qaSafeguardPassEnabled: false,
   qaIncludeSelectionInventory: true,
   qaSelectionInventoryMaxFiles: 200,
   qaThreadAutoSyncEnabled: true,
@@ -2312,6 +2314,126 @@ class LocalQAWorkspaceView extends ItemView {
   }
 }
 
+const SETTINGS_HEADER_KO_MAP: Readonly<Record<string, string>> = {
+  "Local provider config": "로컬 제공자 설정",
+  "Cloud provider config": "클라우드 제공자 설정",
+  Behavior: "동작 설정",
+  "Semantic linking (Ollama embeddings)": "시맨틱 링크(올라마 임베딩)",
+  "Property cleanup": "속성 정리",
+  "Selection and backup": "선택 및 백업",
+  MOC: "MOC",
+};
+
+const SETTINGS_NAME_KO_MAP: Readonly<Record<string, string>> = {
+  Provider: "제공자",
+  "Ollama base URL": "Ollama 기본 URL",
+  "Ollama detected model picker": "Ollama 감지 모델 선택기",
+  "Ollama model (manual)": "Ollama 모델(수동)",
+  "Auto-pick recommended Ollama model": "권장 Ollama 모델 자동 선택",
+  "Ollama detection summary": "Ollama 감지 요약",
+  "LM Studio base URL": "LM Studio 기본 URL",
+  "LM Studio model": "LM Studio 모델",
+  "LM Studio API key (optional)": "LM Studio API 키(선택)",
+  "OpenAI base URL": "OpenAI 기본 URL",
+  "OpenAI model": "OpenAI 모델",
+  "OpenAI API key": "OpenAI API 키",
+  "Anthropic model": "Anthropic 모델",
+  "Anthropic API key": "Anthropic API 키",
+  "Gemini model": "Gemini 모델",
+  "Gemini API key": "Gemini API 키",
+  "Suggestion mode (recommended)": "제안 모드(권장)",
+  "Show reasons for each field": "각 필드 근거 표시",
+  "Show progress notices": "진행 알림 표시",
+  "Analyze tags": "태그 분석",
+  "Analyze topic": "주제 분석",
+  "Analyze linked": "연결 노트 분석",
+  "Analyze index": "인덱스 분석",
+  "Max tags": "최대 태그 수",
+  "Max linked": "최대 linked 수",
+  "Enable semantic candidate ranking": "시맨틱 후보 랭킹 사용",
+  "Embedding Ollama base URL": "임베딩 Ollama 기본 URL",
+  "Embedding detected model picker": "임베딩 감지 모델 선택기",
+  "Embedding model (manual)": "임베딩 모델(수동)",
+  "Auto-pick recommended embedding model": "권장 임베딩 모델 자동 선택",
+  "Embedding detection summary": "임베딩 감지 요약",
+  "Semantic top-k candidates": "시맨틱 top-k 후보 수",
+  "Semantic min similarity": "시맨틱 최소 유사도",
+  "Semantic source max chars": "시맨틱 소스 최대 문자 수",
+  "Q&A Ollama base URL": "Q&A Ollama 기본 URL",
+  "Q&A model": "Q&A 모델",
+  "Prefer Ollama /api/chat (with fallback)": "Ollama /api/chat 우선(폴백 포함)",
+  "Chat transcript folder path": "채팅 기록 폴더 경로",
+  "Auto-sync chat thread": "채팅 스레드 자동 동기화",
+  "Allow non-local Q&A endpoint (danger)": "로컬 외 Q&A 엔드포인트 허용(위험)",
+  "Remove legacy AI-prefixed keys": "레거시 AI 접두 키 제거",
+  "Enable cleanup rules during apply": "적용 시 정리 규칙 사용",
+  "Cleanup exact keys": "정리 정확 키",
+  "Pick cleanup keys from selected notes": "선택 노트에서 정리 키 선택",
+  "Cleanup key prefixes": "정리 키 접두어",
+  "Never remove these keys": "절대 제거하지 않을 키",
+  "Run cleanup command": "정리 명령 실행",
+  "Cleanup dry-run report folder": "정리 dry-run 리포트 폴더",
+  "Sort tags and linked arrays": "tags/linked 배열 정렬",
+  "Include subfolders for selected folders": "선택 폴더 하위폴더 포함",
+  "Selection path width percent": "선택 경로 너비 비율",
+  "Excluded folder patterns": "제외 폴더 패턴",
+  "Backup selected notes before apply": "적용 전 선택 노트 백업",
+  "Backup root path": "백업 루트 경로",
+  "Backup retention count": "백업 보관 개수",
+  "Generate MOC after apply": "적용 후 MOC 생성",
+  "MOC file path": "MOC 파일 경로",
+};
+
+const SETTINGS_DESC_KO_MAP: Readonly<Record<string, string>> = {
+  "Choose AI provider. Local providers are recommended first.": "AI 제공자를 선택합니다. 로컬 제공자를 우선 권장합니다.",
+  "Choose among detected models. (추천)=recommended, (불가)=not suitable for analysis.": "감지된 모델 중에서 선택합니다. (추천)=권장, (불가)=분석 부적합",
+  "Manual override if you want a custom model name.": "사용자 지정 모델명을 직접 입력할 때 사용합니다.",
+  "Detect local models and auto-choose recommended when current is missing.": "로컬 모델을 감지해 현재 모델이 없으면 권장 모델을 자동 선택합니다.",
+  "Analyze first, preview changes, and apply only when approved.": "먼저 분석하고 변경 미리보기를 확인한 뒤 승인 시에만 적용합니다.",
+  "In addition to persistent progress modal, show short notices.": "고정 진행 모달 외에도 짧은 알림을 표시합니다.",
+  "Use local Ollama embeddings to rank likely related notes before AI linked suggestion.": "AI linked 제안 전에 로컬 Ollama 임베딩으로 관련 가능 노트를 우선 정렬합니다.",
+  "Choose among detected models. (추천)=recommended, (불가)=not suitable for embeddings.": "감지된 모델 중에서 선택합니다. (추천)=권장, (불가)=임베딩 부적합",
+  "Manual override if you want a custom embedding model name.": "사용자 지정 임베딩 모델명을 직접 입력할 때 사용합니다.",
+  "Range: 0.0 to 1.0": "범위: 0.0 ~ 1.0",
+  "Trim note text before embedding to keep local runs fast.": "로컬 실행 성능을 위해 임베딩 전 노트 텍스트 길이를 제한합니다.",
+  "Leave empty to use main Ollama base URL.": "비워두면 메인 Ollama 기본 URL을 사용합니다.",
+  "Leave empty to use main analysis model.": "비워두면 메인 분석 모델을 사용합니다.",
+  "Use role-based chat first, then fallback to /api/generate when unavailable.": "역할 기반 /api/chat을 우선 사용하고, 불가하면 /api/generate로 폴백합니다.",
+  "Vault-relative path for saving chat transcripts.": "채팅 기록 저장용 vault-relative 경로입니다.",
+  "When enabled, the current chat thread is continuously saved and updated as messages change.": "활성화하면 현재 채팅 스레드를 메시지 변경에 맞춰 계속 저장/동기화합니다.",
+  "Off by default. Keep disabled to prevent note data leaving localhost.": "기본값은 꺼짐입니다. 노트 데이터가 localhost 밖으로 나가지 않도록 비활성 상태를 권장합니다.",
+  "If enabled, removes only legacy keys like ai_*/autolinker_* while preserving other existing keys (including linter date fields).": "활성화하면 ai_*/autolinker_* 같은 레거시 키만 제거하고, 다른 기존 키(린터 날짜 필드 포함)는 유지합니다.",
+  "When applying AI suggestions, also remove frontmatter keys by rules below.": "AI 제안 적용 시 아래 규칙에 따라 frontmatter 키도 함께 정리합니다.",
+  "Comma/newline separated keys. Example: related, linked_context": "쉼표/줄바꿈으로 구분한 키 목록입니다. 예: related, linked_context",
+  "Scan selected notes and choose keys by checkbox.": "선택한 노트를 스캔해 체크박스로 정리 키를 선택합니다.",
+  "Comma/newline separated prefixes. Example: temp_, draft_": "쉼표/줄바꿈으로 구분한 접두어 목록입니다. 예: temp_, draft_",
+  "Comma/newline separated keys that override cleanup rules.": "정리 규칙보다 우선하는 키 목록(쉼표/줄바꿈 구분)입니다.",
+  "Use command palette: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'.": "명령 팔레트 사용: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'.",
+  "Vault-relative folder for cleanup dry-run report files.": "정리 dry-run 리포트 저장용 vault-relative 폴더입니다.",
+  "Helps keep stable output and reduce linter churn.": "출력 안정성을 높이고 린터 변경 잡음을 줄여줍니다.",
+  "Controls path width in Select target notes/folders modal (45-100).": "Select target notes/folders 모달의 경로 너비를 조절합니다(45-100).",
+  "Comma-separated substrings. Matched folders are ignored during selection/analysis.": "쉼표로 구분한 문자열 패턴입니다. 일치하는 폴더는 선택/분석에서 제외됩니다.",
+  "You can also override this every run from the backup confirmation dialog.": "백업 확인 대화상자에서 실행마다 이 설정을 덮어쓸 수 있습니다.",
+  "Vault-relative folder path used for versioned backups.": "버전형 백업에 사용하는 vault-relative 폴더 경로입니다.",
+  "Keep only latest N backups (old backups are deleted automatically).": "최신 N개 백업만 유지합니다(오래된 백업은 자동 삭제).",
+  "Vault-relative markdown path.": "vault-relative 마크다운 경로입니다.",
+};
+
+function toKoreanBilingualLabel(
+  originalText: string | null | undefined,
+  translationMap: Readonly<Record<string, string>>,
+): string | null {
+  const normalized = originalText?.trim() ?? "";
+  if (!normalized || normalized.includes(" / ")) {
+    return null;
+  }
+  const translated = translationMap[normalized];
+  if (!translated) {
+    return null;
+  }
+  return `${normalized} / ${translated}`;
+}
+
 class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private readonly plugin: KnowledgeWeaverPlugin;
 
@@ -2334,11 +2456,11 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Choose AI provider. Local providers are recommended first.")
       .addDropdown((dropdown) =>
         dropdown
-          .addOption("ollama", "Ollama (local)")
-          .addOption("lmstudio", "LM Studio (local)")
+          .addOption("ollama", "Ollama (local / 로컬)")
+          .addOption("lmstudio", "LM Studio (local / 로컬)")
           .addOption("openai", "OpenAI / Codex")
-          .addOption("anthropic", "Claude")
-          .addOption("gemini", "Gemini")
+          .addOption("anthropic", "Claude / 클로드")
+          .addOption("gemini", "Gemini / 제미나이")
           .setValue(this.plugin.settings.provider)
           .onChange(async (value) => {
             this.plugin.settings.provider = value as ProviderId;
@@ -2405,13 +2527,13 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         });
       })
       .addButton((button) =>
-        button.setButtonText("Refresh").onClick(async () => {
+        button.setButtonText("Refresh / 새로고침").onClick(async () => {
           await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
           this.display();
         }),
       )
       .addButton((button) =>
-        button.setButtonText("Use recommended").onClick(async () => {
+        button.setButtonText("Use recommended / 권장값 사용").onClick(async () => {
           await this.plugin.applyRecommendedOllamaModel(true);
           this.display();
         }),
@@ -2772,7 +2894,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         });
       })
       .addButton((button) =>
-        button.setButtonText("Refresh").onClick(async () => {
+        button.setButtonText("Refresh / 새로고침").onClick(async () => {
           await this.plugin.refreshEmbeddingModelDetection({
             notify: true,
             autoApply: true,
@@ -2781,7 +2903,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         }),
       )
       .addButton((button) =>
-        button.setButtonText("Use recommended").onClick(async () => {
+        button.setButtonText("Use recommended / 권장값 사용").onClick(async () => {
           await this.plugin.applyRecommendedEmbeddingModel(true);
           this.display();
         }),
@@ -2999,12 +3121,12 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Prompt style preset for local Q&A. / 로컬 Q&A 답변 성향 프리셋")
       .addDropdown((dropdown) =>
         dropdown
-          .addOption("ask", "Ask (default)")
-          .addOption("orchestrator", "Orchestrator")
-          .addOption("coder", "Coder")
-          .addOption("debugger", "Debugger")
-          .addOption("architect", "Architect")
-          .addOption("safeguard", "Safeguard (security)")
+          .addOption("ask", "Ask (default / 기본)")
+          .addOption("orchestrator", "Orchestrator / 오케스트레이터")
+          .addOption("coder", "Coder / 코더")
+          .addOption("debugger", "Debugger / 디버거")
+          .addOption("architect", "Architect / 아키텍트")
+          .addOption("safeguard", "Safeguard (security / 보안)")
           .setValue(this.plugin.settings.qaRolePreset)
           .onChange(async (value) => {
             this.plugin.settings.qaRolePreset = value as
@@ -3014,6 +3136,30 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
               | "debugger"
               | "architect"
               | "safeguard";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Enable orchestrator pipeline / 오케스트레이터 파이프라인")
+      .setDesc("Use an orchestration rewrite pass for planning/report/PPT/game-style tasks. / 계획서·보고서·PPT·게임 과제에 추가 정리 패스를 적용")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaOrchestratorEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.qaOrchestratorEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Enable safeguard verification / 세이프가드 검증")
+      .setDesc("Run a final factual/safety consistency pass against sources before returning answer. / 출처 기준 사실·보안 일관성 최종 점검")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaSafeguardPassEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.qaSafeguardPassEnabled = value;
             await this.plugin.saveSettings();
           }),
       );
@@ -3143,7 +3289,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setName("Pick cleanup keys from selected notes")
       .setDesc("Scan selected notes and choose keys by checkbox.")
       .addButton((button) =>
-        button.setButtonText("Open picker").onClick(async () => {
+        button.setButtonText("Open picker / 선택기 열기").onClick(async () => {
           await this.plugin.openCleanupKeyPicker();
           this.display();
         }),
@@ -3380,6 +3526,34 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
             }
           }),
       );
+
+    this.applyBilingualSettingsLabels(containerEl);
+  }
+
+  private applyBilingualSettingsLabels(containerEl: HTMLElement): void {
+    const headerEls = containerEl.querySelectorAll<HTMLElement>("h2, h3");
+    for (const headerEl of Array.from(headerEls)) {
+      const localized = toKoreanBilingualLabel(headerEl.textContent, SETTINGS_HEADER_KO_MAP);
+      if (localized) {
+        headerEl.textContent = localized;
+      }
+    }
+
+    const nameEls = containerEl.querySelectorAll<HTMLElement>(".setting-item-name");
+    for (const nameEl of Array.from(nameEls)) {
+      const localized = toKoreanBilingualLabel(nameEl.textContent, SETTINGS_NAME_KO_MAP);
+      if (localized) {
+        nameEl.textContent = localized;
+      }
+    }
+
+    const descEls = containerEl.querySelectorAll<HTMLElement>(".setting-item-description");
+    for (const descEl of Array.from(descEls)) {
+      const localized = toKoreanBilingualLabel(descEl.textContent, SETTINGS_DESC_KO_MAP);
+      if (localized) {
+        descEl.textContent = localized;
+      }
+    }
   }
 }
 
@@ -4136,6 +4310,12 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       this.settings.qaRolePreset !== "safeguard"
     ) {
       this.settings.qaRolePreset = DEFAULT_SETTINGS.qaRolePreset;
+    }
+    if (typeof this.settings.qaOrchestratorEnabled !== "boolean") {
+      this.settings.qaOrchestratorEnabled = DEFAULT_SETTINGS.qaOrchestratorEnabled;
+    }
+    if (typeof this.settings.qaSafeguardPassEnabled !== "boolean") {
+      this.settings.qaSafeguardPassEnabled = DEFAULT_SETTINGS.qaSafeguardPassEnabled;
     }
     if (typeof this.settings.qaIncludeSelectionInventory !== "boolean") {
       this.settings.qaIncludeSelectionInventory = DEFAULT_SETTINGS.qaIncludeSelectionInventory;
@@ -5134,6 +5314,67 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return lines.join("\n");
   }
 
+  private isOrchestrationTask(question: string, intent: LocalQaResponseIntent): boolean {
+    if (intent === "plan" || intent === "comparison") {
+      return true;
+    }
+    const normalized = question.toLowerCase();
+    return /(계획서|보고서|ppt|슬라이드|발표|수업|교안|학습\s*게임|게임\s*개발|roadmap|plan|report|presentation|slides|lesson|game\s*design|project\s*plan)/i
+      .test(normalized);
+  }
+
+  private shouldRunOrchestratorPass(
+    question: string,
+    intent: LocalQaResponseIntent,
+  ): boolean {
+    if (this.settings.qaRolePreset === "orchestrator") {
+      return true;
+    }
+    if (!this.settings.qaOrchestratorEnabled) {
+      return false;
+    }
+    return this.isOrchestrationTask(question, intent);
+  }
+
+  private shouldRunSafeguardPass(
+    question: string,
+    intent: LocalQaResponseIntent,
+  ): boolean {
+    if (this.settings.qaRolePreset === "safeguard") {
+      return true;
+    }
+    if (this.settings.qaSafeguardPassEnabled) {
+      return true;
+    }
+    const normalized = question.toLowerCase();
+    if (intent === "comparison" || intent === "plan") {
+      return true;
+    }
+    return /(보안|security|개인정보|privacy|위험|risk|규정|compliance|정책|safety)/i
+      .test(normalized);
+  }
+
+  private shouldRunRolePresetRefinement(): boolean {
+    return (
+      this.settings.qaRolePreset === "coder" ||
+      this.settings.qaRolePreset === "architect" ||
+      this.settings.qaRolePreset === "debugger"
+    );
+  }
+
+  private buildRolePresetRefinementInstruction(): string {
+    switch (this.settings.qaRolePreset) {
+      case "coder":
+        return "Refine draft as a Coder: produce implementation-ready steps, concrete code/data structure guidance, and verification checklist.";
+      case "architect":
+        return "Refine draft as an Architect: emphasize design options, trade-offs, interface boundaries, phased rollout, and maintainability.";
+      case "debugger":
+        return "Refine draft as a Debugger: prioritize reproducible diagnosis path, likely root causes, test matrix, and rollback-safe fixes.";
+      default:
+        return "Refine draft while preserving factual grounding.";
+    }
+  }
+
   private getQaRolePresetInstruction(): string {
     switch (this.settings.qaRolePreset) {
       case "orchestrator":
@@ -5612,6 +5853,215 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return answer;
   }
 
+  private async applyOrchestratorPassIfNeeded(params: {
+    question: string;
+    intent: LocalQaResponseIntent;
+    answer: string;
+    sourceBlocks: Array<{ path: string; similarity: number; content: string }>;
+    qaBaseUrl: string;
+    qaModel: string;
+    onEvent?: (event: LocalQaProgressEvent) => void;
+    abortSignal?: AbortSignal;
+  }): Promise<string> {
+    const {
+      question,
+      intent,
+      answer,
+      sourceBlocks,
+      qaBaseUrl,
+      qaModel,
+      onEvent,
+      abortSignal,
+    } = params;
+    if (!this.shouldRunOrchestratorPass(question, intent)) {
+      return answer;
+    }
+
+    this.emitQaEvent(onEvent, "generation", "Running orchestrator pass");
+    const systemPrompt = [
+      "You are an orchestration editor for local-note answers.",
+      "Task: convert draft into execution-ready output without inventing facts.",
+      "Keep language aligned with user's preference.",
+      "Return markdown only.",
+      "When evidence is missing, explicitly mark as '정보 부족'.",
+      "Use this structure when suitable:",
+      "- Objective and scope",
+      "- Core findings",
+      "- Execution plan/checklist",
+      "- Deliverables (report/PPT/materials/code)",
+      "- Risks and safeguards",
+      "- Next actions",
+    ].join("\n");
+    const userPrompt = [
+      `Question: ${question}`,
+      "",
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      this.buildLocalQaSourceContext(sourceBlocks),
+    ].join("\n");
+
+    try {
+      const improved = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        abortSignal,
+      });
+      const split = splitThinkingBlocks(improved.answer);
+      const normalized = split.answer.trim() || improved.answer.trim();
+      if (normalized.length > 0) {
+        this.emitQaEvent(onEvent, "generation", "Orchestrator pass applied");
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", "Orchestrator pass returned empty output");
+      return answer;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown orchestrator error";
+      this.emitQaEvent(onEvent, "warning", "Orchestrator pass failed", { detail: message });
+      return answer;
+    }
+  }
+
+  private async applyRolePresetRefinementIfNeeded(params: {
+    question: string;
+    answer: string;
+    sourceBlocks: Array<{ path: string; similarity: number; content: string }>;
+    qaBaseUrl: string;
+    qaModel: string;
+    onEvent?: (event: LocalQaProgressEvent) => void;
+    abortSignal?: AbortSignal;
+  }): Promise<string> {
+    const { question, answer, sourceBlocks, qaBaseUrl, qaModel, onEvent, abortSignal } = params;
+    if (!this.shouldRunRolePresetRefinement()) {
+      return answer;
+    }
+
+    const roleLabel = this.settings.qaRolePreset;
+    this.emitQaEvent(onEvent, "generation", `Running ${roleLabel} refinement`);
+    const systemPrompt = [
+      "You are a role-specialized editor for local-note answers.",
+      "Keep output factual and grounded in provided sources.",
+      "Do not invent facts. Mark uncertain points as '정보 부족'.",
+      this.buildRolePresetRefinementInstruction(),
+      "Return markdown only.",
+    ].join("\n");
+    const userPrompt = [
+      `Question: ${question}`,
+      "",
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      this.buildLocalQaSourceContext(sourceBlocks),
+    ].join("\n");
+
+    try {
+      const rewritten = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        abortSignal,
+      });
+      const split = splitThinkingBlocks(rewritten.answer);
+      const normalized = split.answer.trim() || rewritten.answer.trim();
+      if (normalized.length > 0) {
+        this.emitQaEvent(onEvent, "generation", `${roleLabel} refinement applied`);
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", `${roleLabel} refinement returned empty output`);
+      return answer;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown role refinement error";
+      this.emitQaEvent(onEvent, "warning", `${roleLabel} refinement failed`, {
+        detail: message,
+      });
+      return answer;
+    }
+  }
+
+  private async applySafeguardPassIfNeeded(params: {
+    question: string;
+    intent: LocalQaResponseIntent;
+    answer: string;
+    sourceBlocks: Array<{ path: string; similarity: number; content: string }>;
+    qaBaseUrl: string;
+    qaModel: string;
+    onEvent?: (event: LocalQaProgressEvent) => void;
+    abortSignal?: AbortSignal;
+  }): Promise<string> {
+    const {
+      question,
+      intent,
+      answer,
+      sourceBlocks,
+      qaBaseUrl,
+      qaModel,
+      onEvent,
+      abortSignal,
+    } = params;
+    if (!this.shouldRunSafeguardPass(question, intent)) {
+      return answer;
+    }
+
+    this.emitQaEvent(onEvent, "generation", "Running safeguard verification");
+    const systemPrompt = [
+      "You are a safeguard verifier for local-note answers.",
+      "Validate draft strictly against provided source excerpts.",
+      "Remove unsupported claims and overconfident wording.",
+      "Keep useful structure but prefer factual correctness and safety.",
+      "If evidence is missing, keep statement conservative and explicit.",
+      "Preserve source-path citations whenever possible.",
+      "Return final markdown answer only.",
+    ].join("\n");
+    const userPrompt = [
+      `Question: ${question}`,
+      "",
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      this.buildLocalQaSourceContext(sourceBlocks),
+    ].join("\n");
+
+    try {
+      const verified = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        abortSignal,
+      });
+      const split = splitThinkingBlocks(verified.answer);
+      const normalized = split.answer.trim() || verified.answer.trim();
+      if (normalized.length > 0) {
+        this.emitQaEvent(onEvent, "generation", "Safeguard verification applied");
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", "Safeguard pass returned empty output");
+      return answer;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown safeguard error";
+      this.emitQaEvent(onEvent, "warning", "Safeguard pass failed", { detail: message });
+      return answer;
+    }
+  }
+
   private async openLocalQaChatModal(): Promise<void> {
     await this.openLocalQaWorkspaceView();
   }
@@ -5795,7 +6245,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         throw new Error("Local Q&A returned an empty answer.");
       }
 
-      const repairedAnswer = await this.repairQaStructureIfNeeded({
+      let finalAnswer = await this.repairQaStructureIfNeeded({
         intent,
         answer: initialAnswer,
         question: safeQuestion,
@@ -5804,6 +6254,36 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         qaBaseUrl,
         qaModel,
         onEvent,
+      });
+
+      finalAnswer = await this.applyRolePresetRefinementIfNeeded({
+        question: safeQuestion,
+        answer: finalAnswer,
+        sourceBlocks,
+        qaBaseUrl,
+        qaModel,
+        onEvent,
+        abortSignal,
+      });
+      finalAnswer = await this.applyOrchestratorPassIfNeeded({
+        question: safeQuestion,
+        intent,
+        answer: finalAnswer,
+        sourceBlocks,
+        qaBaseUrl,
+        qaModel,
+        onEvent,
+        abortSignal,
+      });
+      finalAnswer = await this.applySafeguardPassIfNeeded({
+        question: safeQuestion,
+        intent,
+        answer: finalAnswer,
+        sourceBlocks,
+        qaBaseUrl,
+        qaModel,
+        onEvent,
+        abortSignal,
       });
 
       const mergedThinking = [completion.thinking.trim(), split.thinking.trim()]
@@ -5819,7 +6299,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
       return {
         question: safeQuestion,
-        answer: repairedAnswer,
+        answer: finalAnswer,
         thinking: mergedThinking,
         model: qaModel,
         embeddingModel,

@@ -93,6 +93,36 @@ Auto Link는 반대로 동작합니다.
 | 자동 태깅 | Auto-tag active note | ON (선택, 태그 자동화) |
 | 백업 | Backup selected notes before apply | ON |
 
+## Ollama Agent 모델 가이드 (M4 Pro 48GB)
+
+현재 Auto Link의 로컬 Q&A는 텍스트 노트 RAG 흐름입니다.
+채팅 UI는 Ollama `/api/chat`, `/api/generate`에 텍스트 프롬프트/메시지를 보내며, 이미지 입력 전송은 아직 연결되어 있지 않습니다.
+
+| Agent 역할 | 기본 권장 모델 | 경량 대안 | 메모 |
+|---|---|---|---|
+| Orchestrator + Architect | `qwen3:14b` | `qwen3:8b` | 계획/설계형 구조화 답변 품질과 속도의 균형이 좋습니다. |
+| Coder + Debugger | `qwen3-coder:30b` | `qwen3:14b` | 코딩 품질 우선이면 `qwen3-coder`, 동시 에이전트가 많으면 `qwen3:14b` 권장. |
+| Ask (일반 Q&A) | `gpt-oss:20b` | `qwen3:8b` | 범용 비서 성향이 안정적이며, 대안은 더 빠르고 가볍습니다. |
+| Safeguard (보안/사실 점검) | `gpt-oss-safeguard:20b` | `llama-guard3:8b` | 전용 안전 모델 우선, 메모리 압박 시 guard 모델 사용. |
+| Vision 사이드카(선택) | `gemma3:12b` 또는 `llama3.2-vision:11b` | `gemma3:4b` | 향후 이미지 입력 확장을 대비한 사이드카 용도. 현재 플러그인 채팅은 텍스트 전용. |
+
+48GB 통합 메모리에서 Agent 4개를 동시에 돌릴 때는 8B/14B 위주로 시작하고, 20B+ 모델은 한 번에 1개만 활성화하는 구성이 안정적입니다.
+
+이미지 생성 관련:
+- Ollama는 실험적 Images API 경로(예: `gpt-image-1`)를 제공하지만, 본 플러그인 채팅에는 아직 이미지 생성 파이프라인이 연결되어 있지 않습니다.
+- 실사용 이미지 생성 워크플로우는 ComfyUI/Stable Diffusion 같은 별도 스택을 함께 쓰는 경우가 많습니다.
+
+공식 참고 링크:
+- [Qwen3](https://ollama.com/library/qwen3)
+- [Qwen3-Coder](https://ollama.com/library/qwen3-coder)
+- [GPT-OSS](https://ollama.com/library/gpt-oss)
+- [GPT-OSS-Safeguard](https://ollama.com/library/gpt-oss-safeguard)
+- [Llama Guard 3](https://ollama.com/library/llama-guard3)
+- [Gemma 3](https://ollama.com/library/gemma3)
+- [Llama 3.2 Vision](https://ollama.com/library/llama3.2-vision)
+- [Ollama Vision 문서](https://docs.ollama.com/capabilities/vision)
+- [Ollama 이미지 생성 업데이트](https://ollama.com/blog/image-generation)
+
 ## 성능 최적화 팁
 
 선택 노트가 많거나 반복 분석이 잦다면:
