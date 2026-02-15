@@ -421,11 +421,11 @@ export function getProviderModelLabel(settings: KnowledgeWeaverSettings): string
 }
 
 function scoreOllamaModel(modelName: string): number {
-  const lower = modelName.toLowerCase();
-
-  if (/embed|embedding/.test(lower)) {
+  if (!isOllamaModelAnalyzable(modelName)) {
     return -100;
   }
+
+  const lower = modelName.toLowerCase();
 
   let score = 0;
 
@@ -449,7 +449,7 @@ function scoreOllamaModel(modelName: string): number {
 }
 
 const UNAVAILABLE_MODEL_REGEX =
-  /(embed|embedding|bge|e5-|e5:|rerank|whisper|tts|speech|transcribe|stt)/i;
+  /(embed|embedding|bge|e5-|e5:|rerank|whisper|tts|speech|transcribe|stt|vision|llava|bakllava|moondream|florence|vl\b|image[-_ ]?gen|stable[-_ ]?diffusion|sdxl|flux)/i;
 
 export function isOllamaModelAnalyzable(modelName: string): boolean {
   return !UNAVAILABLE_MODEL_REGEX.test(modelName);
@@ -459,7 +459,7 @@ function describeOllamaModel(modelName: string): string {
   const lower = modelName.toLowerCase();
 
   if (!isOllamaModelAnalyzable(modelName)) {
-    return "Looks like an embedding/speech/rerank model and is not suitable for metadata text analysis.";
+    return "Looks like a vision/embedding/speech/rerank/image-generation model and is not suitable for metadata text analysis.";
   }
   if (/instruct|chat|it\b/.test(lower)) {
     return "Chat/instruct style model suitable for metadata suggestion tasks.";

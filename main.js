@@ -559,10 +559,10 @@ function getProviderModelLabel(settings) {
   }
 }
 function scoreOllamaModel(modelName) {
-  const lower = modelName.toLowerCase();
-  if (/embed|embedding/.test(lower)) {
+  if (!isOllamaModelAnalyzable(modelName)) {
     return -100;
   }
+  const lower = modelName.toLowerCase();
   let score = 0;
   if (/qwen2\.5|qwen3|llama3\.1|llama3\.2|mistral|gemma2|phi-?4/.test(lower)) {
     score += 20;
@@ -581,14 +581,14 @@ function scoreOllamaModel(modelName) {
   }
   return score;
 }
-var UNAVAILABLE_MODEL_REGEX = /(embed|embedding|bge|e5-|e5:|rerank|whisper|tts|speech|transcribe|stt)/i;
+var UNAVAILABLE_MODEL_REGEX = /(embed|embedding|bge|e5-|e5:|rerank|whisper|tts|speech|transcribe|stt|vision|llava|bakllava|moondream|florence|vl\b|image[-_ ]?gen|stable[-_ ]?diffusion|sdxl|flux)/i;
 function isOllamaModelAnalyzable(modelName) {
   return !UNAVAILABLE_MODEL_REGEX.test(modelName);
 }
 function describeOllamaModel(modelName) {
   const lower = modelName.toLowerCase();
   if (!isOllamaModelAnalyzable(modelName)) {
-    return "Looks like an embedding/speech/rerank model and is not suitable for metadata text analysis.";
+    return "Looks like a vision/embedding/speech/rerank/image-generation model and is not suitable for metadata text analysis.";
   }
   if (/instruct|chat|it\b/.test(lower)) {
     return "Chat/instruct style model suitable for metadata suggestion tasks.";
@@ -2295,7 +2295,6 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     return "message-square";
   }
   async onOpen() {
-    await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
     this.resetThreadState();
     this.render();
     this.refreshModelOptions();
@@ -3049,6 +3048,8 @@ var SETTINGS_NAME_KO_MAP = {
   "Q&A Ollama base URL": "Q&A Ollama \uAE30\uBCF8 URL",
   "Q&A model": "Q&A \uBAA8\uB378",
   "Q&A pipeline preset": "Q&A \uD30C\uC774\uD504\uB77C\uC778 \uD504\uB9AC\uC14B",
+  "Role model detection controls": "\uC5ED\uD560 \uBAA8\uB378 \uAC10\uC9C0 \uC81C\uC5B4",
+  "Role model detection summary": "\uC5ED\uD560 \uBAA8\uB378 \uAC10\uC9C0 \uC694\uC57D",
   "Ask model (text)": "Ask \uBAA8\uB378(\uD14D\uC2A4\uD2B8)",
   "Ask model (vision)": "Ask \uBAA8\uB378(\uBE44\uC804)",
   "Image generator model": "\uC774\uBBF8\uC9C0 \uC0DD\uC131 \uBAA8\uB378",
@@ -3093,6 +3094,7 @@ var SETTINGS_DESC_KO_MAP = {
   "Leave empty to use main Ollama base URL.": "\uBE44\uC6CC\uB450\uBA74 \uBA54\uC778 Ollama \uAE30\uBCF8 URL\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Leave empty to use main analysis model.": "\uBE44\uC6CC\uB450\uBA74 \uBA54\uC778 \uBD84\uC11D \uBAA8\uB378\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Select execution pipeline for post-generation passes.": "\uC0DD\uC131 \uD6C4 \uD6C4\uCC98\uB9AC \uD328\uC2A4\uC758 \uC2E4\uD589 \uD30C\uC774\uD504\uB77C\uC778\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4.",
+  "Refresh local model detection manually, then choose role-specific models below.": "\uB85C\uCEEC \uBAA8\uB378 \uAC10\uC9C0\uB97C \uC218\uB3D9\uC73C\uB85C \uAC31\uC2E0\uD55C \uB4A4, \uC544\uB798\uC5D0\uC11C \uC5ED\uD560\uBCC4 \uBAA8\uB378\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4.",
   "Optional role-specific model. Empty uses Q&A model as fallback.": "\uC5ED\uD560 \uC804\uC6A9 \uBAA8\uB378(\uC120\uD0DD)\uC785\uB2C8\uB2E4. \uBE44\uC6B0\uBA74 Q&A \uBAA8\uB378\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Used when role preset is Ask (vision). Text-only for now, image input support is planned.": "Ask(\uBE44\uC804) \uD504\uB9AC\uC14B\uC5D0\uC11C \uC0AC\uC6A9\uD569\uB2C8\uB2E4. \uD604\uC7AC\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC774\uBA70 \uC774\uBBF8\uC9C0 \uC785\uB825 \uC9C0\uC6D0\uC740 \uCD94\uD6C4 \uD655\uC7A5 \uC608\uC815\uC785\uB2C8\uB2E4.",
   "Reserved for image-generation workflows. Current chat UI is text-first.": "\uC774\uBBF8\uC9C0 \uC0DD\uC131 \uC6CC\uD06C\uD50C\uB85C\uC6A9 \uC608\uC57D \uBAA8\uB378\uC785\uB2C8\uB2E4. \uD604\uC7AC \uCC44\uD305 UI\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC785\uB2C8\uB2E4.",
@@ -3140,10 +3142,86 @@ function toKoreanBilingualParts(originalText, translationMap) {
   }
   return { en: normalized, ko: translated };
 }
+var ROLE_MODEL_FALLBACK_VALUE = "__fallback__";
+var ROLE_MODEL_SETTING_CONFIGS = [
+  {
+    key: "qaAskModel",
+    name: "Ask model (text)",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3:14b"
+  },
+  {
+    key: "qaAskVisionModel",
+    name: "Ask model (vision)",
+    description: "Used when role preset is Ask (vision). Text-only for now, image input support is planned.",
+    placeholder: "llama3.2-vision:11b"
+  },
+  {
+    key: "qaImageGeneratorModel",
+    name: "Image generator model",
+    description: "Reserved for image-generation workflows. Current chat UI is text-first.",
+    placeholder: "flux.1-dev"
+  },
+  {
+    key: "qaCoderModel",
+    name: "Coder model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3-coder:30b"
+  },
+  {
+    key: "qaArchitectModel",
+    name: "Architect model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3:32b"
+  },
+  {
+    key: "qaOrchestratorModel",
+    name: "Orchestrator model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3:32b"
+  },
+  {
+    key: "qaSafeguardModel",
+    name: "Safeguard model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3:14b"
+  }
+];
 var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+  formatDetectedModelLabel(option) {
+    const suffix = option.status === "recommended" ? " (\uCD94\uCC9C)" : option.status === "unavailable" ? " (\uBD88\uAC00)" : "";
+    return `${option.model}${suffix}`;
+  }
+  addRoleModelPickerSetting(containerEl, config, ollamaOptions) {
+    const currentValue = this.plugin.settings[config.key].trim();
+    new import_obsidian4.Setting(containerEl).setName(config.name).setDesc(config.description).addDropdown((dropdown) => {
+      dropdown.addOption(
+        ROLE_MODEL_FALLBACK_VALUE,
+        "Use Q&A model fallback / Q&A \uBAA8\uB378 \uD3F4\uBC31"
+      );
+      for (const option of ollamaOptions) {
+        dropdown.addOption(option.model, this.formatDetectedModelLabel(option));
+      }
+      const selected = currentValue && ollamaOptions.some((option) => option.model === currentValue) ? currentValue : ROLE_MODEL_FALLBACK_VALUE;
+      dropdown.setValue(selected);
+      dropdown.onChange(async (value) => {
+        this.plugin.settings[config.key] = value === ROLE_MODEL_FALLBACK_VALUE ? "" : value;
+        await this.plugin.saveSettings();
+        if (value !== ROLE_MODEL_FALLBACK_VALUE && !isOllamaModelAnalyzable(value)) {
+          new import_obsidian4.Notice(`Selected model is marked as (\uBD88\uAC00): ${value}`, 4500);
+        }
+        this.display();
+      });
+    }).addText(
+      (text) => text.setPlaceholder(config.placeholder).setValue(currentValue).onChange(async (value) => {
+        this.plugin.settings[config.key] = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
   }
   display() {
     const { containerEl } = this;
@@ -3176,8 +3254,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         dropdown.setValue("");
       } else {
         for (const option of ollamaOptions) {
-          const suffix = option.status === "recommended" ? " (\uCD94\uCC9C)" : option.status === "unavailable" ? " (\uBD88\uAC00)" : "";
-          dropdown.addOption(option.model, `${option.model}${suffix}`);
+          dropdown.addOption(option.model, this.formatDetectedModelLabel(option));
         }
         const current = this.plugin.settings.ollamaModel;
         if (current && ollamaOptions.some((option) => option.model === current)) {
@@ -3190,11 +3267,13 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         if (!value) {
           return;
         }
-        this.plugin.settings.ollamaModel = value;
-        await this.plugin.saveSettings();
         if (!isOllamaModelAnalyzable(value)) {
           new import_obsidian4.Notice(`Selected model is marked as (\uBD88\uAC00): ${value}`, 4500);
+          this.display();
+          return;
         }
+        this.plugin.settings.ollamaModel = value;
+        await this.plugin.saveSettings();
         this.display();
       });
     }).addButton(
@@ -3546,50 +3625,24 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Ask model (text)").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
-      (text) => text.setPlaceholder("qwen3:14b").setValue(this.plugin.settings.qaAskModel).onChange(async (value) => {
-        this.plugin.settings.qaAskModel = value.trim();
-        await this.plugin.saveSettings();
+    const roleModelOptions = this.plugin.getOllamaModelOptions();
+    new import_obsidian4.Setting(containerEl).setName("Role model detection controls").setDesc(
+      "Refresh local model detection manually, then choose role-specific models below."
+    ).addButton(
+      (button) => button.setButtonText("Refresh / \uC0C8\uB85C\uACE0\uCE68").onClick(async () => {
+        await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Use recommended / \uAD8C\uC7A5\uAC12 \uC0AC\uC6A9").onClick(async () => {
+        await this.plugin.applyRecommendedOllamaModel(true);
+        this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Ask model (vision)").setDesc(
-      "Used when role preset is Ask (vision). Text-only for now, image input support is planned."
-    ).addText(
-      (text) => text.setPlaceholder("llama3.2-vision:11b").setValue(this.plugin.settings.qaAskVisionModel).onChange(async (value) => {
-        this.plugin.settings.qaAskVisionModel = value.trim();
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Image generator model").setDesc("Reserved for image-generation workflows. Current chat UI is text-first.").addText(
-      (text) => text.setPlaceholder("flux.1-dev").setValue(this.plugin.settings.qaImageGeneratorModel).onChange(async (value) => {
-        this.plugin.settings.qaImageGeneratorModel = value.trim();
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Coder model").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
-      (text) => text.setPlaceholder("qwen3-coder:30b").setValue(this.plugin.settings.qaCoderModel).onChange(async (value) => {
-        this.plugin.settings.qaCoderModel = value.trim();
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Architect model").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
-      (text) => text.setPlaceholder("qwen3:32b").setValue(this.plugin.settings.qaArchitectModel).onChange(async (value) => {
-        this.plugin.settings.qaArchitectModel = value.trim();
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Orchestrator model").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
-      (text) => text.setPlaceholder("qwen3:32b").setValue(this.plugin.settings.qaOrchestratorModel).onChange(async (value) => {
-        this.plugin.settings.qaOrchestratorModel = value.trim();
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Safeguard model").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
-      (text) => text.setPlaceholder("qwen3:14b").setValue(this.plugin.settings.qaSafeguardModel).onChange(async (value) => {
-        this.plugin.settings.qaSafeguardModel = value.trim();
-        await this.plugin.saveSettings();
-      })
-    );
+    new import_obsidian4.Setting(containerEl).setName("Role model detection summary").setDesc(this.plugin.getOllamaDetectionSummary());
+    for (const config of ROLE_MODEL_SETTING_CONFIGS) {
+      this.addRoleModelPickerSetting(containerEl, config, roleModelOptions);
+    }
     if (this.plugin.settings.qaPipelinePreset === "legacy_auto") {
       new import_obsidian4.Setting(containerEl).setName("Enable orchestrator pipeline / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130 \uD30C\uC774\uD504\uB77C\uC778").setDesc("Use an orchestration rewrite pass for planning/report/PPT/game-style tasks. / \uACC4\uD68D\uC11C\xB7\uBCF4\uACE0\uC11C\xB7PPT\xB7\uAC8C\uC784 \uACFC\uC81C\uC5D0 \uCD94\uAC00 \uC815\uB9AC \uD328\uC2A4\uB97C \uC801\uC6A9").addToggle(
         (toggle) => toggle.setValue(this.plugin.settings.qaOrchestratorEnabled).onChange(async (value) => {
@@ -3964,8 +4017,6 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       callback: async () => this.openLocalQaWorkspaceView()
     });
     this.addSettingTab(new KnowledgeWeaverSettingTab(this.app, this));
-    await this.refreshOllamaDetection({ notify: false, autoApply: true });
-    await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
   }
   onunload() {
     this.app.workspace.getLeavesOfType(LOCAL_QA_VIEW_TYPE).forEach((leaf) => leaf.detach());
@@ -5936,7 +5987,6 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       throw new Error(`Q&A model is not suitable: ${qaModel}`);
     }
     try {
-      await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
       const embeddingModel = this.settings.semanticOllamaModel.trim();
       if (!embeddingModel) {
         throw new Error("Embedding model is empty. Refresh embedding detection first.");
@@ -6326,7 +6376,6 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       return;
     }
     if (this.settings.provider === "ollama") {
-      await this.refreshOllamaDetection({ notify: false, autoApply: true });
       const selectedModel = this.settings.ollamaModel.trim();
       if (!selectedModel || !isOllamaModelAnalyzable(selectedModel)) {
         if (source === "manual") {
@@ -6735,7 +6784,6 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       return;
     }
     if (this.settings.provider === "ollama") {
-      await this.refreshOllamaDetection({ notify: false, autoApply: true });
       const selectedModel = this.settings.ollamaModel.trim();
       if (!selectedModel) {
         this.notice("Ollama model is empty. Refresh model detection and select one.");
@@ -6750,7 +6798,6 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       }
     }
     if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
-      await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
       const embeddingModel = this.settings.semanticOllamaModel.trim();
       if (!embeddingModel) {
         this.notice(

@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.18] - 2026-02-16
+
+### Changed
+
+- Marked vision/image-generation/speech/embedding-style models as unavailable (`불가`) for metadata analysis model recommendation.
+- Updated main Ollama detected model picker to prevent selecting `불가` entries while still displaying them in the dropdown.
+- Refactored role model settings UI into a detected-picker based flow (with fallback/manual override) and added role model detection controls + summary.
+- Removed automatic model detection refresh from startup and analysis/autotag/QA execution paths; detection now runs manually via refresh actions (and explicit commands) instead of per-run refresh.
+- Kept existing analysis/QA pipeline behavior intact apart from detection trigger timing and picker UX hardening.
+
+### Security
+
+- Re-ran release checks and security checks with local-first endpoint policy unchanged.
+
 ## [0.2.17] - 2026-02-15
 
 ### Changed

@@ -1518,7 +1518,6 @@ class LocalQAWorkspaceView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-    await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
     this.resetThreadState();
     this.render();
     this.refreshModelOptions();
@@ -2383,6 +2382,8 @@ const SETTINGS_NAME_KO_MAP: Readonly<Record<string, string>> = {
   "Q&A Ollama base URL": "Q&A Ollama 기본 URL",
   "Q&A model": "Q&A 모델",
   "Q&A pipeline preset": "Q&A 파이프라인 프리셋",
+  "Role model detection controls": "역할 모델 감지 제어",
+  "Role model detection summary": "역할 모델 감지 요약",
   "Ask model (text)": "Ask 모델(텍스트)",
   "Ask model (vision)": "Ask 모델(비전)",
   "Image generator model": "이미지 생성 모델",
@@ -2428,6 +2429,7 @@ const SETTINGS_DESC_KO_MAP: Readonly<Record<string, string>> = {
   "Leave empty to use main Ollama base URL.": "비워두면 메인 Ollama 기본 URL을 사용합니다.",
   "Leave empty to use main analysis model.": "비워두면 메인 분석 모델을 사용합니다.",
   "Select execution pipeline for post-generation passes.": "생성 후 후처리 패스의 실행 파이프라인을 선택합니다.",
+  "Refresh local model detection manually, then choose role-specific models below.": "로컬 모델 감지를 수동으로 갱신한 뒤, 아래에서 역할별 모델을 선택합니다.",
   "Optional role-specific model. Empty uses Q&A model as fallback.": "역할 전용 모델(선택)입니다. 비우면 Q&A 모델을 사용합니다.",
   "Used when role preset is Ask (vision). Text-only for now, image input support is planned.": "Ask(비전) 프리셋에서 사용합니다. 현재는 텍스트 중심이며 이미지 입력 지원은 추후 확장 예정입니다.",
   "Reserved for image-generation workflows. Current chat UI is text-first.": "이미지 생성 워크플로용 예약 모델입니다. 현재 채팅 UI는 텍스트 중심입니다.",
@@ -2482,12 +2484,130 @@ function toKoreanBilingualParts(
   return { en: normalized, ko: translated };
 }
 
+type RoleModelSettingKey =
+  | "qaAskModel"
+  | "qaAskVisionModel"
+  | "qaImageGeneratorModel"
+  | "qaCoderModel"
+  | "qaArchitectModel"
+  | "qaOrchestratorModel"
+  | "qaSafeguardModel";
+
+interface RoleModelSettingConfig {
+  key: RoleModelSettingKey;
+  name: string;
+  description: string;
+  placeholder: string;
+}
+
+const ROLE_MODEL_FALLBACK_VALUE = "__fallback__";
+
+const ROLE_MODEL_SETTING_CONFIGS: ReadonlyArray<RoleModelSettingConfig> = [
+  {
+    key: "qaAskModel",
+    name: "Ask model (text)",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3:14b",
+  },
+  {
+    key: "qaAskVisionModel",
+    name: "Ask model (vision)",
+    description: "Used when role preset is Ask (vision). Text-only for now, image input support is planned.",
+    placeholder: "llama3.2-vision:11b",
+  },
+  {
+    key: "qaImageGeneratorModel",
+    name: "Image generator model",
+    description: "Reserved for image-generation workflows. Current chat UI is text-first.",
+    placeholder: "flux.1-dev",
+  },
+  {
+    key: "qaCoderModel",
+    name: "Coder model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3-coder:30b",
+  },
+  {
+    key: "qaArchitectModel",
+    name: "Architect model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3:32b",
+  },
+  {
+    key: "qaOrchestratorModel",
+    name: "Orchestrator model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3:32b",
+  },
+  {
+    key: "qaSafeguardModel",
+    name: "Safeguard model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback.",
+    placeholder: "qwen3:14b",
+  },
+];
+
 class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private readonly plugin: KnowledgeWeaverPlugin;
 
   constructor(app: App, plugin: KnowledgeWeaverPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  private formatDetectedModelLabel(option: OllamaModelOption): string {
+    const suffix =
+      option.status === "recommended"
+        ? " (추천)"
+        : option.status === "unavailable"
+          ? " (불가)"
+          : "";
+    return `${option.model}${suffix}`;
+  }
+
+  private addRoleModelPickerSetting(
+    containerEl: HTMLElement,
+    config: RoleModelSettingConfig,
+    ollamaOptions: OllamaModelOption[],
+  ): void {
+    const currentValue = this.plugin.settings[config.key].trim();
+    new Setting(containerEl)
+      .setName(config.name)
+      .setDesc(config.description)
+      .addDropdown((dropdown) => {
+        dropdown.addOption(
+          ROLE_MODEL_FALLBACK_VALUE,
+          "Use Q&A model fallback / Q&A 모델 폴백",
+        );
+        for (const option of ollamaOptions) {
+          dropdown.addOption(option.model, this.formatDetectedModelLabel(option));
+        }
+
+        const selected = currentValue && ollamaOptions.some((option) => option.model === currentValue)
+          ? currentValue
+          : ROLE_MODEL_FALLBACK_VALUE;
+        dropdown.setValue(selected);
+
+        dropdown.onChange(async (value) => {
+          this.plugin.settings[config.key] =
+            value === ROLE_MODEL_FALLBACK_VALUE ? "" : value;
+          await this.plugin.saveSettings();
+
+          if (value !== ROLE_MODEL_FALLBACK_VALUE && !isOllamaModelAnalyzable(value)) {
+            new Notice(`Selected model is marked as (불가): ${value}`, 4500);
+          }
+          this.display();
+        });
+      })
+      .addText((text) =>
+        text
+          .setPlaceholder(config.placeholder)
+          .setValue(currentValue)
+          .onChange(async (value) => {
+            this.plugin.settings[config.key] = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
   }
 
   display(): void {
@@ -2544,13 +2664,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           dropdown.setValue("");
         } else {
           for (const option of ollamaOptions) {
-            const suffix =
-              option.status === "recommended"
-                ? " (추천)"
-                : option.status === "unavailable"
-                  ? " (불가)"
-                  : "";
-            dropdown.addOption(option.model, `${option.model}${suffix}`);
+            dropdown.addOption(option.model, this.formatDetectedModelLabel(option));
           }
 
           const current = this.plugin.settings.ollamaModel;
@@ -2565,13 +2679,14 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           if (!value) {
             return;
           }
-          this.plugin.settings.ollamaModel = value;
-          await this.plugin.saveSettings();
-
           if (!isOllamaModelAnalyzable(value)) {
             new Notice(`Selected model is marked as (불가): ${value}`, 4500);
+            this.display();
+            return;
           }
 
+          this.plugin.settings.ollamaModel = value;
+          await this.plugin.saveSettings();
           this.display();
         });
       })
@@ -3215,98 +3330,32 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           }),
       );
 
+    const roleModelOptions = this.plugin.getOllamaModelOptions();
     new Setting(containerEl)
-      .setName("Ask model (text)")
-      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
-      .addText((text) =>
-        text
-          .setPlaceholder("qwen3:14b")
-          .setValue(this.plugin.settings.qaAskModel)
-          .onChange(async (value) => {
-            this.plugin.settings.qaAskModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Ask model (vision)")
+      .setName("Role model detection controls")
       .setDesc(
-        "Used when role preset is Ask (vision). Text-only for now, image input support is planned.",
+        "Refresh local model detection manually, then choose role-specific models below.",
       )
-      .addText((text) =>
-        text
-          .setPlaceholder("llama3.2-vision:11b")
-          .setValue(this.plugin.settings.qaAskVisionModel)
-          .onChange(async (value) => {
-            this.plugin.settings.qaAskVisionModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
+      .addButton((button) =>
+        button.setButtonText("Refresh / 새로고침").onClick(async () => {
+          await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
+          this.display();
+        }),
+      )
+      .addButton((button) =>
+        button.setButtonText("Use recommended / 권장값 사용").onClick(async () => {
+          await this.plugin.applyRecommendedOllamaModel(true);
+          this.display();
+        }),
       );
 
     new Setting(containerEl)
-      .setName("Image generator model")
-      .setDesc("Reserved for image-generation workflows. Current chat UI is text-first.")
-      .addText((text) =>
-        text
-          .setPlaceholder("flux.1-dev")
-          .setValue(this.plugin.settings.qaImageGeneratorModel)
-          .onChange(async (value) => {
-            this.plugin.settings.qaImageGeneratorModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
+      .setName("Role model detection summary")
+      .setDesc(this.plugin.getOllamaDetectionSummary());
 
-    new Setting(containerEl)
-      .setName("Coder model")
-      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
-      .addText((text) =>
-        text
-          .setPlaceholder("qwen3-coder:30b")
-          .setValue(this.plugin.settings.qaCoderModel)
-          .onChange(async (value) => {
-            this.plugin.settings.qaCoderModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Architect model")
-      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
-      .addText((text) =>
-        text
-          .setPlaceholder("qwen3:32b")
-          .setValue(this.plugin.settings.qaArchitectModel)
-          .onChange(async (value) => {
-            this.plugin.settings.qaArchitectModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Orchestrator model")
-      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
-      .addText((text) =>
-        text
-          .setPlaceholder("qwen3:32b")
-          .setValue(this.plugin.settings.qaOrchestratorModel)
-          .onChange(async (value) => {
-            this.plugin.settings.qaOrchestratorModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Safeguard model")
-      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
-      .addText((text) =>
-        text
-          .setPlaceholder("qwen3:14b")
-          .setValue(this.plugin.settings.qaSafeguardModel)
-          .onChange(async (value) => {
-            this.plugin.settings.qaSafeguardModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
+    for (const config of ROLE_MODEL_SETTING_CONFIGS) {
+      this.addRoleModelPickerSetting(containerEl, config, roleModelOptions);
+    }
 
     if (this.plugin.settings.qaPipelinePreset === "legacy_auto") {
       new Setting(containerEl)
@@ -3922,9 +3971,6 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     });
 
     this.addSettingTab(new KnowledgeWeaverSettingTab(this.app, this));
-
-    await this.refreshOllamaDetection({ notify: false, autoApply: true });
-    await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
   }
 
   onunload(): void {
@@ -6404,7 +6450,6 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
 
     try {
-      await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
       const embeddingModel = this.settings.semanticOllamaModel.trim();
       if (!embeddingModel) {
         throw new Error("Embedding model is empty. Refresh embedding detection first.");
@@ -6880,7 +6925,6 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
 
     if (this.settings.provider === "ollama") {
-      await this.refreshOllamaDetection({ notify: false, autoApply: true });
       const selectedModel = this.settings.ollamaModel.trim();
       if (!selectedModel || !isOllamaModelAnalyzable(selectedModel)) {
         if (source === "manual") {
@@ -7383,8 +7427,6 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
 
     if (this.settings.provider === "ollama") {
-      await this.refreshOllamaDetection({ notify: false, autoApply: true });
-
       const selectedModel = this.settings.ollamaModel.trim();
       if (!selectedModel) {
         this.notice("Ollama model is empty. Refresh model detection and select one.");
@@ -7401,7 +7443,6 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
 
     if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
-      await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
       const embeddingModel = this.settings.semanticOllamaModel.trim();
       if (!embeddingModel) {
         this.notice(
