@@ -3033,8 +3033,14 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .setPlaceholder("Auto-Linker Backups")
           .setValue(this.plugin.settings.backupRootPath)
           .onChange(async (value) => {
-            this.plugin.settings.backupRootPath = value.trim();
-            await this.plugin.saveSettings();
+            try {
+              await this.plugin.setBackupRootPathForQa(value);
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : "Invalid backup root path.";
+              new Notice(message, 6000);
+              text.setValue(this.plugin.settings.backupRootPath);
+            }
           }),
       );
 
@@ -3075,8 +3081,13 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .setPlaceholder("MOC/Selected Knowledge MOC.md")
           .setValue(this.plugin.settings.mocPath)
           .onChange(async (value) => {
-            this.plugin.settings.mocPath = value.trim();
-            await this.plugin.saveSettings();
+            try {
+              await this.plugin.setMocPathForQa(value);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Invalid MOC path.";
+              new Notice(message, 6000);
+              text.setValue(this.plugin.settings.mocPath);
+            }
           }),
       );
   }
@@ -3351,6 +3362,19 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   async setChatTranscriptRootPathForQa(path: string): Promise<void> {
     const next = this.resolveSafeFolderPath(path, "Auto-Linker Chats", "Chat transcript");
     this.settings.chatTranscriptRootPath = next;
+    await this.saveSettings();
+  }
+
+  async setBackupRootPathForQa(path: string): Promise<void> {
+    const next = this.resolveSafeFolderPath(path, "Auto-Linker Backups", "Backup root");
+    this.settings.backupRootPath = next;
+    await this.saveSettings();
+  }
+
+  async setMocPathForQa(path: string): Promise<void> {
+    const raw = path.trim() || "MOC/Selected Knowledge MOC.md";
+    const next = this.resolveSafeMarkdownPath(raw, "MOC");
+    this.settings.mocPath = next;
     await this.saveSettings();
   }
 
@@ -3704,6 +3728,15 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!this.settings.backupRootPath) {
       this.settings.backupRootPath = DEFAULT_SETTINGS.backupRootPath;
     }
+    try {
+      this.settings.backupRootPath = this.resolveSafeFolderPath(
+        this.settings.backupRootPath,
+        DEFAULT_SETTINGS.backupRootPath,
+        "Backup root",
+      );
+    } catch {
+      this.settings.backupRootPath = DEFAULT_SETTINGS.backupRootPath;
+    }
     if (!this.settings.excludedFolderPatterns) {
       this.settings.excludedFolderPatterns = DEFAULT_SETTINGS.excludedFolderPatterns;
     }
@@ -3774,6 +3807,14 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
     if (typeof this.settings.propertyCleanupKeepKeys !== "string") {
       this.settings.propertyCleanupKeepKeys = DEFAULT_SETTINGS.propertyCleanupKeepKeys;
+    }
+    if (typeof this.settings.mocPath !== "string" || !this.settings.mocPath.trim()) {
+      this.settings.mocPath = DEFAULT_SETTINGS.mocPath;
+    }
+    try {
+      this.settings.mocPath = this.resolveSafeMarkdownPath(this.settings.mocPath, "MOC");
+    } catch {
+      this.settings.mocPath = DEFAULT_SETTINGS.mocPath;
     }
   }
 
@@ -6089,7 +6130,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       return null;
     }
 
-    const backupRoot = normalizePath(this.settings.backupRootPath);
+    const backupRoot = this.resolveSafeFolderPath(
+      this.settings.backupRootPath,
+      DEFAULT_SETTINGS.backupRootPath,
+      "Backup root",
+    );
     const backupFolder = normalizePath(
       `${backupRoot}/${formatBackupStamp(new Date())}`,
     );
@@ -6129,7 +6174,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       return;
     }
 
-    const backupRoot = normalizePath(this.settings.backupRootPath);
+    const backupRoot = this.resolveSafeFolderPath(
+      this.settings.backupRootPath,
+      DEFAULT_SETTINGS.backupRootPath,
+      "Backup root",
+    );
     const exists = await this.app.vault.adapter.exists(backupRoot);
     if (!exists) {
       return;
@@ -6149,7 +6198,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   }
 
   private async getLatestBackupFolder(): Promise<string | null> {
-    const backupRoot = normalizePath(this.settings.backupRootPath);
+    const backupRoot = this.resolveSafeFolderPath(
+      this.settings.backupRootPath,
+      DEFAULT_SETTINGS.backupRootPath,
+      "Backup root",
+    );
     const exists = await this.app.vault.adapter.exists(backupRoot);
     if (!exists) {
       return null;
@@ -6274,7 +6327,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       lines.push("");
     }
 
-    const outputPath = normalizePath(this.settings.mocPath);
+    const outputPath = this.resolveSafeMarkdownPath(this.settings.mocPath, "MOC");
     await this.ensureParentFolder(outputPath);
     const existing = this.app.vault.getAbstractFileByPath(outputPath);
     const content = `${lines.join("\n").trim()}\n`;

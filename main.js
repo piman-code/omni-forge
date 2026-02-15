@@ -3242,8 +3242,13 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
     );
     new import_obsidian4.Setting(containerEl).setName("Backup root path").setDesc("Vault-relative folder path used for versioned backups.").addText(
       (text) => text.setPlaceholder("Auto-Linker Backups").setValue(this.plugin.settings.backupRootPath).onChange(async (value) => {
-        this.plugin.settings.backupRootPath = value.trim();
-        await this.plugin.saveSettings();
+        try {
+          await this.plugin.setBackupRootPathForQa(value);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Invalid backup root path.";
+          new import_obsidian4.Notice(message, 6e3);
+          text.setValue(this.plugin.settings.backupRootPath);
+        }
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Backup retention count").setDesc("Keep only latest N backups (old backups are deleted automatically).").addText(
@@ -3264,8 +3269,13 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
     );
     new import_obsidian4.Setting(containerEl).setName("MOC file path").setDesc("Vault-relative markdown path.").addText(
       (text) => text.setPlaceholder("MOC/Selected Knowledge MOC.md").setValue(this.plugin.settings.mocPath).onChange(async (value) => {
-        this.plugin.settings.mocPath = value.trim();
-        await this.plugin.saveSettings();
+        try {
+          await this.plugin.setMocPathForQa(value);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Invalid MOC path.";
+          new import_obsidian4.Notice(message, 6e3);
+          text.setValue(this.plugin.settings.mocPath);
+        }
       })
     );
   }
@@ -3467,6 +3477,17 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   async setChatTranscriptRootPathForQa(path) {
     const next = this.resolveSafeFolderPath(path, "Auto-Linker Chats", "Chat transcript");
     this.settings.chatTranscriptRootPath = next;
+    await this.saveSettings();
+  }
+  async setBackupRootPathForQa(path) {
+    const next = this.resolveSafeFolderPath(path, "Auto-Linker Backups", "Backup root");
+    this.settings.backupRootPath = next;
+    await this.saveSettings();
+  }
+  async setMocPathForQa(path) {
+    const raw = path.trim() || "MOC/Selected Knowledge MOC.md";
+    const next = this.resolveSafeMarkdownPath(raw, "MOC");
+    this.settings.mocPath = next;
     await this.saveSettings();
   }
   escapeYamlValue(value) {
@@ -3751,6 +3772,15 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (!this.settings.backupRootPath) {
       this.settings.backupRootPath = DEFAULT_SETTINGS.backupRootPath;
     }
+    try {
+      this.settings.backupRootPath = this.resolveSafeFolderPath(
+        this.settings.backupRootPath,
+        DEFAULT_SETTINGS.backupRootPath,
+        "Backup root"
+      );
+    } catch (e) {
+      this.settings.backupRootPath = DEFAULT_SETTINGS.backupRootPath;
+    }
     if (!this.settings.excludedFolderPatterns) {
       this.settings.excludedFolderPatterns = DEFAULT_SETTINGS.excludedFolderPatterns;
     }
@@ -3819,6 +3849,14 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.propertyCleanupKeepKeys !== "string") {
       this.settings.propertyCleanupKeepKeys = DEFAULT_SETTINGS.propertyCleanupKeepKeys;
+    }
+    if (typeof this.settings.mocPath !== "string" || !this.settings.mocPath.trim()) {
+      this.settings.mocPath = DEFAULT_SETTINGS.mocPath;
+    }
+    try {
+      this.settings.mocPath = this.resolveSafeMarkdownPath(this.settings.mocPath, "MOC");
+    } catch (e) {
+      this.settings.mocPath = DEFAULT_SETTINGS.mocPath;
     }
   }
   async saveSettings() {
@@ -5663,7 +5701,11 @@ ${item.content}`
     if (uniquePaths.length === 0) {
       return null;
     }
-    const backupRoot = (0, import_obsidian4.normalizePath)(this.settings.backupRootPath);
+    const backupRoot = this.resolveSafeFolderPath(
+      this.settings.backupRootPath,
+      DEFAULT_SETTINGS.backupRootPath,
+      "Backup root"
+    );
     const backupFolder = (0, import_obsidian4.normalizePath)(
       `${backupRoot}/${formatBackupStamp(/* @__PURE__ */ new Date())}`
     );
@@ -5694,7 +5736,11 @@ ${item.content}`
     if (!Number.isFinite(keepCount) || keepCount < 1) {
       return;
     }
-    const backupRoot = (0, import_obsidian4.normalizePath)(this.settings.backupRootPath);
+    const backupRoot = this.resolveSafeFolderPath(
+      this.settings.backupRootPath,
+      DEFAULT_SETTINGS.backupRootPath,
+      "Backup root"
+    );
     const exists = await this.app.vault.adapter.exists(backupRoot);
     if (!exists) {
       return;
@@ -5711,7 +5757,11 @@ ${item.content}`
   }
   async getLatestBackupFolder() {
     var _a;
-    const backupRoot = (0, import_obsidian4.normalizePath)(this.settings.backupRootPath);
+    const backupRoot = this.resolveSafeFolderPath(
+      this.settings.backupRootPath,
+      DEFAULT_SETTINGS.backupRootPath,
+      "Backup root"
+    );
     const exists = await this.app.vault.adapter.exists(backupRoot);
     if (!exists) {
       return null;
@@ -5814,7 +5864,7 @@ ${item.content}`
       }
       lines.push("");
     }
-    const outputPath = (0, import_obsidian4.normalizePath)(this.settings.mocPath);
+    const outputPath = this.resolveSafeMarkdownPath(this.settings.mocPath, "MOC");
     await this.ensureParentFolder(outputPath);
     const existing = this.app.vault.getAbstractFileByPath(outputPath);
     const content = `${lines.join("\n").trim()}

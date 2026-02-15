@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.11] - 2026-02-15
+
+### Security
+
+- Hardened `backupRootPath` handling with vault-relative safe-path validation.
+- Hardened `mocPath` handling with vault-relative safe markdown-path validation.
+- Added settings-time validation and rejection for invalid backup/MOC paths.
+- Added load-time normalization fallback to safe defaults for invalid stored paths.
+
 ## [0.2.10] - 2026-02-15
 
 ### Changed
