@@ -278,11 +278,12 @@
   border-radius: 8px;
   padding: 5px 8px;
   border: 1px solid var(--background-modifier-border);
-  background: var(--background-modifier-hover);
+  background: color-mix(in srgb, var(--background-primary) 88%, var(--background-modifier-hover) 12%) !important;
+  color: var(--text-normal) !important;
 }
 
 .auto-linker-chat-source-link {
-  color: var(--text-accent);
+  color: var(--text-normal) !important;
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -291,12 +292,12 @@
 }
 
 .auto-linker-chat-source-link:hover {
-  color: var(--interactive-accent);
+  color: var(--interactive-accent) !important;
   text-decoration: underline;
 }
 
 .auto-linker-chat-source-similarity {
-  color: var(--text-muted);
+  color: var(--text-muted) !important;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }

@@ -2584,6 +2584,11 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           }
         },
         (event) => {
+          if (event.startsWith("__THINK__")) {
+            modelThinking += event.slice("__THINK__".length);
+            updateThinkingMessage(true);
+            return;
+          }
           if (!progressLines.includes(event)) {
             progressLines.push(event);
           }
@@ -4115,6 +4120,7 @@ ${item.content}`
       "Tone: natural conversation, concise, not stiff.",
       "Output in markdown. Use headings/bullets only when helpful.",
       "If comparing choices or plans, prefer a markdown table.",
+      "When the user asks for plan/checklist/comparison, \uBC18\uB4DC\uC2DC \uD45C \uB610\uB294 \uCCB4\uD06C\uB9AC\uC2A4\uD2B8\uB97C \uD3EC\uD568\uD558\uB77C.",
       "Start with a direct answer in 1-3 sentences.",
       "Then add short synthesis (patterns, contradictions, implications) if useful.",
       "If evidence is insufficient, clearly say what is missing.",
@@ -4228,6 +4234,7 @@ ${item.content}`
       onEvent == null ? void 0 : onEvent("Generation started");
       this.setStatus("asking local qa model...");
       let answer = "";
+      let streamThinking = "";
       if (onToken) {
         const streamResponse = await fetch(`${qaBaseUrl.replace(/\/$/, "")}/api/generate`, {
           method: "POST",
@@ -4258,6 +4265,11 @@ ${item.content}`
               try {
                 const parsed = JSON.parse(line);
                 const token = typeof parsed.response === "string" ? parsed.response : "";
+                const thinkChunk = typeof parsed.thinking === "string" ? parsed.thinking : "";
+                if (thinkChunk) {
+                  streamThinking += thinkChunk;
+                  onEvent == null ? void 0 : onEvent(`__THINK__${thinkChunk}`);
+                }
                 if (token) {
                   answer += token;
                   onToken(token);
@@ -4273,6 +4285,11 @@ ${item.content}`
           try {
             const parsed = JSON.parse(tail);
             const token = typeof parsed.response === "string" ? parsed.response : "";
+            const thinkChunk = typeof parsed.thinking === "string" ? parsed.thinking : "";
+            if (thinkChunk) {
+              streamThinking += thinkChunk;
+              onEvent == null ? void 0 : onEvent(`__THINK__${thinkChunk}`);
+            }
             if (token) {
               answer += token;
               onToken(token);
@@ -4303,6 +4320,7 @@ ${item.content}`
         throw new Error("Local Q&A returned an empty answer.");
       }
       onEvent == null ? void 0 : onEvent("Generation completed");
+      const mergedThinking = [streamThinking.trim(), split.thinking.trim()].filter((item) => item.length > 0).join("\n\n").trim();
       const sourceList = sourceBlocks.map((item) => ({
         path: item.path,
         similarity: item.similarity
@@ -4310,7 +4328,7 @@ ${item.content}`
       return {
         question: safeQuestion,
         answer: finalAnswer,
-        thinking: split.thinking,
+        thinking: mergedThinking,
         model: qaModel,
         embeddingModel,
         sources: sourceList,

@@ -1953,6 +1953,11 @@ class LocalQAWorkspaceView extends ItemView {
           }
         },
         (event) => {
+          if (event.startsWith("__THINK__")) {
+            modelThinking += event.slice("__THINK__".length);
+            updateThinkingMessage(true);
+            return;
+          }
           if (!progressLines.includes(event)) {
             progressLines.push(event);
           }
@@ -4138,6 +4143,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       "Tone: natural conversation, concise, not stiff.",
       "Output in markdown. Use headings/bullets only when helpful.",
       "If comparing choices or plans, prefer a markdown table.",
+      "When the user asks for plan/checklist/comparison, 반드시 표 또는 체크리스트를 포함하라.",
       "Start with a direct answer in 1-3 sentences.",
       "Then add short synthesis (patterns, contradictions, implications) if useful.",
       "If evidence is insufficient, clearly say what is missing.",
@@ -4275,6 +4281,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
       this.setStatus("asking local qa model...");
       let answer = "";
+      let streamThinking = "";
       if (onToken) {
         const streamResponse = await fetch(`${qaBaseUrl.replace(/\/$/, "")}/api/generate`, {
           method: "POST",
@@ -4309,6 +4316,12 @@ export default class KnowledgeWeaverPlugin extends Plugin {
                 const parsed = JSON.parse(line) as Record<string, unknown>;
                 const token =
                   typeof parsed.response === "string" ? parsed.response : "";
+                const thinkChunk =
+                  typeof parsed.thinking === "string" ? parsed.thinking : "";
+                if (thinkChunk) {
+                  streamThinking += thinkChunk;
+                  onEvent?.(`__THINK__${thinkChunk}`);
+                }
                 if (token) {
                   answer += token;
                   onToken(token);
@@ -4326,6 +4339,12 @@ export default class KnowledgeWeaverPlugin extends Plugin {
           try {
             const parsed = JSON.parse(tail) as Record<string, unknown>;
             const token = typeof parsed.response === "string" ? parsed.response : "";
+            const thinkChunk =
+              typeof parsed.thinking === "string" ? parsed.thinking : "";
+            if (thinkChunk) {
+              streamThinking += thinkChunk;
+              onEvent?.(`__THINK__${thinkChunk}`);
+            }
             if (token) {
               answer += token;
               onToken(token);
@@ -4363,6 +4382,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         throw new Error("Local Q&A returned an empty answer.");
       }
       onEvent?.("Generation completed");
+      const mergedThinking = [streamThinking.trim(), split.thinking.trim()]
+        .filter((item) => item.length > 0)
+        .join("\n\n")
+        .trim();
 
       const sourceList: LocalQASourceItem[] = sourceBlocks.map((item) => ({
         path: item.path,
@@ -4372,7 +4395,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       return {
         question: safeQuestion,
         answer: finalAnswer,
-        thinking: split.thinking,
+        thinking: mergedThinking,
         model: qaModel,
         embeddingModel,
         sources: sourceList,
