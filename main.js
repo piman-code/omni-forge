@@ -1298,6 +1298,7 @@ var DEFAULT_SETTINGS = {
   qaMaxContextChars: 12e3,
   qaAllowNonLocalEndpoint: false,
   chatTranscriptRootPath: "Auto-Linker Chats",
+  cleanupReportRootPath: "Auto-Linker Reports",
   propertyCleanupEnabled: false,
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
@@ -2201,6 +2202,28 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const ss = String(date.getSeconds()).padStart(2, "0");
     return `${hh}:${mm}:${ss}`;
   }
+  renderSourceLink(parent, source) {
+    const row = parent.createDiv({ cls: "auto-linker-chat-source-row" });
+    const link = row.createEl("a", {
+      text: source.path,
+      href: "#",
+      cls: "auto-linker-chat-source-link"
+    });
+    link.setAttr("title", source.path);
+    link.onclick = async (event) => {
+      event.preventDefault();
+      const target = this.app.vault.getAbstractFileByPath(source.path);
+      if (target instanceof import_obsidian4.TFile) {
+        await this.app.workspace.getLeaf(true).openFile(target);
+      } else {
+        new import_obsidian4.Notice(`Source not found: ${source.path}`, 5e3);
+      }
+    };
+    row.createEl("span", {
+      text: `(${formatSimilarity(source.similarity)})`,
+      cls: "auto-linker-chat-source-similarity"
+    });
+  }
   renderMessages() {
     this.threadEl.empty();
     if (this.messages.length === 0) {
@@ -2223,9 +2246,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         const src = box.createDiv({ cls: "auto-linker-chat-sources" });
         src.createEl("small", { text: "Sources" });
         for (const source of message.sources) {
-          src.createEl("div", {
-            text: `- ${source.path} (${formatSimilarity(source.similarity)})`
-          });
+          this.renderSourceLink(src, source);
         }
       }
     }
@@ -2757,6 +2778,12 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
     new import_obsidian4.Setting(containerEl).setName("Run cleanup command").setDesc(
       "Use command palette: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'."
     );
+    new import_obsidian4.Setting(containerEl).setName("Cleanup dry-run report folder").setDesc("Vault-relative folder for cleanup dry-run report files.").addText(
+      (text) => text.setPlaceholder("Auto-Linker Reports").setValue(this.plugin.settings.cleanupReportRootPath).onChange(async (value) => {
+        this.plugin.settings.cleanupReportRootPath = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Sort tags and linked arrays").setDesc("Helps keep stable output and reduce linter churn.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.sortArrays).onChange(async (value) => {
         this.plugin.settings.sortArrays = value;
@@ -3005,25 +3032,44 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     return true;
   }
-  async setChatTranscriptRootPathForQa(path) {
-    const next = (0, import_obsidian4.normalizePath)(path.trim());
-    if (!this.isSafeVaultRelativePath(next)) {
-      throw new Error("Chat transcript path must be a safe vault-relative folder path.");
+  resolveSafeFolderPath(rawPath, fallback, label) {
+    const normalized = (0, import_obsidian4.normalizePath)(rawPath.trim() || fallback);
+    if (!this.isSafeVaultRelativePath(normalized)) {
+      throw new Error(`${label} path must be a safe vault-relative folder path.`);
     }
+    return normalized;
+  }
+  async setChatTranscriptRootPathForQa(path) {
+    const next = this.resolveSafeFolderPath(path, "Auto-Linker Chats", "Chat transcript");
     this.settings.chatTranscriptRootPath = next;
     await this.saveSettings();
   }
   escapeYamlValue(value) {
     return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
+  collectTopSourcePaths(messages, maxItems) {
+    const bestByPath = /* @__PURE__ */ new Map();
+    for (const message of messages) {
+      if (message.role !== "assistant" || !message.sources) {
+        continue;
+      }
+      for (const source of message.sources) {
+        const prev = bestByPath.get(source.path);
+        if (prev === void 0 || source.similarity > prev) {
+          bestByPath.set(source.path, source.similarity);
+        }
+      }
+    }
+    return [...bestByPath.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, Math.max(1, maxItems)).map(([path]) => path);
+  }
   async saveLocalQaTranscript(messages) {
     const timestamp = /* @__PURE__ */ new Date();
     const stamp = formatBackupStamp(timestamp);
-    const folderRaw = this.settings.chatTranscriptRootPath.trim() || "Auto-Linker Chats";
-    const folder = (0, import_obsidian4.normalizePath)(folderRaw);
-    if (!this.isSafeVaultRelativePath(folder)) {
-      throw new Error("Chat transcript root path is invalid. Check settings.");
-    }
+    const folder = this.resolveSafeFolderPath(
+      this.settings.chatTranscriptRootPath,
+      "Auto-Linker Chats",
+      "Chat transcript"
+    );
     let outputPath = (0, import_obsidian4.normalizePath)(`${folder}/chat-${stamp}.md`);
     let suffix = 1;
     while (await this.app.vault.adapter.exists(outputPath)) {
@@ -3032,9 +3078,13 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     const qaModel = this.getQaModelLabelForQa();
     const embeddingModel = this.getQaEmbeddingModelForQa();
-    const selectedFiles = this.getSelectedFilesForQa().map((file) => file.path).sort((a, b) => a.localeCompare(b));
+    const selectedFiles = this.getSelectedFilesForQa().map((file) => file.path);
     const selectedFolders = this.getSelectedFolderPathsForQa().sort(
       (a, b) => a.localeCompare(b)
+    );
+    const topSourcePaths = this.collectTopSourcePaths(
+      messages,
+      Math.max(1, this.settings.qaTopK)
     );
     const turns = messages.filter(
       (item) => item.role === "user" || item.role === "assistant"
@@ -3047,19 +3097,13 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     lines.push(`qa_model: "${this.escapeYamlValue(qaModel)}"`);
     lines.push(`embedding_model: "${this.escapeYamlValue(embeddingModel || "(not set)")}"`);
     lines.push(`turn_count: ${turns.length}`);
+    lines.push(`scope_total_files: ${selectedFiles.length}`);
+    lines.push(`scope_total_folders: ${selectedFolders.length}`);
     lines.push("scope_files:");
-    if (selectedFiles.length === 0) {
+    if (topSourcePaths.length === 0) {
       lines.push('  - "(none)"');
     } else {
-      for (const path of selectedFiles) {
-        lines.push(`  - "${this.escapeYamlValue(path)}"`);
-      }
-    }
-    lines.push("scope_folders:");
-    if (selectedFolders.length === 0) {
-      lines.push('  - "(none)"');
-    } else {
-      for (const path of selectedFolders) {
+      for (const path of topSourcePaths) {
         lines.push(`  - "${this.escapeYamlValue(path)}"`);
       }
     }
@@ -3274,6 +3318,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (!this.settings.chatTranscriptRootPath.trim()) {
       this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;
+    }
+    if (typeof this.settings.cleanupReportRootPath !== "string") {
+      this.settings.cleanupReportRootPath = DEFAULT_SETTINGS.cleanupReportRootPath;
+    }
+    if (!this.settings.cleanupReportRootPath.trim()) {
+      this.settings.cleanupReportRootPath = DEFAULT_SETTINGS.cleanupReportRootPath;
     }
     if (typeof this.settings.propertyCleanupKeys !== "string") {
       this.settings.propertyCleanupKeys = DEFAULT_SETTINGS.propertyCleanupKeys;
@@ -4242,8 +4292,13 @@ ${item.content}`
         lines.push(...dryRunReportRows);
       }
       try {
+        const reportFolder = this.resolveSafeFolderPath(
+          this.settings.cleanupReportRootPath,
+          "Auto-Linker Reports",
+          "Cleanup dry-run report"
+        );
         reportPath = (0, import_obsidian4.normalizePath)(
-          `Auto-Linker Reports/cleanup-dry-run-${formatBackupStamp(/* @__PURE__ */ new Date())}.md`
+          `${reportFolder}/cleanup-dry-run-${formatBackupStamp(/* @__PURE__ */ new Date())}.md`
         );
         await this.ensureParentFolder(reportPath);
         await this.app.vault.adapter.write(

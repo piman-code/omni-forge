@@ -144,6 +144,7 @@ export interface KnowledgeWeaverSettings {
   qaMaxContextChars: number;
   qaAllowNonLocalEndpoint: boolean;
   chatTranscriptRootPath: string;
+  cleanupReportRootPath: string;
   propertyCleanupEnabled: boolean;
   propertyCleanupKeys: string;
   propertyCleanupPrefixes: string;
