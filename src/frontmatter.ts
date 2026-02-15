@@ -2,6 +2,8 @@ import { App, TFile, normalizePath } from "obsidian";
 import type { ManagedFrontmatter } from "./types";
 
 export const MANAGED_KEYS = ["tags", "topic", "linked", "index"] as const;
+const MANAGED_KEY_SET = new Set<string>(MANAGED_KEYS.map((key) => key.toLowerCase()));
+
 export const PROTECTED_FRONTMATTER_KEYS = new Set<string>([
   "date created",
   "date modified",
@@ -14,11 +16,30 @@ export const PROTECTED_FRONTMATTER_KEYS = new Set<string>([
   "modified",
 ]);
 
-const LEGACY_REMOVABLE_KEY_PREFIXES = [
-  "ai_",
-  "autolinker_",
-  "auto_linker_",
-];
+const LEGACY_REMOVABLE_KEY_PREFIXES = ["ai_", "autolinker_", "auto_linker_"];
+
+export interface FrontmatterCleanupConfig {
+  removeKeys: Set<string>;
+  removePrefixes: string[];
+  keepKeys: Set<string>;
+}
+
+interface FrontmatterRetentionOptions {
+  cleanUnknown: boolean;
+  cleanupConfig?: FrontmatterCleanupConfig;
+  dropManaged: boolean;
+}
+
+interface FrontmatterBuildOptions {
+  cleanUnknown: boolean;
+  sortArrays: boolean;
+  cleanupConfig?: FrontmatterCleanupConfig;
+}
+
+interface FrontmatterCleanupOnlyOptions {
+  cleanUnknown: boolean;
+  cleanupConfig?: FrontmatterCleanupConfig;
+}
 
 function toStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
@@ -47,10 +68,7 @@ function toSingleString(value: unknown): string | undefined {
 }
 
 export function normalizeTag(rawTag: string): string {
-  return rawTag
-    .trim()
-    .replace(/^#+/, "")
-    .replace(/\s+/g, "-");
+  return rawTag.trim().replace(/^#+/, "").replace(/\s+/g, "-");
 }
 
 export function normalizeTags(tags: string[]): string[] {
@@ -156,9 +174,76 @@ export function normalizeManagedFrontmatter(
   };
 }
 
-interface FrontmatterBuildOptions {
-  cleanUnknown: boolean;
-  sortArrays: boolean;
+function shouldRemoveByRules(
+  normalizedKey: string,
+  options: FrontmatterRetentionOptions,
+): boolean {
+  if (PROTECTED_FRONTMATTER_KEYS.has(normalizedKey)) {
+    return false;
+  }
+
+  const keepKeys = options.cleanupConfig?.keepKeys;
+  if (keepKeys && keepKeys.has(normalizedKey)) {
+    return false;
+  }
+
+  const legacyRemovable = LEGACY_REMOVABLE_KEY_PREFIXES.some((prefix) =>
+    normalizedKey.startsWith(prefix),
+  );
+
+  if (options.cleanUnknown && legacyRemovable) {
+    return true;
+  }
+
+  const removeKeys = options.cleanupConfig?.removeKeys;
+  if (removeKeys && removeKeys.has(normalizedKey)) {
+    return true;
+  }
+
+  const removePrefixes = options.cleanupConfig?.removePrefixes ?? [];
+  if (removePrefixes.some((prefix) => normalizedKey.startsWith(prefix))) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildRetainedFrontmatter(
+  current: Record<string, unknown>,
+  options: FrontmatterRetentionOptions,
+): { next: Record<string, unknown>; removedKeys: string[] } {
+  const next: Record<string, unknown> = {};
+  const removedKeys: string[] = [];
+
+  for (const [key, value] of Object.entries(current)) {
+    const normalizedKey = key.trim().toLowerCase();
+    const isManaged = MANAGED_KEY_SET.has(normalizedKey);
+
+    if (isManaged && options.dropManaged) {
+      removedKeys.push(key);
+      continue;
+    }
+
+    if (shouldRemoveByRules(normalizedKey, options)) {
+      removedKeys.push(key);
+      continue;
+    }
+
+    next[key] = value;
+  }
+
+  return { next, removedKeys };
+}
+
+export function cleanupFrontmatterRecord(
+  current: Record<string, unknown>,
+  options: FrontmatterCleanupOnlyOptions,
+): { next: Record<string, unknown>; removedKeys: string[] } {
+  return buildRetainedFrontmatter(current, {
+    cleanUnknown: options.cleanUnknown,
+    cleanupConfig: options.cleanupConfig,
+    dropManaged: false,
+  });
 }
 
 export function buildNextFrontmatter(
@@ -166,26 +251,11 @@ export function buildNextFrontmatter(
   proposed: ManagedFrontmatter,
   options: FrontmatterBuildOptions,
 ): Record<string, unknown> {
-  const next: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(current)) {
-    const normalizedKey = key.trim().toLowerCase();
-    const isManaged = (MANAGED_KEYS as readonly string[]).includes(key);
-    const isProtected = PROTECTED_FRONTMATTER_KEYS.has(normalizedKey);
-    const isLegacyRemovable = LEGACY_REMOVABLE_KEY_PREFIXES.some((prefix) =>
-      normalizedKey.startsWith(prefix),
-    );
-
-    if (isManaged) {
-      continue;
-    }
-
-    if (options.cleanUnknown && isLegacyRemovable && !isProtected) {
-      continue;
-    }
-
-    next[key] = value;
-  }
+  const { next } = buildRetainedFrontmatter(current, {
+    cleanUnknown: options.cleanUnknown,
+    cleanupConfig: options.cleanupConfig,
+    dropManaged: true,
+  });
 
   const tags = options.sortArrays
     ? [...proposed.tags].sort((a, b) => a.localeCompare(b))

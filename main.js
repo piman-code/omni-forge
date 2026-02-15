@@ -24,11 +24,12 @@ __export(main_exports, {
   default: () => KnowledgeWeaverPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/frontmatter.ts
 var import_obsidian = require("obsidian");
 var MANAGED_KEYS = ["tags", "topic", "linked", "index"];
+var MANAGED_KEY_SET = new Set(MANAGED_KEYS.map((key) => key.toLowerCase()));
 var PROTECTED_FRONTMATTER_KEYS = /* @__PURE__ */ new Set([
   "date created",
   "date modified",
@@ -40,11 +41,7 @@ var PROTECTED_FRONTMATTER_KEYS = /* @__PURE__ */ new Set([
   "updated",
   "modified"
 ]);
-var LEGACY_REMOVABLE_KEY_PREFIXES = [
-  "ai_",
-  "autolinker_",
-  "auto_linker_"
-];
+var LEGACY_REMOVABLE_KEY_PREFIXES = ["ai_", "autolinker_", "auto_linker_"];
 function toStringArray(value) {
   if (Array.isArray(value)) {
     return value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean);
@@ -131,23 +128,62 @@ function normalizeManagedFrontmatter(managed) {
     index: index && index.length > 0 ? index : void 0
   };
 }
-function buildNextFrontmatter(current, proposed, options) {
+function shouldRemoveByRules(normalizedKey, options) {
+  var _a, _b, _c, _d;
+  if (PROTECTED_FRONTMATTER_KEYS.has(normalizedKey)) {
+    return false;
+  }
+  const keepKeys = (_a = options.cleanupConfig) == null ? void 0 : _a.keepKeys;
+  if (keepKeys && keepKeys.has(normalizedKey)) {
+    return false;
+  }
+  const legacyRemovable = LEGACY_REMOVABLE_KEY_PREFIXES.some(
+    (prefix) => normalizedKey.startsWith(prefix)
+  );
+  if (options.cleanUnknown && legacyRemovable) {
+    return true;
+  }
+  const removeKeys = (_b = options.cleanupConfig) == null ? void 0 : _b.removeKeys;
+  if (removeKeys && removeKeys.has(normalizedKey)) {
+    return true;
+  }
+  const removePrefixes = (_d = (_c = options.cleanupConfig) == null ? void 0 : _c.removePrefixes) != null ? _d : [];
+  if (removePrefixes.some((prefix) => normalizedKey.startsWith(prefix))) {
+    return true;
+  }
+  return false;
+}
+function buildRetainedFrontmatter(current, options) {
   const next = {};
+  const removedKeys = [];
   for (const [key, value] of Object.entries(current)) {
     const normalizedKey = key.trim().toLowerCase();
-    const isManaged = MANAGED_KEYS.includes(key);
-    const isProtected = PROTECTED_FRONTMATTER_KEYS.has(normalizedKey);
-    const isLegacyRemovable = LEGACY_REMOVABLE_KEY_PREFIXES.some(
-      (prefix) => normalizedKey.startsWith(prefix)
-    );
-    if (isManaged) {
+    const isManaged = MANAGED_KEY_SET.has(normalizedKey);
+    if (isManaged && options.dropManaged) {
+      removedKeys.push(key);
       continue;
     }
-    if (options.cleanUnknown && isLegacyRemovable && !isProtected) {
+    if (shouldRemoveByRules(normalizedKey, options)) {
+      removedKeys.push(key);
       continue;
     }
     next[key] = value;
   }
+  return { next, removedKeys };
+}
+function cleanupFrontmatterRecord(current, options) {
+  return buildRetainedFrontmatter(current, {
+    cleanUnknown: options.cleanUnknown,
+    cleanupConfig: options.cleanupConfig,
+    dropManaged: false
+  });
+}
+function buildNextFrontmatter(current, proposed, options) {
+  const { next } = buildRetainedFrontmatter(current, {
+    cleanUnknown: options.cleanUnknown,
+    cleanupConfig: options.cleanupConfig,
+    dropManaged: true
+  });
   const tags = options.sortArrays ? [...proposed.tags].sort((a, b) => a.localeCompare(b)) : [...proposed.tags];
   const linked = options.sortArrays ? [...proposed.linked].sort((a, b) => a.localeCompare(b)) : [...proposed.linked];
   if (tags.length > 0) {
@@ -696,6 +732,195 @@ async function analyzeWithFallback(settings, request) {
   }
 }
 
+// src/semantic.ts
+var import_obsidian3 = require("obsidian");
+var EMBEDDING_BATCH_SIZE = 8;
+function clampSimilarity(raw) {
+  if (!Number.isFinite(raw)) {
+    return 0;
+  }
+  if (raw > 1) {
+    return 1;
+  }
+  if (raw < -1) {
+    return -1;
+  }
+  return raw;
+}
+function cosineSimilarity(a, b) {
+  if (a.length === 0 || b.length === 0 || a.length !== b.length) {
+    return null;
+  }
+  let dot = 0;
+  let aNorm = 0;
+  let bNorm = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    const av = a[i];
+    const bv = b[i];
+    dot += av * bv;
+    aNorm += av * av;
+    bNorm += bv * bv;
+  }
+  if (aNorm <= 0 || bNorm <= 0) {
+    return null;
+  }
+  return clampSimilarity(dot / (Math.sqrt(aNorm) * Math.sqrt(bNorm)));
+}
+function toNumberVector(value) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const out = [];
+  for (const item of value) {
+    if (typeof item !== "number" || !Number.isFinite(item)) {
+      return null;
+    }
+    out.push(item);
+  }
+  return out.length > 0 ? out : null;
+}
+function parseEmbeddings(payload) {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+  const record = payload;
+  const embeddingSingle = toNumberVector(record.embedding);
+  if (embeddingSingle) {
+    return [embeddingSingle];
+  }
+  const embeddings = record.embeddings;
+  if (!Array.isArray(embeddings)) {
+    return [];
+  }
+  const out = [];
+  for (const item of embeddings) {
+    const vector = toNumberVector(item);
+    if (!vector) {
+      return [];
+    }
+    out.push(vector);
+  }
+  return out;
+}
+function normalizeSourceText(raw, maxChars) {
+  const collapsed = raw.replace(/\s+/g, " ").trim();
+  if (!collapsed) {
+    return "(empty note)";
+  }
+  return collapsed.slice(0, Math.max(200, maxChars));
+}
+async function requestOllamaEmbeddings(baseUrl, model, inputs) {
+  const url = `${baseUrl.replace(/\/$/, "")}/api/embed`;
+  const response = await (0, import_obsidian3.requestUrl)({
+    url,
+    method: "POST",
+    contentType: "application/json",
+    body: JSON.stringify({
+      model,
+      input: inputs
+    }),
+    throw: false
+  });
+  if (response.status >= 300) {
+    throw new Error(`Embedding request failed: ${response.status}`);
+  }
+  const parsed = parseEmbeddings(response.json);
+  if (parsed.length === 0) {
+    throw new Error("Embedding response was empty or invalid.");
+  }
+  return parsed;
+}
+async function buildSemanticNeighborMap(app, files, settings) {
+  const neighborMap = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    neighborMap.set(file.path, []);
+  }
+  if (files.length < 2) {
+    return {
+      neighborMap,
+      model: settings.semanticOllamaModel,
+      generatedVectors: 0,
+      errors: []
+    };
+  }
+  const baseUrl = settings.semanticOllamaBaseUrl.trim() || settings.ollamaBaseUrl.trim();
+  const model = settings.semanticOllamaModel.trim();
+  if (!baseUrl) {
+    throw new Error("Semantic embedding base URL is empty.");
+  }
+  if (!model) {
+    throw new Error("Semantic embedding model is empty.");
+  }
+  const maxChars = Math.max(400, settings.semanticMaxChars);
+  const minSimilarity = Math.max(0, Math.min(1, settings.semanticMinSimilarity));
+  const topK = Math.max(1, settings.semanticTopK);
+  const corpus = [];
+  for (const file of files) {
+    const content = await app.vault.cachedRead(file);
+    corpus.push({
+      file,
+      text: normalizeSourceText(content, maxChars)
+    });
+  }
+  const vectorsByPath = /* @__PURE__ */ new Map();
+  const errors = [];
+  for (let i = 0; i < corpus.length; i += EMBEDDING_BATCH_SIZE) {
+    const batch = corpus.slice(i, i + EMBEDDING_BATCH_SIZE);
+    try {
+      const embeddings = await requestOllamaEmbeddings(
+        baseUrl,
+        model,
+        batch.map((item) => item.text)
+      );
+      if (embeddings.length !== batch.length) {
+        throw new Error(
+          `Embedding count mismatch (${embeddings.length} vs ${batch.length}).`
+        );
+      }
+      for (let idx = 0; idx < batch.length; idx += 1) {
+        vectorsByPath.set(batch[idx].file.path, embeddings[idx]);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown embedding error";
+      for (const item of batch) {
+        errors.push(`${item.file.path}: ${message}`);
+      }
+    }
+  }
+  for (const sourceFile of files) {
+    const sourceVector = vectorsByPath.get(sourceFile.path);
+    if (!sourceVector) {
+      continue;
+    }
+    const scored = [];
+    for (const targetFile of files) {
+      if (targetFile.path === sourceFile.path) {
+        continue;
+      }
+      const targetVector = vectorsByPath.get(targetFile.path);
+      if (!targetVector) {
+        continue;
+      }
+      const similarity = cosineSimilarity(sourceVector, targetVector);
+      if (similarity === null || similarity < minSimilarity) {
+        continue;
+      }
+      scored.push({
+        path: targetFile.path,
+        similarity
+      });
+    }
+    scored.sort((a, b) => b.similarity - a.similarity || a.path.localeCompare(b.path));
+    neighborMap.set(sourceFile.path, scored.slice(0, topK));
+  }
+  return {
+    neighborMap,
+    model,
+    generatedVectors: vectorsByPath.size,
+    errors
+  };
+}
+
 // src/main.ts
 var DEFAULT_SETTINGS = {
   provider: "ollama",
@@ -722,6 +947,16 @@ var DEFAULT_SETTINGS = {
   analyzeIndex: true,
   maxTags: 8,
   maxLinked: 8,
+  semanticLinkingEnabled: false,
+  semanticOllamaBaseUrl: "http://127.0.0.1:11434",
+  semanticOllamaModel: "nomic-embed-text",
+  semanticTopK: 24,
+  semanticMinSimilarity: 0.25,
+  semanticMaxChars: 5e3,
+  propertyCleanupEnabled: false,
+  propertyCleanupKeys: "related",
+  propertyCleanupPrefixes: "",
+  propertyCleanupKeepKeys: "date created,date updated,date modified,created,updated,modified",
   targetFilePaths: [],
   targetFolderPaths: [],
   includeSubfoldersInFolderSelection: true,
@@ -761,6 +996,10 @@ function formatDurationMs(ms) {
   }
   return `${(ms / 1e3).toFixed(1)}s`;
 }
+function formatSimilarity(score) {
+  const clamped = Math.max(-1, Math.min(1, score));
+  return `${(clamped * 100).toFixed(1)}%`;
+}
 function formatBackupStamp(date) {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -788,7 +1027,7 @@ function parsePositiveInt(value, fallback) {
   }
   return parsed;
 }
-var SelectionModal = class extends import_obsidian3.Modal {
+var SelectionModal = class extends import_obsidian4.Modal {
   constructor(app, allFiles, allFolders, initialFiles, initialFolders, includeSubfolders, pathWidthPercent, onSubmit) {
     super(app);
     this.searchValue = "";
@@ -1007,7 +1246,7 @@ var SelectionModal = class extends import_obsidian3.Modal {
     );
   }
 };
-var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian3.Modal {
+var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian4.Modal {
   constructor(app, defaultBackup, onResolve) {
     super(app);
     this.rememberAsDefault = false;
@@ -1078,7 +1317,7 @@ var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian3.Moda
     });
   }
 };
-var RunProgressModal = class extends import_obsidian3.Modal {
+var RunProgressModal = class extends import_obsidian4.Modal {
   constructor(app, titleText) {
     super(app);
     this.showOnlyErrors = true;
@@ -1166,7 +1405,7 @@ var RunProgressModal = class extends import_obsidian3.Modal {
     }
   }
 };
-var SuggestionPreviewModal = class extends import_obsidian3.Modal {
+var SuggestionPreviewModal = class extends import_obsidian4.Modal {
   constructor(app, summary, suggestions, includeReasons, onApply) {
     super(app);
     this.summary = summary;
@@ -1175,6 +1414,7 @@ var SuggestionPreviewModal = class extends import_obsidian3.Modal {
     this.onApply = onApply;
   }
   onOpen() {
+    var _a;
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: "AI suggestions (preview mode)" });
@@ -1208,6 +1448,7 @@ var SuggestionPreviewModal = class extends import_obsidian3.Modal {
       section.createEl("p", {
         text: `Suggest source: ${suggestion.analysis.provider}/${suggestion.analysis.model} | ${formatDurationMs(suggestion.analysis.elapsedMs)}${suggestion.analysis.usedFallback ? " | fallback" : ""}`
       });
+      this.renderSemanticCandidates(section, (_a = suggestion.semanticCandidates) != null ? _a : []);
       this.renderFieldChange(section, "tags", suggestion);
       this.renderFieldChange(section, "topic", suggestion);
       this.renderFieldChange(section, "linked", suggestion);
@@ -1248,8 +1489,28 @@ var SuggestionPreviewModal = class extends import_obsidian3.Modal {
       row.createEl("div", { text: `Reason: ${reason}` });
     }
   }
+  renderSemanticCandidates(parent, candidates) {
+    if (candidates.length === 0) {
+      return;
+    }
+    const section = parent.createDiv();
+    section.style.marginBottom = "8px";
+    section.createEl("strong", { text: "Semantic candidates" });
+    const list = section.createDiv();
+    const previewCount = Math.min(candidates.length, 8);
+    for (const item of candidates.slice(0, previewCount)) {
+      list.createEl("div", {
+        text: `- ${item.path} (${formatSimilarity(item.similarity)})`
+      });
+    }
+    if (candidates.length > previewCount) {
+      list.createEl("small", {
+        text: `...and ${candidates.length - previewCount} more`
+      });
+    }
+  }
 };
-var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab {
+var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -1261,7 +1522,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
     containerEl.createEl("p", {
       text: "Language docs: README.md (index) | README_KO.md (Korean quick access)"
     });
-    new import_obsidian3.Setting(containerEl).setName("Provider").setDesc("Choose AI provider. Local providers are recommended first.").addDropdown(
+    new import_obsidian4.Setting(containerEl).setName("Provider").setDesc("Choose AI provider. Local providers are recommended first.").addDropdown(
       (dropdown) => dropdown.addOption("ollama", "Ollama (local)").addOption("lmstudio", "LM Studio (local)").addOption("openai", "OpenAI / Codex").addOption("anthropic", "Claude").addOption("gemini", "Gemini").setValue(this.plugin.settings.provider).onChange(async (value) => {
         this.plugin.settings.provider = value;
         await this.plugin.saveSettings();
@@ -1269,14 +1530,14 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
       })
     );
     containerEl.createEl("h3", { text: "Local provider config" });
-    new import_obsidian3.Setting(containerEl).setName("Ollama base URL").addText(
+    new import_obsidian4.Setting(containerEl).setName("Ollama base URL").addText(
       (text) => text.setPlaceholder("http://127.0.0.1:11434").setValue(this.plugin.settings.ollamaBaseUrl).onChange(async (value) => {
         this.plugin.settings.ollamaBaseUrl = value.trim();
         await this.plugin.saveSettings();
       })
     );
     const ollamaOptions = this.plugin.getOllamaModelOptions();
-    new import_obsidian3.Setting(containerEl).setName("Ollama detected model picker").setDesc(
+    new import_obsidian4.Setting(containerEl).setName("Ollama detected model picker").setDesc(
       "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for analysis."
     ).addDropdown((dropdown) => {
       if (ollamaOptions.length === 0) {
@@ -1301,7 +1562,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         this.plugin.settings.ollamaModel = value;
         await this.plugin.saveSettings();
         if (!isOllamaModelAnalyzable(value)) {
-          new import_obsidian3.Notice(`Selected model is marked as (\uBD88\uAC00): ${value}`, 4500);
+          new import_obsidian4.Notice(`Selected model is marked as (\uBD88\uAC00): ${value}`, 4500);
         }
         this.display();
       });
@@ -1316,124 +1577,124 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         this.display();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Ollama model (manual)").setDesc("Manual override if you want a custom model name.").addText(
+    new import_obsidian4.Setting(containerEl).setName("Ollama model (manual)").setDesc("Manual override if you want a custom model name.").addText(
       (text) => text.setPlaceholder("qwen2.5:7b").setValue(this.plugin.settings.ollamaModel).onChange(async (value) => {
         this.plugin.settings.ollamaModel = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Auto-pick recommended Ollama model").setDesc("Detect local models and auto-choose recommended when current is missing.").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Auto-pick recommended Ollama model").setDesc("Detect local models and auto-choose recommended when current is missing.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.ollamaAutoPickEnabled).onChange(async (value) => {
         this.plugin.settings.ollamaAutoPickEnabled = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Ollama detection summary").setDesc(this.plugin.getOllamaDetectionSummary());
-    new import_obsidian3.Setting(containerEl).setName("LM Studio base URL").addText(
+    new import_obsidian4.Setting(containerEl).setName("Ollama detection summary").setDesc(this.plugin.getOllamaDetectionSummary());
+    new import_obsidian4.Setting(containerEl).setName("LM Studio base URL").addText(
       (text) => text.setPlaceholder("http://127.0.0.1:1234").setValue(this.plugin.settings.lmStudioBaseUrl).onChange(async (value) => {
         this.plugin.settings.lmStudioBaseUrl = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("LM Studio model").addText(
+    new import_obsidian4.Setting(containerEl).setName("LM Studio model").addText(
       (text) => text.setPlaceholder("local-model").setValue(this.plugin.settings.lmStudioModel).onChange(async (value) => {
         this.plugin.settings.lmStudioModel = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("LM Studio API key (optional)").addText(
+    new import_obsidian4.Setting(containerEl).setName("LM Studio API key (optional)").addText(
       (text) => text.setPlaceholder("Leave empty if not required").setValue(this.plugin.settings.lmStudioApiKey).onChange(async (value) => {
         this.plugin.settings.lmStudioApiKey = value.trim();
         await this.plugin.saveSettings();
       })
     );
     containerEl.createEl("h3", { text: "Cloud provider config" });
-    new import_obsidian3.Setting(containerEl).setName("OpenAI base URL").addText(
+    new import_obsidian4.Setting(containerEl).setName("OpenAI base URL").addText(
       (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(this.plugin.settings.openAIBaseUrl).onChange(async (value) => {
         this.plugin.settings.openAIBaseUrl = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("OpenAI model").addText(
+    new import_obsidian4.Setting(containerEl).setName("OpenAI model").addText(
       (text) => text.setPlaceholder("gpt-5-mini").setValue(this.plugin.settings.openAIModel).onChange(async (value) => {
         this.plugin.settings.openAIModel = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("OpenAI API key").addText(
+    new import_obsidian4.Setting(containerEl).setName("OpenAI API key").addText(
       (text) => text.setPlaceholder("sk-...").setValue(this.plugin.settings.openAIApiKey).onChange(async (value) => {
         this.plugin.settings.openAIApiKey = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Anthropic model").addText(
+    new import_obsidian4.Setting(containerEl).setName("Anthropic model").addText(
       (text) => text.setPlaceholder("claude-3-7-sonnet-latest").setValue(this.plugin.settings.anthropicModel).onChange(async (value) => {
         this.plugin.settings.anthropicModel = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Anthropic API key").addText(
+    new import_obsidian4.Setting(containerEl).setName("Anthropic API key").addText(
       (text) => text.setPlaceholder("sk-ant-...").setValue(this.plugin.settings.anthropicApiKey).onChange(async (value) => {
         this.plugin.settings.anthropicApiKey = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Gemini model").addText(
+    new import_obsidian4.Setting(containerEl).setName("Gemini model").addText(
       (text) => text.setPlaceholder("gemini-2.5-pro").setValue(this.plugin.settings.geminiModel).onChange(async (value) => {
         this.plugin.settings.geminiModel = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Gemini API key").addText(
+    new import_obsidian4.Setting(containerEl).setName("Gemini API key").addText(
       (text) => text.setPlaceholder("AIza...").setValue(this.plugin.settings.geminiApiKey).onChange(async (value) => {
         this.plugin.settings.geminiApiKey = value.trim();
         await this.plugin.saveSettings();
       })
     );
     containerEl.createEl("h3", { text: "Behavior" });
-    new import_obsidian3.Setting(containerEl).setName("Suggestion mode (recommended)").setDesc("Analyze first, preview changes, and apply only when approved.").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Suggestion mode (recommended)").setDesc("Analyze first, preview changes, and apply only when approved.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.suggestionMode).onChange(async (value) => {
         this.plugin.settings.suggestionMode = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Show reasons for each field").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Show reasons for each field").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.includeReasons).onChange(async (value) => {
         this.plugin.settings.includeReasons = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Show progress notices").setDesc("In addition to persistent progress modal, show short notices.").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Show progress notices").setDesc("In addition to persistent progress modal, show short notices.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showProgressNotices).onChange(async (value) => {
         this.plugin.settings.showProgressNotices = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Analyze tags").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Analyze tags").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.analyzeTags).onChange(async (value) => {
         this.plugin.settings.analyzeTags = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Analyze topic").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Analyze topic").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.analyzeTopic).onChange(async (value) => {
         this.plugin.settings.analyzeTopic = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Analyze linked").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Analyze linked").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.analyzeLinked).onChange(async (value) => {
         this.plugin.settings.analyzeLinked = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Analyze index").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Analyze index").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.analyzeIndex).onChange(async (value) => {
         this.plugin.settings.analyzeIndex = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Max tags").addText(
+    new import_obsidian4.Setting(containerEl).setName("Max tags").addText(
       (text) => text.setPlaceholder("8").setValue(String(this.plugin.settings.maxTags)).onChange(async (value) => {
         this.plugin.settings.maxTags = parsePositiveInt(
           value,
@@ -1442,7 +1703,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Max linked").addText(
+    new import_obsidian4.Setting(containerEl).setName("Max linked").addText(
       (text) => text.setPlaceholder("8").setValue(String(this.plugin.settings.maxLinked)).onChange(async (value) => {
         this.plugin.settings.maxLinked = parsePositiveInt(
           value,
@@ -1451,7 +1712,55 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Remove legacy AI-prefixed keys").setDesc(
+    containerEl.createEl("h3", { text: "Semantic linking (Ollama embeddings)" });
+    new import_obsidian4.Setting(containerEl).setName("Enable semantic candidate ranking").setDesc(
+      "Use local Ollama embeddings to rank likely related notes before AI linked suggestion."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.semanticLinkingEnabled).onChange(async (value) => {
+        this.plugin.settings.semanticLinkingEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Embedding Ollama base URL").addText(
+      (text) => text.setPlaceholder("http://127.0.0.1:11434").setValue(this.plugin.settings.semanticOllamaBaseUrl).onChange(async (value) => {
+        this.plugin.settings.semanticOllamaBaseUrl = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Embedding model").setDesc("For example: nomic-embed-text or bge-m3").addText(
+      (text) => text.setPlaceholder("nomic-embed-text").setValue(this.plugin.settings.semanticOllamaModel).onChange(async (value) => {
+        this.plugin.settings.semanticOllamaModel = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Semantic top-k candidates").addText(
+      (text) => text.setPlaceholder("24").setValue(String(this.plugin.settings.semanticTopK)).onChange(async (value) => {
+        this.plugin.settings.semanticTopK = parsePositiveInt(
+          value,
+          this.plugin.settings.semanticTopK
+        );
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Semantic min similarity").setDesc("Range: 0.0 to 1.0").addText(
+      (text) => text.setPlaceholder("0.25").setValue(String(this.plugin.settings.semanticMinSimilarity)).onChange(async (value) => {
+        const parsed = Number.parseFloat(value);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
+          this.plugin.settings.semanticMinSimilarity = parsed;
+          await this.plugin.saveSettings();
+        }
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Semantic source max chars").setDesc("Trim note text before embedding to keep local runs fast.").addText(
+      (text) => text.setPlaceholder("5000").setValue(String(this.plugin.settings.semanticMaxChars)).onChange(async (value) => {
+        this.plugin.settings.semanticMaxChars = parsePositiveInt(
+          value,
+          this.plugin.settings.semanticMaxChars
+        );
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Remove legacy AI-prefixed keys").setDesc(
       "If enabled, removes only legacy keys like ai_*/autolinker_* while preserving other existing keys (including linter date fields)."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.cleanUnknownFrontmatter).onChange(async (value) => {
@@ -1459,20 +1768,48 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Sort tags and linked arrays").setDesc("Helps keep stable output and reduce linter churn.").addToggle(
+    containerEl.createEl("h3", { text: "Property cleanup" });
+    new import_obsidian4.Setting(containerEl).setName("Enable cleanup rules during apply").setDesc("When applying AI suggestions, also remove frontmatter keys by rules below.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.propertyCleanupEnabled).onChange(async (value) => {
+        this.plugin.settings.propertyCleanupEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Cleanup exact keys").setDesc("Comma/newline separated keys. Example: related, linked_context").addTextArea(
+      (text) => text.setPlaceholder("related").setValue(this.plugin.settings.propertyCleanupKeys).onChange(async (value) => {
+        this.plugin.settings.propertyCleanupKeys = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Cleanup key prefixes").setDesc("Comma/newline separated prefixes. Example: temp_, draft_").addTextArea(
+      (text) => text.setPlaceholder("temp_,draft_").setValue(this.plugin.settings.propertyCleanupPrefixes).onChange(async (value) => {
+        this.plugin.settings.propertyCleanupPrefixes = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Never remove these keys").setDesc("Comma/newline separated keys that override cleanup rules.").addTextArea(
+      (text) => text.setPlaceholder("date created,date updated").setValue(this.plugin.settings.propertyCleanupKeepKeys).onChange(async (value) => {
+        this.plugin.settings.propertyCleanupKeepKeys = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Run cleanup command").setDesc(
+      "Use command palette: apply='Auto-Linker: Cleanup frontmatter properties for selected notes', preview='Auto-Linker: Dry-run cleanup frontmatter properties for selected notes'."
+    );
+    new import_obsidian4.Setting(containerEl).setName("Sort tags and linked arrays").setDesc("Helps keep stable output and reduce linter churn.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.sortArrays).onChange(async (value) => {
         this.plugin.settings.sortArrays = value;
         await this.plugin.saveSettings();
       })
     );
     containerEl.createEl("h3", { text: "Selection and backup" });
-    new import_obsidian3.Setting(containerEl).setName("Include subfolders for selected folders").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Include subfolders for selected folders").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.includeSubfoldersInFolderSelection).onChange(async (value) => {
         this.plugin.settings.includeSubfoldersInFolderSelection = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Selection path width percent").setDesc("Controls path width in Select target notes/folders modal (45-100).").addText(
+    new import_obsidian4.Setting(containerEl).setName("Selection path width percent").setDesc("Controls path width in Select target notes/folders modal (45-100).").addText(
       (text) => text.setPlaceholder("72").setValue(String(this.plugin.settings.selectionPathWidthPercent)).onChange(async (value) => {
         const parsed = Number.parseInt(value, 10);
         if (Number.isFinite(parsed) && parsed >= 45 && parsed <= 100) {
@@ -1481,25 +1818,25 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
         }
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Excluded folder patterns").setDesc("Comma-separated substrings. Matched folders are ignored during selection/analysis.").addText(
+    new import_obsidian4.Setting(containerEl).setName("Excluded folder patterns").setDesc("Comma-separated substrings. Matched folders are ignored during selection/analysis.").addText(
       (text) => text.setPlaceholder(".obsidian,Auto-Linker Backups").setValue(this.plugin.settings.excludedFolderPatterns).onChange(async (value) => {
         this.plugin.settings.excludedFolderPatterns = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Backup selected notes before apply").setDesc("You can also override this every run from the backup confirmation dialog.").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Backup selected notes before apply").setDesc("You can also override this every run from the backup confirmation dialog.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.backupBeforeApply).onChange(async (value) => {
         this.plugin.settings.backupBeforeApply = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Backup root path").setDesc("Vault-relative folder path used for versioned backups.").addText(
+    new import_obsidian4.Setting(containerEl).setName("Backup root path").setDesc("Vault-relative folder path used for versioned backups.").addText(
       (text) => text.setPlaceholder("Auto-Linker Backups").setValue(this.plugin.settings.backupRootPath).onChange(async (value) => {
         this.plugin.settings.backupRootPath = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("Backup retention count").setDesc("Keep only latest N backups (old backups are deleted automatically).").addText(
+    new import_obsidian4.Setting(containerEl).setName("Backup retention count").setDesc("Keep only latest N backups (old backups are deleted automatically).").addText(
       (text) => text.setPlaceholder("10").setValue(String(this.plugin.settings.backupRetentionCount)).onChange(async (value) => {
         this.plugin.settings.backupRetentionCount = parsePositiveInt(
           value,
@@ -1509,13 +1846,13 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
       })
     );
     containerEl.createEl("h3", { text: "MOC" });
-    new import_obsidian3.Setting(containerEl).setName("Generate MOC after apply").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Generate MOC after apply").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.generateMoc).onChange(async (value) => {
         this.plugin.settings.generateMoc = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("MOC file path").setDesc("Vault-relative markdown path.").addText(
+    new import_obsidian4.Setting(containerEl).setName("MOC file path").setDesc("Vault-relative markdown path.").addText(
       (text) => text.setPlaceholder("MOC/Selected Knowledge MOC.md").setValue(this.plugin.settings.mocPath).onChange(async (value) => {
         this.plugin.settings.mocPath = value.trim();
         await this.plugin.saveSettings();
@@ -1523,7 +1860,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian3.PluginSettingTab 
     );
   }
 };
-var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
+var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
     this.statusBarEl = null;
@@ -1564,6 +1901,16 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       id: "restore-latest-backup",
       name: "Auto-Linker: Restore from latest backup",
       callback: async () => this.restoreFromLatestBackup()
+    });
+    this.addCommand({
+      id: "cleanup-selected-frontmatter",
+      name: "Auto-Linker: Cleanup frontmatter properties for selected notes",
+      callback: async () => this.runPropertyCleanup(false)
+    });
+    this.addCommand({
+      id: "cleanup-selected-frontmatter-dry-run",
+      name: "Auto-Linker: Dry-run cleanup frontmatter properties for selected notes",
+      callback: async () => this.runPropertyCleanup(true)
     });
     this.addCommand({
       id: "refresh-ollama-models",
@@ -1667,6 +2014,30 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     if (!Number.isFinite(this.settings.backupRetentionCount)) {
       this.settings.backupRetentionCount = DEFAULT_SETTINGS.backupRetentionCount;
     }
+    if (!Number.isFinite(this.settings.semanticTopK)) {
+      this.settings.semanticTopK = DEFAULT_SETTINGS.semanticTopK;
+    }
+    if (!Number.isFinite(this.settings.semanticMinSimilarity)) {
+      this.settings.semanticMinSimilarity = DEFAULT_SETTINGS.semanticMinSimilarity;
+    }
+    if (!Number.isFinite(this.settings.semanticMaxChars)) {
+      this.settings.semanticMaxChars = DEFAULT_SETTINGS.semanticMaxChars;
+    }
+    if (!this.settings.semanticOllamaBaseUrl) {
+      this.settings.semanticOllamaBaseUrl = DEFAULT_SETTINGS.semanticOllamaBaseUrl;
+    }
+    if (!this.settings.semanticOllamaModel) {
+      this.settings.semanticOllamaModel = DEFAULT_SETTINGS.semanticOllamaModel;
+    }
+    if (typeof this.settings.propertyCleanupKeys !== "string") {
+      this.settings.propertyCleanupKeys = DEFAULT_SETTINGS.propertyCleanupKeys;
+    }
+    if (typeof this.settings.propertyCleanupPrefixes !== "string") {
+      this.settings.propertyCleanupPrefixes = DEFAULT_SETTINGS.propertyCleanupPrefixes;
+    }
+    if (typeof this.settings.propertyCleanupKeepKeys !== "string") {
+      this.settings.propertyCleanupKeepKeys = DEFAULT_SETTINGS.propertyCleanupKeepKeys;
+    }
   }
   async saveSettings() {
     await this.saveData(this.settings);
@@ -1679,7 +2050,36 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     if (!this.settings.showProgressNotices) {
       return;
     }
-    new import_obsidian3.Notice(text, timeout);
+    new import_obsidian4.Notice(text, timeout);
+  }
+  parseSimpleList(raw) {
+    return raw.split(/[\n,;]+/).map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);
+  }
+  getPropertyCleanupConfig() {
+    const removeKeys = new Set(this.parseSimpleList(this.settings.propertyCleanupKeys));
+    const removePrefixes = this.parseSimpleList(this.settings.propertyCleanupPrefixes);
+    const keepKeys = new Set(this.parseSimpleList(this.settings.propertyCleanupKeepKeys));
+    if (removeKeys.size === 0 && removePrefixes.length === 0) {
+      return void 0;
+    }
+    return {
+      removeKeys,
+      removePrefixes,
+      keepKeys
+    };
+  }
+  getCandidateLinkPathsForFile(filePath, selectedFiles, semanticNeighbors) {
+    var _a;
+    const fallback = selectedFiles.filter((candidate) => candidate.path !== filePath).map((candidate) => candidate.path);
+    if (!semanticNeighbors || !this.settings.semanticLinkingEnabled) {
+      return fallback;
+    }
+    const semantic = ((_a = semanticNeighbors.get(filePath)) != null ? _a : []).map((item) => item.path);
+    if (semantic.length === 0) {
+      return fallback;
+    }
+    const candidateLimit = Math.max(this.settings.maxLinked * 3, this.settings.semanticTopK);
+    return mergeUniqueStrings(semantic, fallback).slice(0, candidateLimit);
   }
   parseExcludedPatterns() {
     return this.settings.excludedFolderPatterns.split(/[\n,;]+/).map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);
@@ -1694,7 +2094,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
   }
   getAllFolders() {
     const folders = this.app.vault.getAllLoadedFiles().filter(
-      (entry) => entry instanceof import_obsidian3.TFolder && entry.path.trim().length > 0 && !this.isPathExcluded(entry.path)
+      (entry) => entry instanceof import_obsidian4.TFolder && entry.path.trim().length > 0 && !this.isPathExcluded(entry.path)
     );
     return folders.sort((a, b) => a.path.localeCompare(b.path));
   }
@@ -1703,13 +2103,13 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       return;
     }
     for (const child of folder.children) {
-      if (child instanceof import_obsidian3.TFile && child.extension === "md") {
+      if (child instanceof import_obsidian4.TFile && child.extension === "md") {
         if (!this.isPathExcluded(child.path)) {
           out.add(child.path);
         }
         continue;
       }
-      if (child instanceof import_obsidian3.TFolder && includeSubfolders) {
+      if (child instanceof import_obsidian4.TFolder && includeSubfolders) {
         this.collectFilesFromFolder(child, includeSubfolders, out);
       }
     }
@@ -1721,7 +2121,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
         continue;
       }
       const entry = this.app.vault.getAbstractFileByPath(path);
-      if (entry instanceof import_obsidian3.TFile && entry.extension === "md") {
+      if (entry instanceof import_obsidian4.TFile && entry.extension === "md") {
         selectedPaths.add(entry.path);
       }
     }
@@ -1730,7 +2130,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
         continue;
       }
       const entry = this.app.vault.getAbstractFileByPath(folderPath);
-      if (entry instanceof import_obsidian3.TFolder) {
+      if (entry instanceof import_obsidian4.TFolder) {
         this.collectFilesFromFolder(
           entry,
           this.settings.includeSubfoldersInFolderSelection,
@@ -1741,7 +2141,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     const out = [];
     for (const path of selectedPaths) {
       const entry = this.app.vault.getAbstractFileByPath(path);
-      if (entry instanceof import_obsidian3.TFile && entry.extension === "md") {
+      if (entry instanceof import_obsidian4.TFile && entry.extension === "md") {
         out.push(entry);
       }
     }
@@ -1787,8 +2187,195 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       5e3
     );
   }
+  async runPropertyCleanup(dryRun) {
+    var _a;
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length === 0) {
+      this.notice("No target notes selected. Open selector first.");
+      await this.openSelectionModal();
+      return;
+    }
+    const cleanupConfig = this.getPropertyCleanupConfig();
+    if (!cleanupConfig && !this.settings.cleanUnknownFrontmatter) {
+      this.notice(
+        "No cleanup rules configured. Set cleanup keys/prefixes or enable legacy key cleanup first.",
+        6e3
+      );
+      return;
+    }
+    let backupFolder = null;
+    if (!dryRun) {
+      const decision = await this.askBackupDecision();
+      if (!decision.proceed) {
+        this.notice("Cleanup cancelled.");
+        return;
+      }
+      if (decision.rememberAsDefault) {
+        this.settings.backupBeforeApply = decision.backupBeforeRun;
+        await this.saveSettings();
+      }
+      if (decision.backupBeforeRun) {
+        this.setStatus("creating backup...");
+        backupFolder = await this.createBackupForFiles(selectedFiles);
+        if (backupFolder) {
+          this.notice(`Backup completed before cleanup: ${backupFolder}`, 5e3);
+        }
+      }
+    }
+    const progressModal = new RunProgressModal(
+      this.app,
+      dryRun ? "Dry-run cleanup for selected frontmatter" : "Cleaning selected frontmatter"
+    );
+    progressModal.open();
+    const errors = [];
+    const events = [];
+    const startedAt = Date.now();
+    let cancelled = false;
+    let changedFiles = 0;
+    let removedKeysTotal = 0;
+    const dryRunReportRows = [];
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      if (progressModal.isCancelled()) {
+        cancelled = true;
+        break;
+      }
+      const file = selectedFiles[index];
+      progressModal.update({
+        stage: dryRun ? "Dry-run" : "Cleaning",
+        current: index + 1,
+        total: selectedFiles.length,
+        startedAt,
+        currentFile: file.path,
+        errors,
+        events
+      });
+      this.setStatus(
+        `${dryRun ? "dry-run cleanup" : "cleaning"} ${index + 1}/${selectedFiles.length}`
+      );
+      const cachedFrontmatter = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
+      if (!cachedFrontmatter || Object.keys(cachedFrontmatter).length === 0) {
+        events.push({ filePath: file.path, status: "ok", message: "no-frontmatter" });
+        continue;
+      }
+      try {
+        const previewCleaned = cleanupFrontmatterRecord(cachedFrontmatter, {
+          cleanUnknown: this.settings.cleanUnknownFrontmatter,
+          cleanupConfig
+        });
+        const previewRemoved = previewCleaned.removedKeys;
+        if (previewRemoved.length === 0) {
+          events.push({ filePath: file.path, status: "ok", message: "no-change" });
+          continue;
+        }
+        if (dryRun) {
+          changedFiles += 1;
+          removedKeysTotal += previewRemoved.length;
+          events.push({
+            filePath: file.path,
+            status: "ok",
+            message: `would remove ${previewRemoved.length}`
+          });
+          dryRunReportRows.push(`## ${file.path}`);
+          dryRunReportRows.push(
+            `- Remove keys (${previewRemoved.length}): ${previewRemoved.sort((a, b) => a.localeCompare(b)).join(", ")}`
+          );
+          dryRunReportRows.push(
+            `- Before keys: ${Object.keys(cachedFrontmatter).sort((a, b) => a.localeCompare(b)).join(", ")}`
+          );
+          dryRunReportRows.push(
+            `- After keys: ${Object.keys(previewCleaned.next).sort((a, b) => a.localeCompare(b)).join(", ")}`
+          );
+          dryRunReportRows.push("");
+          continue;
+        }
+        let removedForFile = 0;
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+          const current = frontmatter;
+          const cleaned = cleanupFrontmatterRecord(current, {
+            cleanUnknown: this.settings.cleanUnknownFrontmatter,
+            cleanupConfig
+          });
+          removedForFile = cleaned.removedKeys.length;
+          if (removedForFile === 0) {
+            return;
+          }
+          for (const key of Object.keys(current)) {
+            delete current[key];
+          }
+          for (const [key, value] of Object.entries(cleaned.next)) {
+            current[key] = value;
+          }
+        });
+        changedFiles += 1;
+        removedKeysTotal += removedForFile;
+        events.push({
+          filePath: file.path,
+          status: "ok",
+          message: `removed ${removedForFile}`
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown cleanup error";
+        errors.push({ filePath: file.path, message });
+        events.push({ filePath: file.path, status: "error", message });
+      }
+    }
+    progressModal.setFinished(
+      cancelled ? `${dryRun ? "Dry-run cleanup" : "Cleanup"} stopped by user.` : `${dryRun ? "Dry-run cleanup" : "Cleanup"} complete: ${changedFiles} changed of ${selectedFiles.length}`
+    );
+    progressModal.close();
+    this.setStatus(
+      cancelled ? `${dryRun ? "dry-run cleanup" : "cleanup"} stopped (${changedFiles}/${selectedFiles.length})` : `${dryRun ? "dry-run cleanup" : "cleanup"} done (${changedFiles}/${selectedFiles.length})`
+    );
+    let reportPath = null;
+    if (dryRun) {
+      const removeKeys = cleanupConfig ? [...cleanupConfig.removeKeys].sort((a, b) => a.localeCompare(b)).join(", ") : "(none)";
+      const removePrefixes = cleanupConfig ? cleanupConfig.removePrefixes.join(", ") || "(none)" : "(none)";
+      const keepKeys = cleanupConfig ? [...cleanupConfig.keepKeys].sort((a, b) => a.localeCompare(b)).join(", ") : "(none)";
+      const lines = [];
+      lines.push("# Auto-Linker Cleanup Dry-Run Report");
+      lines.push("");
+      lines.push(`Generated: ${(/* @__PURE__ */ new Date()).toISOString()}`);
+      lines.push(`Selected files: ${selectedFiles.length}`);
+      lines.push(`Would change files: ${changedFiles}`);
+      lines.push(`Would remove keys total: ${removedKeysTotal}`);
+      lines.push(`Legacy cleanup enabled: ${this.settings.cleanUnknownFrontmatter}`);
+      lines.push(`Cleanup keys: ${removeKeys || "(none)"}`);
+      lines.push(`Cleanup prefixes: ${removePrefixes}`);
+      lines.push(`Keep keys: ${keepKeys || "(none)"}`);
+      lines.push("");
+      if (dryRunReportRows.length === 0) {
+        lines.push("No files would change.");
+      } else {
+        lines.push(...dryRunReportRows);
+      }
+      try {
+        reportPath = (0, import_obsidian4.normalizePath)(
+          `Auto-Linker Reports/cleanup-dry-run-${formatBackupStamp(/* @__PURE__ */ new Date())}.md`
+        );
+        await this.ensureParentFolder(reportPath);
+        await this.app.vault.adapter.write(
+          reportPath,
+          `${lines.join("\n").trim()}
+`
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown dry-run report error";
+        this.notice(`Dry-run report write failed: ${message}`, 6e3);
+      }
+    }
+    const summary = `${dryRun ? "Dry-run cleanup" : "Cleanup"} finished. Changed files=${changedFiles}, removed keys=${removedKeysTotal}, errors=${errors.length}${cancelled ? " (stopped early)" : ""}.`;
+    if (dryRun && reportPath) {
+      this.notice(`${summary} Report: ${reportPath}`, 8e3);
+      return;
+    }
+    if (backupFolder) {
+      this.notice(`${summary} Backup: ${backupFolder}`, 7e3);
+    } else {
+      this.notice(summary, 6e3);
+    }
+  }
   async runAnalysis() {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
       this.notice("No target notes selected. Open selector first.");
@@ -1827,6 +2414,35 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
         this.notice(`Backup completed before analysis: ${backupFolder}`, 5e3);
       }
     }
+    let semanticNeighbors = /* @__PURE__ */ new Map();
+    if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
+      this.setStatus("building semantic candidates...");
+      try {
+        const semanticResult = await buildSemanticNeighborMap(
+          this.app,
+          selectedFiles,
+          this.settings
+        );
+        semanticNeighbors = semanticResult.neighborMap;
+        const neighborCount = [...semanticResult.neighborMap.values()].reduce(
+          (sum, items) => sum + items.length,
+          0
+        );
+        this.notice(
+          `Semantic candidates ready: vectors=${semanticResult.generatedVectors}, edges=${neighborCount}, model=${semanticResult.model}.`,
+          5e3
+        );
+        if (semanticResult.errors.length > 0) {
+          this.notice(
+            `Semantic embedding had ${semanticResult.errors.length} issue(s). Falling back per file where needed.`,
+            6e3
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown semantic embedding error";
+        this.notice(`Semantic candidate ranking skipped: ${message}`, 6e3);
+      }
+    }
     const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
     progressModal.open();
     const selectedPathSet = new Set(selectedFiles.map((file) => file.path));
@@ -1856,7 +2472,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
         const request = {
           sourcePath: file.path,
           sourceText: await this.app.vault.cachedRead(file),
-          candidateLinkPaths: selectedFiles.filter((candidate) => candidate.path !== file.path).map((candidate) => candidate.path),
+          candidateLinkPaths: this.getCandidateLinkPathsForFile(
+            file.path,
+            selectedFiles,
+            semanticNeighbors
+          ),
           maxTags: this.settings.maxTags,
           maxLinked: this.settings.maxLinked,
           analyzeTags: this.settings.analyzeTags,
@@ -1916,12 +2536,17 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
         if (!managedFrontmatterChanged(existingValidated, normalizedProposed)) {
           continue;
         }
+        const semanticCandidates = ((_g = semanticNeighbors.get(file.path)) != null ? _g : []).map((item) => ({
+          path: item.path,
+          similarity: item.similarity
+        }));
         suggestions.push({
           file,
           existing: existingValidated,
           proposed: normalizedProposed,
-          reasons: (_g = outcome.proposal.reasons) != null ? _g : {},
-          analysis: outcome.meta
+          reasons: (_h = outcome.proposal.reasons) != null ? _h : {},
+          analysis: outcome.meta,
+          semanticCandidates
         });
         events.push({
           filePath: file.path,
@@ -2004,6 +2629,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     const errors = [];
     const events = [];
     const startedAt = Date.now();
+    const cleanupConfig = this.settings.propertyCleanupEnabled ? this.getPropertyCleanupConfig() : void 0;
     let cancelled = false;
     for (let index = 0; index < suggestions.length; index += 1) {
       if (progressModal.isCancelled()) {
@@ -2028,7 +2654,8 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
             const current = frontmatter;
             const next = buildNextFrontmatter(current, suggestion.proposed, {
               cleanUnknown: this.settings.cleanUnknownFrontmatter,
-              sortArrays: this.settings.sortArrays
+              sortArrays: this.settings.sortArrays,
+              cleanupConfig
             });
             for (const key of Object.keys(current)) {
               delete current[key];
@@ -2072,18 +2699,18 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     if (uniquePaths.length === 0) {
       return null;
     }
-    const backupRoot = (0, import_obsidian3.normalizePath)(this.settings.backupRootPath);
-    const backupFolder = (0, import_obsidian3.normalizePath)(
+    const backupRoot = (0, import_obsidian4.normalizePath)(this.settings.backupRootPath);
+    const backupFolder = (0, import_obsidian4.normalizePath)(
       `${backupRoot}/${formatBackupStamp(/* @__PURE__ */ new Date())}`
     );
     await this.ensureFolderPath(backupFolder);
     for (const path of uniquePaths) {
       const entry = this.app.vault.getAbstractFileByPath(path);
-      if (!(entry instanceof import_obsidian3.TFile)) {
+      if (!(entry instanceof import_obsidian4.TFile)) {
         continue;
       }
       const content = await this.app.vault.cachedRead(entry);
-      const outputPath = (0, import_obsidian3.normalizePath)(`${backupFolder}/${path}`);
+      const outputPath = (0, import_obsidian4.normalizePath)(`${backupFolder}/${path}`);
       await this.ensureParentFolder(outputPath);
       await this.app.vault.adapter.write(outputPath, content);
     }
@@ -2093,7 +2720,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       fileCount: uniquePaths.length,
       files: uniquePaths
     };
-    const manifestPath = (0, import_obsidian3.normalizePath)(`${backupFolder}/manifest.json`);
+    const manifestPath = (0, import_obsidian4.normalizePath)(`${backupFolder}/manifest.json`);
     await this.app.vault.adapter.write(manifestPath, JSON.stringify(manifest, null, 2));
     await this.pruneOldBackups();
     return backupFolder;
@@ -2103,7 +2730,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     if (!Number.isFinite(keepCount) || keepCount < 1) {
       return;
     }
-    const backupRoot = (0, import_obsidian3.normalizePath)(this.settings.backupRootPath);
+    const backupRoot = (0, import_obsidian4.normalizePath)(this.settings.backupRootPath);
     const exists = await this.app.vault.adapter.exists(backupRoot);
     if (!exists) {
       return;
@@ -2120,7 +2747,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
   }
   async getLatestBackupFolder() {
     var _a;
-    const backupRoot = (0, import_obsidian3.normalizePath)(this.settings.backupRootPath);
+    const backupRoot = (0, import_obsidian4.normalizePath)(this.settings.backupRootPath);
     const exists = await this.app.vault.adapter.exists(backupRoot);
     if (!exists) {
       return null;
@@ -2138,7 +2765,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       this.notice("No backup folder found.");
       return;
     }
-    const manifestPath = (0, import_obsidian3.normalizePath)(`${latestBackupFolder}/manifest.json`);
+    const manifestPath = (0, import_obsidian4.normalizePath)(`${latestBackupFolder}/manifest.json`);
     const manifestExists = await this.app.vault.adapter.exists(manifestPath);
     if (!manifestExists) {
       this.notice(`Backup manifest is missing: ${manifestPath}`);
@@ -2152,7 +2779,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     }
     let restoredCount = 0;
     for (const originalPath of manifest.files) {
-      const backupFilePath = (0, import_obsidian3.normalizePath)(`${latestBackupFolder}/${originalPath}`);
+      const backupFilePath = (0, import_obsidian4.normalizePath)(`${latestBackupFolder}/${originalPath}`);
       const exists = await this.app.vault.adapter.exists(backupFilePath);
       if (!exists) {
         continue;
@@ -2160,7 +2787,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       const content = await this.app.vault.adapter.read(backupFilePath);
       await this.ensureParentFolder(originalPath);
       const current = this.app.vault.getAbstractFileByPath(originalPath);
-      if (current instanceof import_obsidian3.TFile) {
+      if (current instanceof import_obsidian4.TFile) {
         await this.app.vault.modify(current, content);
       } else {
         await this.app.vault.create(originalPath, content);
@@ -2223,12 +2850,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
       }
       lines.push("");
     }
-    const outputPath = (0, import_obsidian3.normalizePath)(this.settings.mocPath);
+    const outputPath = (0, import_obsidian4.normalizePath)(this.settings.mocPath);
     await this.ensureParentFolder(outputPath);
     const existing = this.app.vault.getAbstractFileByPath(outputPath);
     const content = `${lines.join("\n").trim()}
 `;
-    if (existing instanceof import_obsidian3.TFile) {
+    if (existing instanceof import_obsidian4.TFile) {
       await this.app.vault.modify(existing, content);
     } else {
       await this.app.vault.create(outputPath, content);
@@ -2236,7 +2863,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     this.notice(`MOC updated: ${outputPath}`);
   }
   async ensureFolderPath(folderPath) {
-    const normalized = (0, import_obsidian3.normalizePath)(folderPath);
+    const normalized = (0, import_obsidian4.normalizePath)(folderPath);
     if (normalized.length === 0) {
       return;
     }
@@ -2245,17 +2872,17 @@ var KnowledgeWeaverPlugin = class extends import_obsidian3.Plugin {
     for (const part of parts) {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
       const existing = this.app.vault.getAbstractFileByPath(currentPath);
-      if (existing instanceof import_obsidian3.TFolder) {
+      if (existing instanceof import_obsidian4.TFolder) {
         continue;
       }
-      if (existing instanceof import_obsidian3.TFile) {
+      if (existing instanceof import_obsidian4.TFile) {
         continue;
       }
       await this.app.vault.createFolder(currentPath);
     }
   }
   async ensureParentFolder(path) {
-    const normalized = (0, import_obsidian3.normalizePath)(path);
+    const normalized = (0, import_obsidian4.normalizePath)(path);
     const chunks = normalized.split("/");
     chunks.pop();
     if (chunks.length === 0) {

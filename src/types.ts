@@ -29,12 +29,18 @@ export interface ManagedFrontmatter {
   index?: string;
 }
 
+export interface SemanticCandidatePreview {
+  path: string;
+  similarity: number;
+}
+
 export interface NoteSuggestion {
   file: TFile;
   existing: ManagedFrontmatter;
   proposed: ManagedFrontmatter;
   reasons: FieldReasons;
   analysis: SuggestionAnalysisMeta;
+  semanticCandidates?: SemanticCandidatePreview[];
 }
 
 export interface AnalyzeRequest {
@@ -125,6 +131,16 @@ export interface KnowledgeWeaverSettings {
   analyzeIndex: boolean;
   maxTags: number;
   maxLinked: number;
+  semanticLinkingEnabled: boolean;
+  semanticOllamaBaseUrl: string;
+  semanticOllamaModel: string;
+  semanticTopK: number;
+  semanticMinSimilarity: number;
+  semanticMaxChars: number;
+  propertyCleanupEnabled: boolean;
+  propertyCleanupKeys: string;
+  propertyCleanupPrefixes: string;
+  propertyCleanupKeepKeys: string;
   targetFilePaths: string[];
   targetFolderPaths: string[];
   includeSubfoldersInFolderSelection: boolean;

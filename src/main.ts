@@ -11,11 +11,13 @@ import {
 } from "obsidian";
 import {
   buildNextFrontmatter,
+  cleanupFrontmatterRecord,
   extractManagedFrontmatter,
   managedFrontmatterChanged,
   normalizeLinked,
   normalizeManagedFrontmatter,
   normalizeTags,
+  type FrontmatterCleanupConfig,
 } from "./frontmatter";
 import {
   analyzeWithFallback,
@@ -24,6 +26,7 @@ import {
   getProviderModelLabel,
   isOllamaModelAnalyzable,
 } from "./providers";
+import { buildSemanticNeighborMap, type SemanticNeighbor } from "./semantic";
 import type {
   AnalysisRunSummary,
   BackupDecision,
@@ -35,6 +38,7 @@ import type {
   OllamaModelOption,
   ProgressErrorItem,
   ProviderId,
+  SemanticCandidatePreview,
 } from "./types";
 
 const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
@@ -62,6 +66,16 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   analyzeIndex: true,
   maxTags: 8,
   maxLinked: 8,
+  semanticLinkingEnabled: false,
+  semanticOllamaBaseUrl: "http://127.0.0.1:11434",
+  semanticOllamaModel: "nomic-embed-text",
+  semanticTopK: 24,
+  semanticMinSimilarity: 0.25,
+  semanticMaxChars: 5000,
+  propertyCleanupEnabled: false,
+  propertyCleanupKeys: "related",
+  propertyCleanupPrefixes: "",
+  propertyCleanupKeepKeys: "date created,date updated,date modified,created,updated,modified",
   targetFilePaths: [],
   targetFolderPaths: [],
   includeSubfoldersInFolderSelection: true,
@@ -106,6 +120,11 @@ function formatDurationMs(ms: number): string {
     return `${ms}ms`;
   }
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatSimilarity(score: number): string {
+  const clamped = Math.max(-1, Math.min(1, score));
+  return `${(clamped * 100).toFixed(1)}%`;
 }
 
 function formatBackupStamp(date: Date): string {
@@ -709,6 +728,7 @@ class SuggestionPreviewModal extends Modal {
         text: `Suggest source: ${suggestion.analysis.provider}/${suggestion.analysis.model} | ${formatDurationMs(suggestion.analysis.elapsedMs)}${suggestion.analysis.usedFallback ? " | fallback" : ""}`,
       });
 
+      this.renderSemanticCandidates(section, suggestion.semanticCandidates ?? []);
       this.renderFieldChange(section, "tags", suggestion);
       this.renderFieldChange(section, "topic", suggestion);
       this.renderFieldChange(section, "linked", suggestion);
@@ -759,6 +779,33 @@ class SuggestionPreviewModal extends Modal {
     const reason = suggestion.reasons[key as keyof FieldReasons];
     if (reason) {
       row.createEl("div", { text: `Reason: ${reason}` });
+    }
+  }
+
+  private renderSemanticCandidates(
+    parent: HTMLElement,
+    candidates: SemanticCandidatePreview[],
+  ): void {
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const section = parent.createDiv();
+    section.style.marginBottom = "8px";
+    section.createEl("strong", { text: "Semantic candidates" });
+
+    const list = section.createDiv();
+    const previewCount = Math.min(candidates.length, 8);
+    for (const item of candidates.slice(0, previewCount)) {
+      list.createEl("div", {
+        text: `- ${item.path} (${formatSimilarity(item.similarity)})`,
+      });
+    }
+
+    if (candidates.length > previewCount) {
+      list.createEl("small", {
+        text: `...and ${candidates.length - previewCount} more`,
+      });
     }
   }
 }
@@ -1130,6 +1177,94 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           }),
       );
 
+    containerEl.createEl("h3", { text: "Semantic linking (Ollama embeddings)" });
+
+    new Setting(containerEl)
+      .setName("Enable semantic candidate ranking")
+      .setDesc(
+        "Use local Ollama embeddings to rank likely related notes before AI linked suggestion.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.semanticLinkingEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.semanticLinkingEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Embedding Ollama base URL")
+      .addText((text) =>
+        text
+          .setPlaceholder("http://127.0.0.1:11434")
+          .setValue(this.plugin.settings.semanticOllamaBaseUrl)
+          .onChange(async (value) => {
+            this.plugin.settings.semanticOllamaBaseUrl = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Embedding model")
+      .setDesc("For example: nomic-embed-text or bge-m3")
+      .addText((text) =>
+        text
+          .setPlaceholder("nomic-embed-text")
+          .setValue(this.plugin.settings.semanticOllamaModel)
+          .onChange(async (value) => {
+            this.plugin.settings.semanticOllamaModel = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Semantic top-k candidates")
+      .addText((text) =>
+        text
+          .setPlaceholder("24")
+          .setValue(String(this.plugin.settings.semanticTopK))
+          .onChange(async (value) => {
+            this.plugin.settings.semanticTopK = parsePositiveInt(
+              value,
+              this.plugin.settings.semanticTopK,
+            );
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Semantic min similarity")
+      .setDesc("Range: 0.0 to 1.0")
+      .addText((text) =>
+        text
+          .setPlaceholder("0.25")
+          .setValue(String(this.plugin.settings.semanticMinSimilarity))
+          .onChange(async (value) => {
+            const parsed = Number.parseFloat(value);
+            if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
+              this.plugin.settings.semanticMinSimilarity = parsed;
+              await this.plugin.saveSettings();
+            }
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Semantic source max chars")
+      .setDesc("Trim note text before embedding to keep local runs fast.")
+      .addText((text) =>
+        text
+          .setPlaceholder("5000")
+          .setValue(String(this.plugin.settings.semanticMaxChars))
+          .onChange(async (value) => {
+            this.plugin.settings.semanticMaxChars = parsePositiveInt(
+              value,
+              this.plugin.settings.semanticMaxChars,
+            );
+            await this.plugin.saveSettings();
+          }),
+      );
+
     new Setting(containerEl)
       .setName("Remove legacy AI-prefixed keys")
       .setDesc(
@@ -1142,6 +1277,65 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
             this.plugin.settings.cleanUnknownFrontmatter = value;
             await this.plugin.saveSettings();
           }),
+      );
+
+    containerEl.createEl("h3", { text: "Property cleanup" });
+
+    new Setting(containerEl)
+      .setName("Enable cleanup rules during apply")
+      .setDesc("When applying AI suggestions, also remove frontmatter keys by rules below.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.propertyCleanupEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.propertyCleanupEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Cleanup exact keys")
+      .setDesc("Comma/newline separated keys. Example: related, linked_context")
+      .addTextArea((text) =>
+        text
+          .setPlaceholder("related")
+          .setValue(this.plugin.settings.propertyCleanupKeys)
+          .onChange(async (value) => {
+            this.plugin.settings.propertyCleanupKeys = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Cleanup key prefixes")
+      .setDesc("Comma/newline separated prefixes. Example: temp_, draft_")
+      .addTextArea((text) =>
+        text
+          .setPlaceholder("temp_,draft_")
+          .setValue(this.plugin.settings.propertyCleanupPrefixes)
+          .onChange(async (value) => {
+            this.plugin.settings.propertyCleanupPrefixes = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Never remove these keys")
+      .setDesc("Comma/newline separated keys that override cleanup rules.")
+      .addTextArea((text) =>
+        text
+          .setPlaceholder("date created,date updated")
+          .setValue(this.plugin.settings.propertyCleanupKeepKeys)
+          .onChange(async (value) => {
+            this.plugin.settings.propertyCleanupKeepKeys = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Run cleanup command")
+      .setDesc(
+        "Use command palette: apply='Auto-Linker: Cleanup frontmatter properties for selected notes', preview='Auto-Linker: Dry-run cleanup frontmatter properties for selected notes'.",
       );
 
     new Setting(containerEl)
@@ -1324,6 +1518,18 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "cleanup-selected-frontmatter",
+      name: "Auto-Linker: Cleanup frontmatter properties for selected notes",
+      callback: async () => this.runPropertyCleanup(false),
+    });
+
+    this.addCommand({
+      id: "cleanup-selected-frontmatter-dry-run",
+      name: "Auto-Linker: Dry-run cleanup frontmatter properties for selected notes",
+      callback: async () => this.runPropertyCleanup(true),
+    });
+
+    this.addCommand({
       id: "refresh-ollama-models",
       name: "Auto-Linker: Refresh Ollama model detection",
       callback: async () => {
@@ -1448,6 +1654,30 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!Number.isFinite(this.settings.backupRetentionCount)) {
       this.settings.backupRetentionCount = DEFAULT_SETTINGS.backupRetentionCount;
     }
+    if (!Number.isFinite(this.settings.semanticTopK)) {
+      this.settings.semanticTopK = DEFAULT_SETTINGS.semanticTopK;
+    }
+    if (!Number.isFinite(this.settings.semanticMinSimilarity)) {
+      this.settings.semanticMinSimilarity = DEFAULT_SETTINGS.semanticMinSimilarity;
+    }
+    if (!Number.isFinite(this.settings.semanticMaxChars)) {
+      this.settings.semanticMaxChars = DEFAULT_SETTINGS.semanticMaxChars;
+    }
+    if (!this.settings.semanticOllamaBaseUrl) {
+      this.settings.semanticOllamaBaseUrl = DEFAULT_SETTINGS.semanticOllamaBaseUrl;
+    }
+    if (!this.settings.semanticOllamaModel) {
+      this.settings.semanticOllamaModel = DEFAULT_SETTINGS.semanticOllamaModel;
+    }
+    if (typeof this.settings.propertyCleanupKeys !== "string") {
+      this.settings.propertyCleanupKeys = DEFAULT_SETTINGS.propertyCleanupKeys;
+    }
+    if (typeof this.settings.propertyCleanupPrefixes !== "string") {
+      this.settings.propertyCleanupPrefixes = DEFAULT_SETTINGS.propertyCleanupPrefixes;
+    }
+    if (typeof this.settings.propertyCleanupKeepKeys !== "string") {
+      this.settings.propertyCleanupKeepKeys = DEFAULT_SETTINGS.propertyCleanupKeepKeys;
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -1463,6 +1693,51 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       return;
     }
     new Notice(text, timeout);
+  }
+
+  private parseSimpleList(raw: string): string[] {
+    return raw
+      .split(/[\n,;]+/)
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => item.length > 0);
+  }
+
+  private getPropertyCleanupConfig(): FrontmatterCleanupConfig | undefined {
+    const removeKeys = new Set(this.parseSimpleList(this.settings.propertyCleanupKeys));
+    const removePrefixes = this.parseSimpleList(this.settings.propertyCleanupPrefixes);
+    const keepKeys = new Set(this.parseSimpleList(this.settings.propertyCleanupKeepKeys));
+
+    if (removeKeys.size === 0 && removePrefixes.length === 0) {
+      return undefined;
+    }
+
+    return {
+      removeKeys,
+      removePrefixes,
+      keepKeys,
+    };
+  }
+
+  private getCandidateLinkPathsForFile(
+    filePath: string,
+    selectedFiles: TFile[],
+    semanticNeighbors?: Map<string, SemanticNeighbor[]>,
+  ): string[] {
+    const fallback = selectedFiles
+      .filter((candidate) => candidate.path !== filePath)
+      .map((candidate) => candidate.path);
+
+    if (!semanticNeighbors || !this.settings.semanticLinkingEnabled) {
+      return fallback;
+    }
+
+    const semantic = (semanticNeighbors.get(filePath) ?? []).map((item) => item.path);
+    if (semantic.length === 0) {
+      return fallback;
+    }
+
+    const candidateLimit = Math.max(this.settings.maxLinked * 3, this.settings.semanticTopK);
+    return mergeUniqueStrings(semantic, fallback).slice(0, candidateLimit);
   }
 
   private parseExcludedPatterns(): string[] {
@@ -1609,6 +1884,239 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     );
   }
 
+  private async runPropertyCleanup(dryRun: boolean): Promise<void> {
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length === 0) {
+      this.notice("No target notes selected. Open selector first.");
+      await this.openSelectionModal();
+      return;
+    }
+
+    const cleanupConfig = this.getPropertyCleanupConfig();
+    if (!cleanupConfig && !this.settings.cleanUnknownFrontmatter) {
+      this.notice(
+        "No cleanup rules configured. Set cleanup keys/prefixes or enable legacy key cleanup first.",
+        6000,
+      );
+      return;
+    }
+
+    let backupFolder: string | null = null;
+    if (!dryRun) {
+      const decision = await this.askBackupDecision();
+      if (!decision.proceed) {
+        this.notice("Cleanup cancelled.");
+        return;
+      }
+
+      if (decision.rememberAsDefault) {
+        this.settings.backupBeforeApply = decision.backupBeforeRun;
+        await this.saveSettings();
+      }
+
+      if (decision.backupBeforeRun) {
+        this.setStatus("creating backup...");
+        backupFolder = await this.createBackupForFiles(selectedFiles);
+        if (backupFolder) {
+          this.notice(`Backup completed before cleanup: ${backupFolder}`, 5000);
+        }
+      }
+    }
+
+    const progressModal = new RunProgressModal(
+      this.app,
+      dryRun
+        ? "Dry-run cleanup for selected frontmatter"
+        : "Cleaning selected frontmatter",
+    );
+    progressModal.open();
+
+    const errors: ProgressErrorItem[] = [];
+    const events: ProgressEventItem[] = [];
+    const startedAt = Date.now();
+    let cancelled = false;
+    let changedFiles = 0;
+    let removedKeysTotal = 0;
+    const dryRunReportRows: string[] = [];
+
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      if (progressModal.isCancelled()) {
+        cancelled = true;
+        break;
+      }
+
+      const file = selectedFiles[index];
+      progressModal.update({
+        stage: dryRun ? "Dry-run" : "Cleaning",
+        current: index + 1,
+        total: selectedFiles.length,
+        startedAt,
+        currentFile: file.path,
+        errors,
+        events,
+      });
+      this.setStatus(
+        `${dryRun ? "dry-run cleanup" : "cleaning"} ${index + 1}/${selectedFiles.length}`,
+      );
+
+      const cachedFrontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter as
+        | Record<string, unknown>
+        | undefined;
+      if (!cachedFrontmatter || Object.keys(cachedFrontmatter).length === 0) {
+        events.push({ filePath: file.path, status: "ok", message: "no-frontmatter" });
+        continue;
+      }
+
+      try {
+        const previewCleaned = cleanupFrontmatterRecord(cachedFrontmatter, {
+          cleanUnknown: this.settings.cleanUnknownFrontmatter,
+          cleanupConfig,
+        });
+        const previewRemoved = previewCleaned.removedKeys;
+
+        if (previewRemoved.length === 0) {
+          events.push({ filePath: file.path, status: "ok", message: "no-change" });
+          continue;
+        }
+
+        if (dryRun) {
+          changedFiles += 1;
+          removedKeysTotal += previewRemoved.length;
+          events.push({
+            filePath: file.path,
+            status: "ok",
+            message: `would remove ${previewRemoved.length}`,
+          });
+          dryRunReportRows.push(`## ${file.path}`);
+          dryRunReportRows.push(
+            `- Remove keys (${previewRemoved.length}): ${previewRemoved
+              .sort((a, b) => a.localeCompare(b))
+              .join(", ")}`,
+          );
+          dryRunReportRows.push(
+            `- Before keys: ${Object.keys(cachedFrontmatter)
+              .sort((a, b) => a.localeCompare(b))
+              .join(", ")}`,
+          );
+          dryRunReportRows.push(
+            `- After keys: ${Object.keys(previewCleaned.next)
+              .sort((a, b) => a.localeCompare(b))
+              .join(", ")}`,
+          );
+          dryRunReportRows.push("");
+          continue;
+        }
+
+        let removedForFile = 0;
+
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+          const current = frontmatter as Record<string, unknown>;
+          const cleaned = cleanupFrontmatterRecord(current, {
+            cleanUnknown: this.settings.cleanUnknownFrontmatter,
+            cleanupConfig,
+          });
+
+          removedForFile = cleaned.removedKeys.length;
+          if (removedForFile === 0) {
+            return;
+          }
+
+          for (const key of Object.keys(current)) {
+            delete current[key];
+          }
+          for (const [key, value] of Object.entries(cleaned.next)) {
+            current[key] = value;
+          }
+        });
+
+        changedFiles += 1;
+        removedKeysTotal += removedForFile;
+        events.push({
+          filePath: file.path,
+          status: "ok",
+          message: `removed ${removedForFile}`,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown cleanup error";
+        errors.push({ filePath: file.path, message });
+        events.push({ filePath: file.path, status: "error", message });
+      }
+    }
+
+    progressModal.setFinished(
+      cancelled
+        ? `${dryRun ? "Dry-run cleanup" : "Cleanup"} stopped by user.`
+        : `${dryRun ? "Dry-run cleanup" : "Cleanup"} complete: ${changedFiles} changed of ${selectedFiles.length}`,
+    );
+    progressModal.close();
+
+    this.setStatus(
+      cancelled
+        ? `${dryRun ? "dry-run cleanup" : "cleanup"} stopped (${changedFiles}/${selectedFiles.length})`
+        : `${dryRun ? "dry-run cleanup" : "cleanup"} done (${changedFiles}/${selectedFiles.length})`,
+    );
+
+    let reportPath: string | null = null;
+    if (dryRun) {
+      const removeKeys = cleanupConfig
+        ? [...cleanupConfig.removeKeys].sort((a, b) => a.localeCompare(b)).join(", ")
+        : "(none)";
+      const removePrefixes = cleanupConfig
+        ? cleanupConfig.removePrefixes.join(", ") || "(none)"
+        : "(none)";
+      const keepKeys = cleanupConfig
+        ? [...cleanupConfig.keepKeys].sort((a, b) => a.localeCompare(b)).join(", ")
+        : "(none)";
+
+      const lines: string[] = [];
+      lines.push("# Auto-Linker Cleanup Dry-Run Report");
+      lines.push("");
+      lines.push(`Generated: ${new Date().toISOString()}`);
+      lines.push(`Selected files: ${selectedFiles.length}`);
+      lines.push(`Would change files: ${changedFiles}`);
+      lines.push(`Would remove keys total: ${removedKeysTotal}`);
+      lines.push(`Legacy cleanup enabled: ${this.settings.cleanUnknownFrontmatter}`);
+      lines.push(`Cleanup keys: ${removeKeys || "(none)"}`);
+      lines.push(`Cleanup prefixes: ${removePrefixes}`);
+      lines.push(`Keep keys: ${keepKeys || "(none)"}`);
+      lines.push("");
+
+      if (dryRunReportRows.length === 0) {
+        lines.push("No files would change.");
+      } else {
+        lines.push(...dryRunReportRows);
+      }
+
+      try {
+        reportPath = normalizePath(
+          `Auto-Linker Reports/cleanup-dry-run-${formatBackupStamp(new Date())}.md`,
+        );
+        await this.ensureParentFolder(reportPath);
+        await this.app.vault.adapter.write(
+          reportPath,
+          `${lines.join("\n").trim()}\n`,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown dry-run report error";
+        this.notice(`Dry-run report write failed: ${message}`, 6000);
+      }
+    }
+
+    const summary = `${dryRun ? "Dry-run cleanup" : "Cleanup"} finished. Changed files=${changedFiles}, removed keys=${removedKeysTotal}, errors=${errors.length}${cancelled ? " (stopped early)" : ""}.`;
+
+    if (dryRun && reportPath) {
+      this.notice(`${summary} Report: ${reportPath}`, 8000);
+      return;
+    }
+
+    if (backupFolder) {
+      this.notice(`${summary} Backup: ${backupFolder}`, 7000);
+    } else {
+      this.notice(summary, 6000);
+    }
+  }
+
   private async runAnalysis(): Promise<void> {
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
@@ -1655,6 +2163,40 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
     }
 
+    let semanticNeighbors = new Map<string, SemanticNeighbor[]>();
+    if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
+      this.setStatus("building semantic candidates...");
+      try {
+        const semanticResult = await buildSemanticNeighborMap(
+          this.app,
+          selectedFiles,
+          this.settings,
+        );
+        semanticNeighbors = semanticResult.neighborMap;
+
+        const neighborCount = [...semanticResult.neighborMap.values()].reduce(
+          (sum, items) => sum + items.length,
+          0,
+        );
+
+        this.notice(
+          `Semantic candidates ready: vectors=${semanticResult.generatedVectors}, edges=${neighborCount}, model=${semanticResult.model}.`,
+          5000,
+        );
+
+        if (semanticResult.errors.length > 0) {
+          this.notice(
+            `Semantic embedding had ${semanticResult.errors.length} issue(s). Falling back per file where needed.`,
+            6000,
+          );
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown semantic embedding error";
+        this.notice(`Semantic candidate ranking skipped: ${message}`, 6000);
+      }
+    }
+
     const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
     progressModal.open();
 
@@ -1688,9 +2230,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         const request = {
           sourcePath: file.path,
           sourceText: await this.app.vault.cachedRead(file),
-          candidateLinkPaths: selectedFiles
-            .filter((candidate) => candidate.path !== file.path)
-            .map((candidate) => candidate.path),
+          candidateLinkPaths: this.getCandidateLinkPathsForFile(
+            file.path,
+            selectedFiles,
+            semanticNeighbors,
+          ),
           maxTags: this.settings.maxTags,
           maxLinked: this.settings.maxLinked,
           analyzeTags: this.settings.analyzeTags,
@@ -1763,12 +2307,20 @@ export default class KnowledgeWeaverPlugin extends Plugin {
           continue;
         }
 
+        const semanticCandidates: SemanticCandidatePreview[] = (
+          semanticNeighbors.get(file.path) ?? []
+        ).map((item) => ({
+          path: item.path,
+          similarity: item.similarity,
+        }));
+
         suggestions.push({
           file,
           existing: existingValidated,
           proposed: normalizedProposed,
           reasons: outcome.proposal.reasons ?? {},
           analysis: outcome.meta,
+          semanticCandidates,
         });
 
         events.push({
@@ -1871,6 +2423,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     const errors: ProgressErrorItem[] = [];
     const events: ProgressEventItem[] = [];
     const startedAt = Date.now();
+    const cleanupConfig = this.settings.propertyCleanupEnabled
+      ? this.getPropertyCleanupConfig()
+      : undefined;
     let cancelled = false;
 
     for (let index = 0; index < suggestions.length; index += 1) {
@@ -1899,6 +2454,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
             const next = buildNextFrontmatter(current, suggestion.proposed, {
               cleanUnknown: this.settings.cleanUnknownFrontmatter,
               sortArrays: this.settings.sortArrays,
+              cleanupConfig,
             });
 
             for (const key of Object.keys(current)) {
