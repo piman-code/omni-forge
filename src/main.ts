@@ -114,6 +114,15 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaArchitectModel: "",
   qaOrchestratorModel: "",
   qaSafeguardModel: "",
+  qaAskSystemPrompt: "",
+  qaAskVisionSystemPrompt: "",
+  qaImageGeneratorSystemPrompt: "",
+  qaCoderSystemPrompt: "",
+  qaDebuggerSystemPrompt: "",
+  qaArchitectSystemPrompt: "",
+  qaOrchestratorSystemPrompt: "",
+  qaSafeguardSystemPrompt: "",
+  qaRoleModelAutoPickEnabled: true,
   qaOrchestratorEnabled: false,
   qaSafeguardPassEnabled: false,
   qaIncludeSelectionInventory: true,
@@ -2435,6 +2444,9 @@ const SETTINGS_NAME_KO_MAP: Readonly<Record<string, string>> = {
   "Q&A pipeline preset": "Q&A 파이프라인 프리셋",
   "Role model detection controls": "역할 모델 감지 제어",
   "Role model detection summary": "역할 모델 감지 요약",
+  "Auto-pick recommended role models": "권장 역할 모델 자동 선택",
+  "Apply role recommendations now": "역할 추천값 즉시 적용",
+  "Role recommendation summary": "역할별 추천 요약",
   "Ask model (text)": "Ask 모델(텍스트)",
   "Ask model (vision)": "Ask 모델(비전)",
   "Image generator model": "이미지 생성 모델",
@@ -2442,6 +2454,7 @@ const SETTINGS_NAME_KO_MAP: Readonly<Record<string, string>> = {
   "Architect model": "Architect 모델",
   "Orchestrator model": "Orchestrator 모델",
   "Safeguard model": "Safeguard 모델",
+  "Role system prompt editor": "역할 시스템 프롬프트 편집기",
   "Prefer Ollama /api/chat (with fallback)": "Ollama /api/chat 우선(폴백 포함)",
   "Chat transcript folder path": "채팅 기록 폴더 경로",
   "Auto-sync chat thread": "채팅 스레드 자동 동기화",
@@ -2481,9 +2494,12 @@ const SETTINGS_DESC_KO_MAP: Readonly<Record<string, string>> = {
   "Leave empty to use main analysis model.": "비워두면 메인 분석 모델을 사용합니다.",
   "Select execution pipeline for post-generation passes.": "생성 후 후처리 패스의 실행 파이프라인을 선택합니다.",
   "Refresh local model detection manually, then choose role-specific models below.": "로컬 모델 감지를 수동으로 갱신한 뒤, 아래에서 역할별 모델을 선택합니다.",
+  "Auto-fill role model fields from detected models when values are missing or legacy-uniform.": "값이 비어 있거나 기존처럼 동일 모델로만 채워진 경우, 감지 모델 기반 권장값으로 역할별 필드를 자동 채웁니다.",
+  "Calculate role-specific recommended models from detected list and apply.": "감지된 모델 목록에서 역할별 권장 모델을 계산해 즉시 적용합니다.",
   "Optional role-specific model. Empty uses Q&A model as fallback.": "역할 전용 모델(선택)입니다. 비우면 Q&A 모델을 사용합니다.",
   "Used when role preset is Ask (vision). Text-only for now, image input support is planned.": "Ask(비전) 프리셋에서 사용합니다. 현재는 텍스트 중심이며 이미지 입력 지원은 추후 확장 예정입니다.",
   "Reserved for image-generation workflows. Current chat UI is text-first.": "이미지 생성 워크플로용 예약 모델입니다. 현재 채팅 UI는 텍스트 중심입니다.",
+  "Add extra system instructions per role agent. Empty keeps built-in role prompt only.": "역할별 에이전트에 추가 시스템 지시를 넣습니다. 비우면 기본 역할 프롬프트만 사용합니다.",
   "Use role-based chat first, then fallback to /api/generate when unavailable.": "역할 기반 /api/chat을 우선 사용하고, 불가하면 /api/generate로 폴백합니다.",
   "Vault-relative path for saving chat transcripts.": "채팅 기록 저장용 vault-relative 경로입니다.",
   "When enabled, the current chat thread is continuously saved and updated as messages change.": "활성화하면 현재 채팅 스레드를 메시지 변경에 맞춰 계속 저장/동기화합니다.",
@@ -2546,9 +2562,9 @@ type RoleModelSettingKey =
 
 interface RoleModelSettingConfig {
   key: RoleModelSettingKey;
+  role: QaRolePreset;
   name: string;
   description: string;
-  placeholder: string;
 }
 
 interface LabeledOption<T extends string> {
@@ -2561,47 +2577,274 @@ const ROLE_MODEL_FALLBACK_VALUE = "__fallback__";
 const ROLE_MODEL_SETTING_CONFIGS: ReadonlyArray<RoleModelSettingConfig> = [
   {
     key: "qaAskModel",
+    role: "ask",
     name: "Ask model (text)",
     description: "Optional role-specific model. Empty uses Q&A model as fallback.",
-    placeholder: "qwen3:14b",
   },
   {
     key: "qaAskVisionModel",
+    role: "ask_vision",
     name: "Ask model (vision)",
     description: "Used when role preset is Ask (vision). Text-only for now, image input support is planned.",
-    placeholder: "llama3.2-vision:11b",
   },
   {
     key: "qaImageGeneratorModel",
+    role: "image_generator",
     name: "Image generator model",
     description: "Reserved for image-generation workflows. Current chat UI is text-first.",
-    placeholder: "flux.1-dev",
   },
   {
     key: "qaCoderModel",
+    role: "coder",
     name: "Coder model",
     description: "Optional role-specific model. Empty uses Q&A model as fallback.",
-    placeholder: "qwen3-coder:30b",
   },
   {
     key: "qaArchitectModel",
+    role: "architect",
     name: "Architect model",
     description: "Optional role-specific model. Empty uses Q&A model as fallback.",
-    placeholder: "qwen3:32b",
   },
   {
     key: "qaOrchestratorModel",
+    role: "orchestrator",
     name: "Orchestrator model",
     description: "Optional role-specific model. Empty uses Q&A model as fallback.",
-    placeholder: "qwen3:32b",
   },
   {
     key: "qaSafeguardModel",
+    role: "safeguard",
     name: "Safeguard model",
     description: "Optional role-specific model. Empty uses Q&A model as fallback.",
-    placeholder: "qwen3:14b",
   },
 ];
+
+const CODER_MODEL_REGEX = /(coder|code|codellama|codestral|starcoder|deepseek-coder)/i;
+const SAFEGUARD_MODEL_REGEX = /(guard|safeguard|safety|llama-guard)/i;
+const VISION_MODEL_REGEX = /(vision|llava|bakllava|moondream|qwen.*vl|pixtral|internvl)/i;
+const IMAGE_GENERATOR_MODEL_REGEX = /(flux|sdxl|stable[-_ ]?diffusion|diffusion|imagegen|image-gen)/i;
+const GENERAL_TEXT_MODEL_REGEX = /(qwen|llama|gpt-oss|gemma|mistral|devstral|phi|deepseek|yi)/i;
+const LARGE_MODEL_SIZE_REGEX = /:(12|14|20|24|27|30|32|34|70)b\b/i;
+const MID_MODEL_SIZE_REGEX = /:(7|8|9|10|11)b\b/i;
+const SMALL_MODEL_SIZE_REGEX = /:(0\.[0-9]+|1|2|3|4|5|6)b\b/i;
+
+function extractModelSizeBillions(modelName: string): number | null {
+  const matched = modelName.toLowerCase().match(/:(\d+(?:\.\d+)?)b\b/);
+  if (!matched) {
+    return null;
+  }
+  const parsed = Number.parseFloat(matched[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function scoreRoleModel(role: QaRolePreset, modelName: string): number {
+  if (!isOllamaModelAnalyzable(modelName)) {
+    return -100;
+  }
+  const lower = modelName.toLowerCase();
+  const isCoder = CODER_MODEL_REGEX.test(lower);
+  const isSafeguard = SAFEGUARD_MODEL_REGEX.test(lower);
+  const isVision = VISION_MODEL_REGEX.test(lower);
+  const isImageGenerator = IMAGE_GENERATOR_MODEL_REGEX.test(lower);
+  const isGeneral =
+    GENERAL_TEXT_MODEL_REGEX.test(lower) && !isVision && !isImageGenerator;
+  const isLarge = LARGE_MODEL_SIZE_REGEX.test(lower);
+  const isMid = MID_MODEL_SIZE_REGEX.test(lower);
+  const isSmall = SMALL_MODEL_SIZE_REGEX.test(lower);
+  const sizeB = extractModelSizeBillions(lower);
+  let score = 0;
+
+  switch (role) {
+    case "ask":
+      score += isGeneral ? 40 : 20;
+      if (isCoder) {
+        score -= 16;
+      }
+      if (isSafeguard) {
+        score -= 18;
+      }
+      if (isVision || isImageGenerator) {
+        score -= 12;
+      }
+      if (isLarge) {
+        score += 6;
+      } else if (isMid) {
+        score += 4;
+      } else if (isSmall) {
+        score -= 2;
+      }
+      if (sizeB !== null) {
+        if (sizeB >= 12 && sizeB <= 20) {
+          score += 6;
+        } else if (sizeB > 20) {
+          score += 2;
+        }
+      }
+      break;
+    case "ask_vision":
+      score += isGeneral ? 34 : 18;
+      if (isCoder) {
+        score -= 8;
+      }
+      if (isSafeguard) {
+        score -= 12;
+      }
+      if (isLarge) {
+        score += 6;
+      } else if (isMid) {
+        score += 4;
+      }
+      if (sizeB !== null && sizeB >= 12 && sizeB <= 20) {
+        score += 6;
+      } else if (sizeB !== null && sizeB > 24) {
+        score += 1;
+      }
+      break;
+    case "image_generator":
+      score += isGeneral ? 28 : 15;
+      if (isImageGenerator) {
+        score += 8;
+      }
+      if (isCoder || isSafeguard) {
+        score -= 10;
+      }
+      if (isMid) {
+        score += 4;
+      }
+      if (isLarge) {
+        score += 4;
+      }
+      if (sizeB !== null && sizeB >= 12 && sizeB <= 24) {
+        score += 5;
+      }
+      break;
+    case "coder":
+    case "debugger":
+      score += isCoder ? 60 : 18;
+      if (isSafeguard) {
+        score -= 20;
+      }
+      if (isGeneral) {
+        score += 8;
+      }
+      if (isLarge) {
+        score += 8;
+      } else if (isMid) {
+        score += 5;
+      } else if (isSmall) {
+        score -= 4;
+      }
+      if (sizeB !== null) {
+        if (sizeB >= 20) {
+          score += 8;
+        } else if (sizeB >= 12) {
+          score += 4;
+        }
+      }
+      break;
+    case "safeguard":
+      score += isSafeguard ? 65 : 18;
+      if (isCoder) {
+        score -= 18;
+      }
+      if (isGeneral) {
+        score += 8;
+      }
+      if (isLarge) {
+        score += 6;
+      }
+      if (sizeB !== null && sizeB >= 14) {
+        score += 4;
+      }
+      break;
+    case "architect":
+    case "orchestrator":
+      score += isGeneral ? 38 : 18;
+      score += isLarge ? 22 : isMid ? 8 : -2;
+      if (isCoder) {
+        score -= 8;
+      }
+      if (isSafeguard) {
+        score -= 12;
+      }
+      if (sizeB !== null) {
+        if (sizeB >= 30) {
+          score += 14;
+        } else if (sizeB >= 20) {
+          score += 10;
+        } else if (sizeB >= 12) {
+          score += 6;
+        }
+      }
+      break;
+    default:
+      score += 22;
+      break;
+  }
+
+  if (!isGeneral && !isCoder && !isSafeguard) {
+    score -= 4;
+  }
+  if (/qwen3/.test(lower)) {
+    score += 4;
+  } else if (/gpt-oss/.test(lower)) {
+    score += 3;
+  } else if (/devstral|mistral/.test(lower)) {
+    score += 2;
+  } else if (/gemma/.test(lower)) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function buildRoleSpecificOllamaModelOptions(
+  role: QaRolePreset,
+  models: string[],
+): OllamaModelOption[] {
+  const scored = models
+    .map((model) => ({ model, score: scoreRoleModel(role, model) }))
+    .sort((a, b) => b.score - a.score || a.model.localeCompare(b.model));
+  const recommended = scored.find((item) => item.score > -100)?.model;
+  const options = models.map((model): OllamaModelOption => {
+    const isAnalyzable = isOllamaModelAnalyzable(model);
+    if (!isAnalyzable) {
+      return {
+        model,
+        status: "unavailable",
+        reason: "Not suitable for current text-based role pipeline.",
+      };
+    }
+    if (recommended && model === recommended) {
+      return {
+        model,
+        status: "recommended",
+        reason: `Recommended for ${role} role based on detected local model profile.`,
+      };
+    }
+    return {
+      model,
+      status: "available",
+      reason: "Available text-capable model.",
+    };
+  });
+
+  const weight = (status: OllamaModelOption["status"]): number => {
+    switch (status) {
+      case "recommended":
+        return 0;
+      case "available":
+        return 1;
+      case "unavailable":
+        return 2;
+      default:
+        return 3;
+    }
+  };
+  return options.sort(
+    (a, b) => weight(a.status) - weight(b.status) || a.model.localeCompare(b.model),
+  );
+}
 
 const QA_ROLE_PRESET_OPTIONS: ReadonlyArray<LabeledOption<QaRolePreset>> = [
   { value: "ask", label: "Ask (default / 기본)" },
@@ -2653,6 +2896,7 @@ function getQaPipelinePresetLabel(value: QaPipelinePreset): string {
 
 class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private readonly plugin: KnowledgeWeaverPlugin;
+  private rolePromptEditorTarget: QaRolePreset = "ask";
 
   constructor(app: App, plugin: KnowledgeWeaverPlugin) {
     super(app, plugin);
@@ -2672,7 +2916,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private addRoleModelPickerSetting(
     containerEl: HTMLElement,
     config: RoleModelSettingConfig,
-    ollamaOptions: OllamaModelOption[],
+    roleOptions: OllamaModelOption[],
   ): void {
     const currentValue = this.plugin.settings[config.key].trim();
     new Setting(containerEl)
@@ -2683,35 +2927,29 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           ROLE_MODEL_FALLBACK_VALUE,
           "Use Q&A model fallback / Q&A 모델 폴백",
         );
-        for (const option of ollamaOptions) {
+        for (const option of roleOptions) {
           dropdown.addOption(option.model, this.formatDetectedModelLabel(option));
         }
 
-        const selected = currentValue && ollamaOptions.some((option) => option.model === currentValue)
+        const selected = currentValue && roleOptions.some((option) => option.model === currentValue)
           ? currentValue
           : ROLE_MODEL_FALLBACK_VALUE;
         dropdown.setValue(selected);
 
         dropdown.onChange(async (value) => {
+          const chosen = roleOptions.find((option) => option.model === value);
+          if (chosen?.status === "unavailable") {
+            new Notice(`Selected model is marked as (불가): ${value}`, 4500);
+            this.display();
+            return;
+          }
           this.plugin.settings[config.key] =
             value === ROLE_MODEL_FALLBACK_VALUE ? "" : value;
           await this.plugin.saveSettings();
 
-          if (value !== ROLE_MODEL_FALLBACK_VALUE && !isOllamaModelAnalyzable(value)) {
-            new Notice(`Selected model is marked as (불가): ${value}`, 4500);
-          }
           this.display();
         });
-      })
-      .addText((text) =>
-        text
-          .setPlaceholder(config.placeholder)
-          .setValue(currentValue)
-          .onChange(async (value) => {
-            this.plugin.settings[config.key] = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
+      });
   }
 
   display(): void {
@@ -3415,7 +3653,6 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           });
       });
 
-    const roleModelOptions = this.plugin.getOllamaModelOptions();
     new Setting(containerEl)
       .setName("Role model detection controls")
       .setDesc(
@@ -3438,8 +3675,37 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setName("Role model detection summary")
       .setDesc(this.plugin.getOllamaDetectionSummary());
 
+    new Setting(containerEl)
+      .setName("Auto-pick recommended role models")
+      .setDesc(
+        "Auto-fill role model fields from detected models when values are missing or legacy-uniform.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaRoleModelAutoPickEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.qaRoleModelAutoPickEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Apply role recommendations now")
+      .setDesc("Calculate role-specific recommended models from detected list and apply.")
+      .addButton((button) =>
+        button.setButtonText("Auto-fill now / 지금 자동 채우기").onClick(async () => {
+          await this.plugin.applyRecommendedRoleModelsForQa(true, true);
+          this.display();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Role recommendation summary")
+      .setDesc(this.plugin.getRoleModelRecommendationSummaryForQa());
+
     for (const config of ROLE_MODEL_SETTING_CONFIGS) {
-      this.addRoleModelPickerSetting(containerEl, config, roleModelOptions);
+      const roleOptions = this.plugin.getRoleModelOptionsForQa(config.role);
+      this.addRoleModelPickerSetting(containerEl, config, roleOptions);
     }
 
     if (this.plugin.settings.qaPipelinePreset === "legacy_auto") {
@@ -3478,6 +3744,34 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.qaCustomSystemPrompt = value;
             await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Role system prompt editor")
+      .setDesc(
+        "Add extra system instructions per role agent. Empty keeps built-in role prompt only.",
+      )
+      .addDropdown((dropdown) => {
+        for (const option of QA_ROLE_PRESET_OPTIONS) {
+          dropdown.addOption(option.value, option.label);
+        }
+        dropdown
+          .setValue(this.rolePromptEditorTarget)
+          .onChange((value) => {
+            this.rolePromptEditorTarget = value as QaRolePreset;
+            this.display();
+          });
+      })
+      .addTextArea((text) =>
+        text
+          .setPlaceholder("Optional role-specific system prompt")
+          .setValue(this.plugin.getQaRoleSystemPromptForQa(this.rolePromptEditorTarget))
+          .onChange(async (value) => {
+            await this.plugin.setQaRoleSystemPromptForQa(
+              this.rolePromptEditorTarget,
+              value,
+            );
           }),
       );
 
@@ -4071,6 +4365,89 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return this.ollamaDetectionOptions;
   }
 
+  private getDetectedOllamaModelNames(): string[] {
+    if (this.ollamaDetectionCache?.models && this.ollamaDetectionCache.models.length > 0) {
+      return [...this.ollamaDetectionCache.models];
+    }
+    return this.ollamaDetectionOptions.map((option) => option.model);
+  }
+
+  private readRoleModelSetting(key: RoleModelSettingKey): string {
+    return this.settings[key].trim();
+  }
+
+  private writeRoleModelSetting(key: RoleModelSettingKey, value: string): void {
+    this.settings[key] = value.trim();
+  }
+
+  private isLegacyUniformRoleModelConfig(): boolean {
+    const values = ROLE_MODEL_SETTING_CONFIGS
+      .map((config) => this.readRoleModelSetting(config.key))
+      .filter((value) => value.length > 0);
+    if (values.length < 2) {
+      return false;
+    }
+    const unique = [...new Set(values)];
+    if (unique.length !== 1) {
+      return false;
+    }
+    const uniform = unique[0];
+    return uniform === this.settings.ollamaModel.trim() || uniform === this.settings.qaOllamaModel.trim();
+  }
+
+  getRoleModelOptionsForQa(role: QaRolePreset): OllamaModelOption[] {
+    const models = this.getDetectedOllamaModelNames();
+    if (models.length === 0) {
+      return [];
+    }
+    return buildRoleSpecificOllamaModelOptions(role, models);
+  }
+
+  getRoleModelRecommendationSummaryForQa(): string {
+    const parts = ROLE_MODEL_SETTING_CONFIGS.map((config) => {
+      const options = this.getRoleModelOptionsForQa(config.role);
+      const recommended = options.find((option) => option.status === "recommended")?.model ?? "(none)";
+      return `${config.name}: ${recommended}`;
+    });
+    return parts.join(" | ");
+  }
+
+  async applyRecommendedRoleModelsForQa(notify: boolean, forceApply: boolean): Promise<void> {
+    const legacyUniform = this.isLegacyUniformRoleModelConfig();
+    let changed = 0;
+    for (const config of ROLE_MODEL_SETTING_CONFIGS) {
+      const options = this.getRoleModelOptionsForQa(config.role);
+      const recommended = options.find((option) => option.status === "recommended")?.model;
+      if (!recommended) {
+        continue;
+      }
+      const current = this.readRoleModelSetting(config.key);
+      const currentFound = current.length > 0 && options.some((option) => option.model === current);
+      const currentUnavailable = current.length > 0 && !isOllamaModelAnalyzable(current);
+      const shouldApply =
+        forceApply ||
+        legacyUniform ||
+        current.length === 0 ||
+        !currentFound ||
+        currentUnavailable;
+      if (!shouldApply || current === recommended) {
+        continue;
+      }
+      this.writeRoleModelSetting(config.key, recommended);
+      changed += 1;
+    }
+    if (changed > 0) {
+      await this.saveSettings();
+    }
+    if (notify) {
+      if (changed > 0) {
+        this.notice(`Applied role model recommendations to ${changed} field(s).`);
+      } else {
+        this.notice("No role model changes were needed.");
+      }
+    }
+  }
+
   getEmbeddingDetectionSummary(): string {
     return this.embeddingDetectionSummary;
   }
@@ -4149,6 +4526,62 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         return `${entry.short}=${model}${status}`;
       })
       .join(", ");
+  }
+
+  getQaRoleSystemPromptForQa(role: QaRolePreset): string {
+    switch (role) {
+      case "ask":
+        return this.settings.qaAskSystemPrompt;
+      case "ask_vision":
+        return this.settings.qaAskVisionSystemPrompt;
+      case "image_generator":
+        return this.settings.qaImageGeneratorSystemPrompt;
+      case "coder":
+        return this.settings.qaCoderSystemPrompt;
+      case "debugger":
+        return this.settings.qaDebuggerSystemPrompt;
+      case "architect":
+        return this.settings.qaArchitectSystemPrompt;
+      case "orchestrator":
+        return this.settings.qaOrchestratorSystemPrompt;
+      case "safeguard":
+        return this.settings.qaSafeguardSystemPrompt;
+      default:
+        return "";
+    }
+  }
+
+  async setQaRoleSystemPromptForQa(role: QaRolePreset, prompt: string): Promise<void> {
+    const value = prompt.trim();
+    switch (role) {
+      case "ask":
+        this.settings.qaAskSystemPrompt = value;
+        break;
+      case "ask_vision":
+        this.settings.qaAskVisionSystemPrompt = value;
+        break;
+      case "image_generator":
+        this.settings.qaImageGeneratorSystemPrompt = value;
+        break;
+      case "coder":
+        this.settings.qaCoderSystemPrompt = value;
+        break;
+      case "debugger":
+        this.settings.qaDebuggerSystemPrompt = value;
+        break;
+      case "architect":
+        this.settings.qaArchitectSystemPrompt = value;
+        break;
+      case "orchestrator":
+        this.settings.qaOrchestratorSystemPrompt = value;
+        break;
+      case "safeguard":
+        this.settings.qaSafeguardSystemPrompt = value;
+        break;
+      default:
+        break;
+    }
+    await this.saveSettings();
   }
 
   getQaModelOptionsForQa(): string[] {
@@ -4490,6 +4923,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         }
       }
 
+      if (options.autoApply && this.settings.qaRoleModelAutoPickEnabled) {
+        await this.applyRecommendedRoleModelsForQa(false, false);
+      }
+
       if (options.notify) {
         this.notice(this.ollamaDetectionSummary, 5000);
       }
@@ -4697,6 +5134,34 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
     if (typeof this.settings.qaSafeguardModel !== "string") {
       this.settings.qaSafeguardModel = DEFAULT_SETTINGS.qaSafeguardModel;
+    }
+    if (typeof this.settings.qaAskSystemPrompt !== "string") {
+      this.settings.qaAskSystemPrompt = DEFAULT_SETTINGS.qaAskSystemPrompt;
+    }
+    if (typeof this.settings.qaAskVisionSystemPrompt !== "string") {
+      this.settings.qaAskVisionSystemPrompt = DEFAULT_SETTINGS.qaAskVisionSystemPrompt;
+    }
+    if (typeof this.settings.qaImageGeneratorSystemPrompt !== "string") {
+      this.settings.qaImageGeneratorSystemPrompt =
+        DEFAULT_SETTINGS.qaImageGeneratorSystemPrompt;
+    }
+    if (typeof this.settings.qaCoderSystemPrompt !== "string") {
+      this.settings.qaCoderSystemPrompt = DEFAULT_SETTINGS.qaCoderSystemPrompt;
+    }
+    if (typeof this.settings.qaDebuggerSystemPrompt !== "string") {
+      this.settings.qaDebuggerSystemPrompt = DEFAULT_SETTINGS.qaDebuggerSystemPrompt;
+    }
+    if (typeof this.settings.qaArchitectSystemPrompt !== "string") {
+      this.settings.qaArchitectSystemPrompt = DEFAULT_SETTINGS.qaArchitectSystemPrompt;
+    }
+    if (typeof this.settings.qaOrchestratorSystemPrompt !== "string") {
+      this.settings.qaOrchestratorSystemPrompt = DEFAULT_SETTINGS.qaOrchestratorSystemPrompt;
+    }
+    if (typeof this.settings.qaSafeguardSystemPrompt !== "string") {
+      this.settings.qaSafeguardSystemPrompt = DEFAULT_SETTINGS.qaSafeguardSystemPrompt;
+    }
+    if (typeof this.settings.qaRoleModelAutoPickEnabled !== "boolean") {
+      this.settings.qaRoleModelAutoPickEnabled = DEFAULT_SETTINGS.qaRoleModelAutoPickEnabled;
     }
     if (typeof this.settings.qaOrchestratorEnabled !== "boolean") {
       this.settings.qaOrchestratorEnabled = DEFAULT_SETTINGS.qaOrchestratorEnabled;
@@ -5898,6 +6363,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
   }
 
+  private getQaRoleSystemPrompt(role: QaRolePreset): string {
+    return this.getQaRoleSystemPromptForQa(role).trim();
+  }
+
   private getQaPreferredLanguageInstruction(): string {
     switch (this.settings.qaPreferredResponseLanguage) {
       case "korean":
@@ -5928,6 +6397,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       "When making claims, cite source paths inline in parentheses.",
       "If evidence is insufficient, state it clearly and do not invent facts.",
       ...this.getQaContractLines(intent, preferDetailed),
+      this.getQaRoleSystemPrompt(role)
+        ? `Role system prompt (${role}):\n${this.getQaRoleSystemPrompt(role)}`
+        : "",
       this.settings.qaCustomSystemPrompt.trim()
         ? `Custom system prompt:\n${this.settings.qaCustomSystemPrompt.trim()}`
         : "",
@@ -6392,6 +6864,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!passModel) {
       return answer;
     }
+    const roleSystemPrompt = this.getQaRoleSystemPrompt("orchestrator");
 
     this.emitQaEvent(onEvent, "generation", `Running orchestrator pass (${passModel})`);
     const systemPrompt = [
@@ -6407,6 +6880,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       "- Deliverables (report/PPT/materials/code)",
       "- Risks and safeguards",
       "- Next actions",
+      roleSystemPrompt
+        ? `Role system prompt (orchestrator):\n${roleSystemPrompt}`
+        : "",
     ].join("\n");
     const userPrompt = [
       `Question: ${question}`,
@@ -6459,6 +6935,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!passModel) {
       return answer;
     }
+    const roleSystemPrompt = this.getQaRoleSystemPrompt(role);
 
     this.emitQaEvent(onEvent, "generation", `Running ${role} refinement (${passModel})`);
     const systemPrompt = [
@@ -6467,6 +6944,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       "Do not invent facts. Mark uncertain points as '정보 부족'.",
       this.buildRolePresetRefinementInstruction(role),
       "Return markdown only.",
+      roleSystemPrompt ? `Role system prompt (${role}):\n${roleSystemPrompt}` : "",
     ].join("\n");
     const userPrompt = [
       `Question: ${question}`,
@@ -6520,6 +6998,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!passModel) {
       return answer;
     }
+    const roleSystemPrompt = this.getQaRoleSystemPrompt("safeguard");
 
     this.emitQaEvent(onEvent, "generation", `Running safeguard verification (${passModel})`);
     const systemPrompt = [
@@ -6530,6 +7009,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       "If evidence is missing, keep statement conservative and explicit.",
       "Preserve source-path citations whenever possible.",
       "Return final markdown answer only.",
+      roleSystemPrompt ? `Role system prompt (safeguard):\n${roleSystemPrompt}` : "",
     ].join("\n");
     const userPrompt = [
       `Question: ${question}`,

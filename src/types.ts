@@ -177,6 +177,15 @@ export interface KnowledgeWeaverSettings {
   qaArchitectModel: string;
   qaOrchestratorModel: string;
   qaSafeguardModel: string;
+  qaAskSystemPrompt: string;
+  qaAskVisionSystemPrompt: string;
+  qaImageGeneratorSystemPrompt: string;
+  qaCoderSystemPrompt: string;
+  qaDebuggerSystemPrompt: string;
+  qaArchitectSystemPrompt: string;
+  qaOrchestratorSystemPrompt: string;
+  qaSafeguardSystemPrompt: string;
+  qaRoleModelAutoPickEnabled: boolean;
   qaOrchestratorEnabled: boolean;
   qaSafeguardPassEnabled: boolean;
   qaIncludeSelectionInventory: boolean;
