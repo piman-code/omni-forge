@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.1] - 2026-02-15
+
+### Added
+
+- Ribbon icon to open `Auto-Linker Local Chat` quickly.
+- Configurable `Chat transcript folder path`.
+- Configurable `Cleanup dry-run report folder`.
+- `Auto-sync chat thread` setting for continuous thread-note synchronization.
+
+### Changed
+
+- Redesigned Local AI chat workspace UI for clearer layout and readability.
+- Source list in chat messages now renders as clickable note links.
+- Chat transcript `scope_files` now stores top retrieval sources instead of full selected scope.
+
+### Fixed
+
+- Command palette labels no longer show duplicated `Auto-Linker:` prefix.
+- Cleanup dry-run report output path is now safely configurable (vault-relative validation).
+
 ## [0.1.0] - 2026-02-14
 
 ### Added

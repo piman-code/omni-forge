@@ -95,6 +95,7 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaTopK: 5,
   qaMaxContextChars: 12000,
   qaAllowNonLocalEndpoint: false,
+  qaThreadAutoSyncEnabled: true,
   chatTranscriptRootPath: "Auto-Linker Chats",
   cleanupReportRootPath: "Auto-Linker Reports",
   propertyCleanupEnabled: false,
@@ -1118,6 +1119,20 @@ interface LocalQAViewMessage {
   retrievalCacheWrites?: number;
 }
 
+interface LocalQaThreadSyncInput {
+  messages: LocalQAViewMessage[];
+  threadPath?: string;
+  threadId?: string;
+  createdAt?: string;
+}
+
+interface LocalQaThreadSyncResult {
+  path: string;
+  threadId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 class LocalQAChatModal extends Modal {
   private readonly plugin: KnowledgeWeaverPlugin;
   private readonly defaultTopK: number;
@@ -1289,8 +1304,17 @@ class LocalQAWorkspaceView extends ItemView {
   private threadEl!: HTMLElement;
   private sendButton!: HTMLButtonElement;
   private scopeEl!: HTMLElement;
+  private threadInfoEl!: HTMLElement;
+  private syncInfoEl!: HTMLElement;
   private running = false;
   private messages: LocalQAViewMessage[] = [];
+  private threadPath: string | null = null;
+  private threadId = "";
+  private threadCreatedAt = "";
+  private syncStatus = "Not synced yet";
+  private syncTimer: number | null = null;
+  private syncInFlight = false;
+  private syncQueued = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: KnowledgeWeaverPlugin) {
     super(leaf);
@@ -1311,12 +1335,49 @@ class LocalQAWorkspaceView extends ItemView {
 
   async onOpen(): Promise<void> {
     await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
+    this.resetThreadState();
     this.render();
     this.refreshModelOptions();
     await this.refreshScopeLabel();
+    this.refreshThreadMeta();
   }
 
-  async onClose(): Promise<void> {}
+  async onClose(): Promise<void> {
+    if (this.syncTimer !== null) {
+      window.clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+    if (this.plugin.isQaThreadAutoSyncEnabledForQa() || this.threadPath) {
+      await this.flushThreadSync(true);
+    }
+  }
+
+  private resetThreadState(): void {
+    const now = new Date();
+    this.threadId = `chat-${formatBackupStamp(now)}`;
+    this.threadCreatedAt = now.toISOString();
+    this.threadPath = null;
+    this.syncStatus = this.plugin.isQaThreadAutoSyncEnabledForQa()
+      ? "Auto-sync ready"
+      : "Manual save mode";
+    this.refreshThreadMeta();
+  }
+
+  private refreshThreadMeta(): void {
+    if (!this.threadInfoEl || !this.syncInfoEl) {
+      return;
+    }
+    const threadLabel = this.threadPath
+      ? this.threadPath
+      : `${this.threadId}.md (pending)`;
+    this.threadInfoEl.setText(`Thread: ${threadLabel}`);
+    this.syncInfoEl.setText(`Sync: ${this.syncStatus}`);
+  }
+
+  private setSyncStatus(next: string): void {
+    this.syncStatus = next;
+    this.refreshThreadMeta();
+  }
 
   private render(): void {
     const { contentEl } = this;
@@ -1327,8 +1388,17 @@ class LocalQAWorkspaceView extends ItemView {
     const header = root.createDiv({ cls: "auto-linker-chat-header" });
     header.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
     this.scopeEl = header.createDiv({ cls: "auto-linker-chat-scope" });
+    const metaRow = header.createDiv({ cls: "auto-linker-chat-meta" });
+    this.threadInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-thread-info" });
+    this.syncInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-sync-info" });
 
     const actionRow = root.createDiv({ cls: "auto-linker-chat-actions" });
+
+    const newThreadButton = actionRow.createEl("button", { text: "New thread" });
+    newThreadButton.addClass("auto-linker-chat-btn");
+    newThreadButton.onclick = async () => {
+      await this.startNewThread();
+    };
 
     const selectButton = actionRow.createEl("button", { text: "Select notes" });
     selectButton.addClass("auto-linker-chat-btn");
@@ -1385,21 +1455,10 @@ class LocalQAWorkspaceView extends ItemView {
       await this.refreshScopeLabel();
     };
 
-    const saveButton = actionRow.createEl("button", { text: "Save chat" });
-    saveButton.addClass("auto-linker-chat-btn");
-    saveButton.onclick = async () => {
-      if (this.messages.length === 0) {
-        new Notice("No chat messages to save.");
-        return;
-      }
-      try {
-        const path = await this.plugin.saveLocalQaTranscript(this.messages);
-        new Notice(`Chat saved: ${path}`, 6000);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unknown transcript save error";
-        new Notice(`Failed to save chat: ${message}`, 7000);
-      }
+    const openThreadButton = actionRow.createEl("button", { text: "Open chat note" });
+    openThreadButton.addClass("auto-linker-chat-btn");
+    openThreadButton.onclick = async () => {
+      await this.openThreadNote();
     };
 
     const controlRow = root.createDiv({ cls: "auto-linker-chat-controls" });
@@ -1432,14 +1491,16 @@ class LocalQAWorkspaceView extends ItemView {
     };
 
     this.threadEl = root.createDiv({ cls: "auto-linker-chat-thread" });
-    this.threadEl.createEl("div", { text: "질문을 입력해 대화를 시작하세요." });
-
-    this.inputEl = root.createEl("textarea", {
-      cls: "auto-linker-chat-input",
+    this.threadEl.createDiv({
+      cls: "auto-linker-chat-empty",
+      text: "질문을 입력해 대화를 시작하세요.",
     });
+
+    const composer = root.createDiv({ cls: "auto-linker-chat-composer" });
+    this.inputEl = composer.createEl("textarea", { cls: "auto-linker-chat-input" });
     this.inputEl.placeholder = "선택된 노트/폴더 범위에서 질문하세요...";
 
-    const footer = root.createDiv({ cls: "auto-linker-chat-footer" });
+    const footer = composer.createDiv({ cls: "auto-linker-chat-footer" });
 
     this.sendButton = footer.createEl("button", { text: "Send", cls: "mod-cta" });
     this.sendButton.addClass("auto-linker-chat-send");
@@ -1453,6 +1514,8 @@ class LocalQAWorkspaceView extends ItemView {
         await this.submitQuestion();
       }
     });
+
+    this.refreshThreadMeta();
   }
 
   private refreshModelOptions(): void {
@@ -1483,6 +1546,94 @@ class LocalQAWorkspaceView extends ItemView {
     return `${hh}:${mm}:${ss}`;
   }
 
+  private async startNewThread(): Promise<void> {
+    if (
+      this.messages.length > 0 &&
+      (this.plugin.isQaThreadAutoSyncEnabledForQa() || this.threadPath)
+    ) {
+      await this.flushThreadSync(true);
+    }
+    this.messages = [];
+    this.renderMessages();
+    this.resetThreadState();
+    this.inputEl.focus();
+  }
+
+  private scheduleThreadSync(delayMs = 850): void {
+    if (!this.plugin.isQaThreadAutoSyncEnabledForQa() || this.messages.length === 0) {
+      return;
+    }
+    if (this.syncTimer !== null) {
+      window.clearTimeout(this.syncTimer);
+    }
+    this.setSyncStatus("Pending...");
+    this.syncTimer = window.setTimeout(() => {
+      this.syncTimer = null;
+      void this.flushThreadSync(false);
+    }, delayMs);
+  }
+
+  private async flushThreadSync(force: boolean): Promise<void> {
+    if (!force && !this.plugin.isQaThreadAutoSyncEnabledForQa()) {
+      return;
+    }
+    if (this.messages.length === 0) {
+      return;
+    }
+    if (this.syncInFlight) {
+      this.syncQueued = true;
+      return;
+    }
+    if (this.syncTimer !== null) {
+      window.clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+
+    this.syncInFlight = true;
+    this.setSyncStatus("Syncing...");
+    try {
+      const synced = await this.plugin.syncLocalQaTranscript({
+        messages: this.messages,
+        threadPath: this.threadPath ?? undefined,
+        threadId: this.threadId,
+        createdAt: this.threadCreatedAt,
+      });
+      this.threadPath = synced.path;
+      this.threadId = synced.threadId;
+      this.threadCreatedAt = synced.createdAt;
+      this.setSyncStatus(`Synced ${this.formatTime(synced.updatedAt)}`);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown thread sync error";
+      this.setSyncStatus("Sync failed");
+      new Notice(`Chat sync failed: ${message}`, 7000);
+    } finally {
+      this.syncInFlight = false;
+      if (this.syncQueued) {
+        this.syncQueued = false;
+        this.scheduleThreadSync(350);
+      }
+    }
+  }
+
+  private async openThreadNote(): Promise<void> {
+    if (this.messages.length === 0) {
+      new Notice("No chat messages yet.");
+      return;
+    }
+    await this.flushThreadSync(true);
+    if (!this.threadPath) {
+      new Notice("Thread note is not ready yet.");
+      return;
+    }
+    const target = this.app.vault.getAbstractFileByPath(this.threadPath);
+    if (target instanceof TFile) {
+      await this.app.workspace.getLeaf(true).openFile(target);
+      return;
+    }
+    new Notice(`Thread note not found: ${this.threadPath}`, 7000);
+  }
+
   private renderSourceLink(parent: HTMLElement, source: LocalQASourceItem): void {
     const row = parent.createDiv({ cls: "auto-linker-chat-source-row" });
     const link = row.createEl("a", {
@@ -1502,7 +1653,7 @@ class LocalQAWorkspaceView extends ItemView {
     };
 
     row.createEl("span", {
-      text: `(${formatSimilarity(source.similarity)})`,
+      text: formatSimilarity(source.similarity),
       cls: "auto-linker-chat-source-similarity",
     });
   }
@@ -1510,7 +1661,10 @@ class LocalQAWorkspaceView extends ItemView {
   private renderMessages(): void {
     this.threadEl.empty();
     if (this.messages.length === 0) {
-      this.threadEl.createEl("div", { text: "질문을 입력해 대화를 시작하세요." });
+      this.threadEl.createDiv({
+        cls: "auto-linker-chat-empty",
+        text: "질문을 입력해 대화를 시작하세요.",
+      });
       return;
     }
 
@@ -1518,8 +1672,8 @@ class LocalQAWorkspaceView extends ItemView {
       const box = this.threadEl.createDiv({
         cls: `auto-linker-chat-message auto-linker-chat-message-${message.role}`,
       });
-
-      const title = box.createEl("strong", {
+      const head = box.createDiv({ cls: "auto-linker-chat-message-head" });
+      head.createEl("strong", {
         text:
           message.role === "assistant"
             ? "Assistant"
@@ -1527,19 +1681,34 @@ class LocalQAWorkspaceView extends ItemView {
               ? "You"
               : "System",
       });
-      const time = box.createEl("small", { text: ` ${this.formatTime(message.timestamp)}` });
-      time.addClass("auto-linker-chat-message-time");
-      title.appendChild(time);
+      head.createEl("small", {
+        text: this.formatTime(message.timestamp),
+        cls: "auto-linker-chat-message-time",
+      });
 
       const body = box.createDiv({ cls: "auto-linker-chat-message-body" });
       body.setText(message.text);
 
       if (message.role === "assistant" && message.sources && message.sources.length > 0) {
         const src = box.createDiv({ cls: "auto-linker-chat-sources" });
-        src.createEl("small", { text: "Sources" });
+        src.createDiv({
+          cls: "auto-linker-chat-sources-title",
+          text: `Sources (${message.sources.length})`,
+        });
         for (const source of message.sources) {
           this.renderSourceLink(src, source);
         }
+      }
+
+      if (
+        message.role === "assistant" &&
+        message.model &&
+        message.embeddingModel
+      ) {
+        box.createDiv({
+          cls: "auto-linker-chat-message-meta",
+          text: `model=${message.model} | embedding=${message.embeddingModel}`,
+        });
       }
     }
 
@@ -1552,15 +1721,22 @@ class LocalQAWorkspaceView extends ItemView {
       this.messages = this.messages.slice(-120);
     }
     this.renderMessages();
+    this.scheduleThreadSync();
   }
 
   private clearPendingSystemMessage(): void {
+    let removed = false;
     for (let i = this.messages.length - 1; i >= 0; i -= 1) {
       const item = this.messages[i];
       if (item.role === "system" && item.text.includes("생성 중")) {
         this.messages.splice(i, 1);
+        removed = true;
         break;
       }
+    }
+    if (removed) {
+      this.renderMessages();
+      this.scheduleThreadSync(250);
     }
   }
 
@@ -1579,9 +1755,10 @@ class LocalQAWorkspaceView extends ItemView {
     const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
     const model = this.plugin.getQaModelLabelForQa();
     const embedding = this.plugin.getQaEmbeddingModelForQa();
+    const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "auto" : "manual";
     const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set)";
     this.scopeEl.setText(
-      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"} | chats=${chatFolder}`,
+      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"} | sync=${syncMode} | chats=${chatFolder}`,
     );
   }
 
@@ -1634,6 +1811,7 @@ class LocalQAWorkspaceView extends ItemView {
     this.messages.push(draftMessage);
     const draftIndex = this.messages.length - 1;
     this.renderMessages();
+    this.scheduleThreadSync(300);
 
     try {
       const result = await this.plugin.askLocalQa(
@@ -1646,6 +1824,7 @@ class LocalQAWorkspaceView extends ItemView {
           if (draft && draft.role === "assistant") {
             draft.text += token;
             this.renderMessages();
+            this.scheduleThreadSync(1100);
           }
         },
       );
@@ -1660,6 +1839,7 @@ class LocalQAWorkspaceView extends ItemView {
         draft.retrievalCacheHits = result.retrievalCacheHits;
         draft.retrievalCacheWrites = result.retrievalCacheWrites;
         this.renderMessages();
+        this.scheduleThreadSync(120);
       } else {
         this.pushMessage({
           role: "assistant",
@@ -2305,6 +2485,20 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Auto-sync chat thread")
+      .setDesc(
+        "When enabled, the current chat thread is continuously saved and updated as messages change.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaThreadAutoSyncEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.qaThreadAutoSyncEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Allow non-local Q&A endpoint (danger)")
       .setDesc("Off by default. Keep disabled to prevent note data leaving localhost.")
       .addToggle((toggle) =>
@@ -2774,6 +2968,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return this.settings.chatTranscriptRootPath.trim();
   }
 
+  isQaThreadAutoSyncEnabledForQa(): boolean {
+    return this.settings.qaThreadAutoSyncEnabled;
+  }
+
   private isSafeVaultRelativePath(path: string): boolean {
     const normalized = normalizePath(path.trim());
     if (!normalized) {
@@ -2830,21 +3028,52 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       .map(([path]) => path);
   }
 
-  async saveLocalQaTranscript(messages: LocalQAViewMessage[]): Promise<string> {
-    const timestamp = new Date();
-    const stamp = formatBackupStamp(timestamp);
+  private normalizeThreadId(rawThreadId: string | undefined, fallbackDate: Date): string {
+    const fallback = `chat-${formatBackupStamp(fallbackDate)}`;
+    const trimmed = (rawThreadId ?? "").trim();
+    if (!trimmed) {
+      return fallback;
+    }
+    const normalized = trimmed
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-_]+|[-_]+$/g, "");
+    return normalized || fallback;
+  }
+
+  private resolveSafeMarkdownPath(rawPath: string, label: string): string {
+    const normalized = normalizePath(rawPath.trim());
+    if (!this.isSafeVaultRelativePath(normalized)) {
+      throw new Error(`${label} path must be a safe vault-relative markdown path.`);
+    }
+    if (!normalized.toLowerCase().endsWith(".md")) {
+      throw new Error(`${label} path must end with .md`);
+    }
+    return normalized;
+  }
+
+  private async allocateLocalQaThreadPath(threadId: string): Promise<string> {
     const folder = this.resolveSafeFolderPath(
       this.settings.chatTranscriptRootPath,
       "Auto-Linker Chats",
       "Chat transcript",
     );
-    let outputPath = normalizePath(`${folder}/chat-${stamp}.md`);
+    let outputPath = normalizePath(`${folder}/${threadId}.md`);
     let suffix = 1;
     while (await this.app.vault.adapter.exists(outputPath)) {
-      outputPath = normalizePath(`${folder}/chat-${stamp}-${suffix}.md`);
+      outputPath = normalizePath(`${folder}/${threadId}-${suffix}.md`);
       suffix += 1;
     }
+    return outputPath;
+  }
 
+  private buildLocalQaTranscriptMarkdown(params: {
+    messages: LocalQAViewMessage[];
+    threadId: string;
+    createdAt: string;
+    updatedAt: string;
+  }): string {
+    const { messages, threadId, createdAt, updatedAt } = params;
     const qaModel = this.getQaModelLabelForQa();
     const embeddingModel = this.getQaEmbeddingModelForQa();
     const selectedFiles = this.getSelectedFilesForQa().map((file) => file.path);
@@ -2862,7 +3091,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     const lines: string[] = [];
     lines.push("---");
     lines.push('type: "auto-linker-chat"');
-    lines.push(`created: "${timestamp.toISOString()}"`);
+    lines.push(`thread_id: "${this.escapeYamlValue(threadId)}"`);
+    lines.push(`created: "${createdAt}"`);
+    lines.push(`updated: "${updatedAt}"`);
     lines.push(`provider: "${this.escapeYamlValue(this.settings.provider)}"`);
     lines.push(`qa_model: "${this.escapeYamlValue(qaModel)}"`);
     lines.push(`embedding_model: "${this.escapeYamlValue(embeddingModel || "(not set)")}"`);
@@ -2895,15 +3126,52 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         lines.push("");
         lines.push("Sources:");
         for (const source of message.sources) {
-          lines.push(`- ${source.path} (${formatSimilarity(source.similarity)})`);
+          lines.push(`- [[${source.path}]] (${formatSimilarity(source.similarity)})`);
         }
       }
       lines.push("");
     }
 
+    return `${lines.join("\n").trim()}\n`;
+  }
+
+  async syncLocalQaTranscript(input: LocalQaThreadSyncInput): Promise<LocalQaThreadSyncResult> {
+    const now = new Date();
+    const updatedAt = now.toISOString();
+    const createdDate = input.createdAt ? new Date(input.createdAt) : now;
+    const createdAt = Number.isNaN(createdDate.getTime())
+      ? updatedAt
+      : createdDate.toISOString();
+    const threadId = this.normalizeThreadId(input.threadId, new Date(createdAt));
+    const outputPath = input.threadPath
+      ? this.resolveSafeMarkdownPath(input.threadPath, "Chat thread")
+      : await this.allocateLocalQaThreadPath(threadId);
+
+    const markdown = this.buildLocalQaTranscriptMarkdown({
+      messages: input.messages,
+      threadId,
+      createdAt,
+      updatedAt,
+    });
     await this.ensureParentFolder(outputPath);
-    await this.app.vault.adapter.write(outputPath, `${lines.join("\n").trim()}\n`);
-    return outputPath;
+    await this.app.vault.adapter.write(outputPath, markdown);
+
+    return {
+      path: outputPath,
+      threadId,
+      createdAt,
+      updatedAt,
+    };
+  }
+
+  async saveLocalQaTranscript(messages: LocalQAViewMessage[]): Promise<string> {
+    const now = new Date();
+    const synced = await this.syncLocalQaTranscript({
+      messages,
+      threadId: `chat-${formatBackupStamp(now)}`,
+      createdAt: now.toISOString(),
+    });
+    return synced.path;
   }
 
   async applyRecommendedOllamaModel(notify: boolean): Promise<void> {
@@ -3117,6 +3385,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
       this.settings.qaAllowNonLocalEndpoint =
         DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
+    }
+    if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
+      this.settings.qaThreadAutoSyncEnabled =
+        DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
     }
     if (typeof this.settings.chatTranscriptRootPath !== "string") {
       this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;

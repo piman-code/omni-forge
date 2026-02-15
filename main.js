@@ -1297,6 +1297,7 @@ var DEFAULT_SETTINGS = {
   qaTopK: 5,
   qaMaxContextChars: 12e3,
   qaAllowNonLocalEndpoint: false,
+  qaThreadAutoSyncEnabled: true,
   chatTranscriptRootPath: "Auto-Linker Chats",
   cleanupReportRootPath: "Auto-Linker Reports",
   propertyCleanupEnabled: false,
@@ -2043,6 +2044,13 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     super(leaf);
     this.running = false;
     this.messages = [];
+    this.threadPath = null;
+    this.threadId = "";
+    this.threadCreatedAt = "";
+    this.syncStatus = "Not synced yet";
+    this.syncTimer = null;
+    this.syncInFlight = false;
+    this.syncQueued = false;
     this.plugin = plugin;
   }
   getViewType() {
@@ -2056,11 +2064,40 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   async onOpen() {
     await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
+    this.resetThreadState();
     this.render();
     this.refreshModelOptions();
     await this.refreshScopeLabel();
+    this.refreshThreadMeta();
   }
   async onClose() {
+    if (this.syncTimer !== null) {
+      window.clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+    if (this.plugin.isQaThreadAutoSyncEnabledForQa() || this.threadPath) {
+      await this.flushThreadSync(true);
+    }
+  }
+  resetThreadState() {
+    const now = /* @__PURE__ */ new Date();
+    this.threadId = `chat-${formatBackupStamp(now)}`;
+    this.threadCreatedAt = now.toISOString();
+    this.threadPath = null;
+    this.syncStatus = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "Auto-sync ready" : "Manual save mode";
+    this.refreshThreadMeta();
+  }
+  refreshThreadMeta() {
+    if (!this.threadInfoEl || !this.syncInfoEl) {
+      return;
+    }
+    const threadLabel = this.threadPath ? this.threadPath : `${this.threadId}.md (pending)`;
+    this.threadInfoEl.setText(`Thread: ${threadLabel}`);
+    this.syncInfoEl.setText(`Sync: ${this.syncStatus}`);
+  }
+  setSyncStatus(next) {
+    this.syncStatus = next;
+    this.refreshThreadMeta();
   }
   render() {
     const { contentEl } = this;
@@ -2070,7 +2107,15 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const header = root.createDiv({ cls: "auto-linker-chat-header" });
     header.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
     this.scopeEl = header.createDiv({ cls: "auto-linker-chat-scope" });
+    const metaRow = header.createDiv({ cls: "auto-linker-chat-meta" });
+    this.threadInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-thread-info" });
+    this.syncInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-sync-info" });
     const actionRow = root.createDiv({ cls: "auto-linker-chat-actions" });
+    const newThreadButton = actionRow.createEl("button", { text: "New thread" });
+    newThreadButton.addClass("auto-linker-chat-btn");
+    newThreadButton.onclick = async () => {
+      await this.startNewThread();
+    };
     const selectButton = actionRow.createEl("button", { text: "Select notes" });
     selectButton.addClass("auto-linker-chat-btn");
     selectButton.onclick = async () => {
@@ -2119,20 +2164,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       await this.refreshScopeLabel();
     };
-    const saveButton = actionRow.createEl("button", { text: "Save chat" });
-    saveButton.addClass("auto-linker-chat-btn");
-    saveButton.onclick = async () => {
-      if (this.messages.length === 0) {
-        new import_obsidian4.Notice("No chat messages to save.");
-        return;
-      }
-      try {
-        const path = await this.plugin.saveLocalQaTranscript(this.messages);
-        new import_obsidian4.Notice(`Chat saved: ${path}`, 6e3);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown transcript save error";
-        new import_obsidian4.Notice(`Failed to save chat: ${message}`, 7e3);
-      }
+    const openThreadButton = actionRow.createEl("button", { text: "Open chat note" });
+    openThreadButton.addClass("auto-linker-chat-btn");
+    openThreadButton.onclick = async () => {
+      await this.openThreadNote();
     };
     const controlRow = root.createDiv({ cls: "auto-linker-chat-controls" });
     const modelWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
@@ -2162,12 +2197,14 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       await this.plugin.saveSettings();
     };
     this.threadEl = root.createDiv({ cls: "auto-linker-chat-thread" });
-    this.threadEl.createEl("div", { text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694." });
-    this.inputEl = root.createEl("textarea", {
-      cls: "auto-linker-chat-input"
+    this.threadEl.createDiv({
+      cls: "auto-linker-chat-empty",
+      text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694."
     });
+    const composer = root.createDiv({ cls: "auto-linker-chat-composer" });
+    this.inputEl = composer.createEl("textarea", { cls: "auto-linker-chat-input" });
     this.inputEl.placeholder = "\uC120\uD0DD\uB41C \uB178\uD2B8/\uD3F4\uB354 \uBC94\uC704\uC5D0\uC11C \uC9C8\uBB38\uD558\uC138\uC694...";
-    const footer = root.createDiv({ cls: "auto-linker-chat-footer" });
+    const footer = composer.createDiv({ cls: "auto-linker-chat-footer" });
     this.sendButton = footer.createEl("button", { text: "Send", cls: "mod-cta" });
     this.sendButton.addClass("auto-linker-chat-send");
     this.sendButton.onclick = async () => {
@@ -2179,6 +2216,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         await this.submitQuestion();
       }
     });
+    this.refreshThreadMeta();
   }
   refreshModelOptions() {
     const currentOverride = this.plugin.getQaModelOverrideForQa();
@@ -2202,6 +2240,86 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const ss = String(date.getSeconds()).padStart(2, "0");
     return `${hh}:${mm}:${ss}`;
   }
+  async startNewThread() {
+    if (this.messages.length > 0 && (this.plugin.isQaThreadAutoSyncEnabledForQa() || this.threadPath)) {
+      await this.flushThreadSync(true);
+    }
+    this.messages = [];
+    this.renderMessages();
+    this.resetThreadState();
+    this.inputEl.focus();
+  }
+  scheduleThreadSync(delayMs = 850) {
+    if (!this.plugin.isQaThreadAutoSyncEnabledForQa() || this.messages.length === 0) {
+      return;
+    }
+    if (this.syncTimer !== null) {
+      window.clearTimeout(this.syncTimer);
+    }
+    this.setSyncStatus("Pending...");
+    this.syncTimer = window.setTimeout(() => {
+      this.syncTimer = null;
+      void this.flushThreadSync(false);
+    }, delayMs);
+  }
+  async flushThreadSync(force) {
+    var _a;
+    if (!force && !this.plugin.isQaThreadAutoSyncEnabledForQa()) {
+      return;
+    }
+    if (this.messages.length === 0) {
+      return;
+    }
+    if (this.syncInFlight) {
+      this.syncQueued = true;
+      return;
+    }
+    if (this.syncTimer !== null) {
+      window.clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+    this.syncInFlight = true;
+    this.setSyncStatus("Syncing...");
+    try {
+      const synced = await this.plugin.syncLocalQaTranscript({
+        messages: this.messages,
+        threadPath: (_a = this.threadPath) != null ? _a : void 0,
+        threadId: this.threadId,
+        createdAt: this.threadCreatedAt
+      });
+      this.threadPath = synced.path;
+      this.threadId = synced.threadId;
+      this.threadCreatedAt = synced.createdAt;
+      this.setSyncStatus(`Synced ${this.formatTime(synced.updatedAt)}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown thread sync error";
+      this.setSyncStatus("Sync failed");
+      new import_obsidian4.Notice(`Chat sync failed: ${message}`, 7e3);
+    } finally {
+      this.syncInFlight = false;
+      if (this.syncQueued) {
+        this.syncQueued = false;
+        this.scheduleThreadSync(350);
+      }
+    }
+  }
+  async openThreadNote() {
+    if (this.messages.length === 0) {
+      new import_obsidian4.Notice("No chat messages yet.");
+      return;
+    }
+    await this.flushThreadSync(true);
+    if (!this.threadPath) {
+      new import_obsidian4.Notice("Thread note is not ready yet.");
+      return;
+    }
+    const target = this.app.vault.getAbstractFileByPath(this.threadPath);
+    if (target instanceof import_obsidian4.TFile) {
+      await this.app.workspace.getLeaf(true).openFile(target);
+      return;
+    }
+    new import_obsidian4.Notice(`Thread note not found: ${this.threadPath}`, 7e3);
+  }
   renderSourceLink(parent, source) {
     const row = parent.createDiv({ cls: "auto-linker-chat-source-row" });
     const link = row.createEl("a", {
@@ -2220,34 +2338,48 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
     };
     row.createEl("span", {
-      text: `(${formatSimilarity(source.similarity)})`,
+      text: formatSimilarity(source.similarity),
       cls: "auto-linker-chat-source-similarity"
     });
   }
   renderMessages() {
     this.threadEl.empty();
     if (this.messages.length === 0) {
-      this.threadEl.createEl("div", { text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694." });
+      this.threadEl.createDiv({
+        cls: "auto-linker-chat-empty",
+        text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694."
+      });
       return;
     }
     for (const message of this.messages) {
       const box = this.threadEl.createDiv({
         cls: `auto-linker-chat-message auto-linker-chat-message-${message.role}`
       });
-      const title = box.createEl("strong", {
+      const head = box.createDiv({ cls: "auto-linker-chat-message-head" });
+      head.createEl("strong", {
         text: message.role === "assistant" ? "Assistant" : message.role === "user" ? "You" : "System"
       });
-      const time = box.createEl("small", { text: ` ${this.formatTime(message.timestamp)}` });
-      time.addClass("auto-linker-chat-message-time");
-      title.appendChild(time);
+      head.createEl("small", {
+        text: this.formatTime(message.timestamp),
+        cls: "auto-linker-chat-message-time"
+      });
       const body = box.createDiv({ cls: "auto-linker-chat-message-body" });
       body.setText(message.text);
       if (message.role === "assistant" && message.sources && message.sources.length > 0) {
         const src = box.createDiv({ cls: "auto-linker-chat-sources" });
-        src.createEl("small", { text: "Sources" });
+        src.createDiv({
+          cls: "auto-linker-chat-sources-title",
+          text: `Sources (${message.sources.length})`
+        });
         for (const source of message.sources) {
           this.renderSourceLink(src, source);
         }
+      }
+      if (message.role === "assistant" && message.model && message.embeddingModel) {
+        box.createDiv({
+          cls: "auto-linker-chat-message-meta",
+          text: `model=${message.model} | embedding=${message.embeddingModel}`
+        });
       }
     }
     this.threadEl.scrollTop = this.threadEl.scrollHeight;
@@ -2258,14 +2390,21 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       this.messages = this.messages.slice(-120);
     }
     this.renderMessages();
+    this.scheduleThreadSync();
   }
   clearPendingSystemMessage() {
+    let removed = false;
     for (let i = this.messages.length - 1; i >= 0; i -= 1) {
       const item = this.messages[i];
       if (item.role === "system" && item.text.includes("\uC0DD\uC131 \uC911")) {
         this.messages.splice(i, 1);
+        removed = true;
         break;
       }
+    }
+    if (removed) {
+      this.renderMessages();
+      this.scheduleThreadSync(250);
     }
   }
   buildHistoryTurns() {
@@ -2280,9 +2419,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
     const model = this.plugin.getQaModelLabelForQa();
     const embedding = this.plugin.getQaEmbeddingModelForQa();
+    const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "auto" : "manual";
     const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set)";
     this.scopeEl.setText(
-      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"} | chats=${chatFolder}`
+      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"} | sync=${syncMode} | chats=${chatFolder}`
     );
   }
   async submitQuestion() {
@@ -2328,6 +2468,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.messages.push(draftMessage);
     const draftIndex = this.messages.length - 1;
     this.renderMessages();
+    this.scheduleThreadSync(300);
     try {
       const result = await this.plugin.askLocalQa(
         question,
@@ -2339,6 +2480,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           if (draft2 && draft2.role === "assistant") {
             draft2.text += token;
             this.renderMessages();
+            this.scheduleThreadSync(1100);
           }
         }
       );
@@ -2353,6 +2495,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         draft.retrievalCacheHits = result.retrievalCacheHits;
         draft.retrievalCacheWrites = result.retrievalCacheWrites;
         this.renderMessages();
+        this.scheduleThreadSync(120);
       } else {
         this.pushMessage({
           role: "assistant",
@@ -2730,6 +2873,14 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Auto-sync chat thread").setDesc(
+      "When enabled, the current chat thread is continuously saved and updated as messages change."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaThreadAutoSyncEnabled).onChange(async (value) => {
+        this.plugin.settings.qaThreadAutoSyncEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Allow non-local Q&A endpoint (danger)").setDesc("Off by default. Keep disabled to prevent note data leaving localhost.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.qaAllowNonLocalEndpoint).onChange(async (value) => {
         this.plugin.settings.qaAllowNonLocalEndpoint = value;
@@ -3018,6 +3169,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getChatTranscriptRootPathForQa() {
     return this.settings.chatTranscriptRootPath.trim();
   }
+  isQaThreadAutoSyncEnabledForQa() {
+    return this.settings.qaThreadAutoSyncEnabled;
+  }
   isSafeVaultRelativePath(path) {
     const normalized = (0, import_obsidian4.normalizePath)(path.trim());
     if (!normalized) {
@@ -3062,20 +3216,41 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     return [...bestByPath.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, Math.max(1, maxItems)).map(([path]) => path);
   }
-  async saveLocalQaTranscript(messages) {
-    const timestamp = /* @__PURE__ */ new Date();
-    const stamp = formatBackupStamp(timestamp);
+  normalizeThreadId(rawThreadId, fallbackDate) {
+    const fallback = `chat-${formatBackupStamp(fallbackDate)}`;
+    const trimmed = (rawThreadId != null ? rawThreadId : "").trim();
+    if (!trimmed) {
+      return fallback;
+    }
+    const normalized = trimmed.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^[-_]+|[-_]+$/g, "");
+    return normalized || fallback;
+  }
+  resolveSafeMarkdownPath(rawPath, label) {
+    const normalized = (0, import_obsidian4.normalizePath)(rawPath.trim());
+    if (!this.isSafeVaultRelativePath(normalized)) {
+      throw new Error(`${label} path must be a safe vault-relative markdown path.`);
+    }
+    if (!normalized.toLowerCase().endsWith(".md")) {
+      throw new Error(`${label} path must end with .md`);
+    }
+    return normalized;
+  }
+  async allocateLocalQaThreadPath(threadId) {
     const folder = this.resolveSafeFolderPath(
       this.settings.chatTranscriptRootPath,
       "Auto-Linker Chats",
       "Chat transcript"
     );
-    let outputPath = (0, import_obsidian4.normalizePath)(`${folder}/chat-${stamp}.md`);
+    let outputPath = (0, import_obsidian4.normalizePath)(`${folder}/${threadId}.md`);
     let suffix = 1;
     while (await this.app.vault.adapter.exists(outputPath)) {
-      outputPath = (0, import_obsidian4.normalizePath)(`${folder}/chat-${stamp}-${suffix}.md`);
+      outputPath = (0, import_obsidian4.normalizePath)(`${folder}/${threadId}-${suffix}.md`);
       suffix += 1;
     }
+    return outputPath;
+  }
+  buildLocalQaTranscriptMarkdown(params) {
+    const { messages, threadId, createdAt, updatedAt } = params;
     const qaModel = this.getQaModelLabelForQa();
     const embeddingModel = this.getQaEmbeddingModelForQa();
     const selectedFiles = this.getSelectedFilesForQa().map((file) => file.path);
@@ -3092,7 +3267,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const lines = [];
     lines.push("---");
     lines.push('type: "auto-linker-chat"');
-    lines.push(`created: "${timestamp.toISOString()}"`);
+    lines.push(`thread_id: "${this.escapeYamlValue(threadId)}"`);
+    lines.push(`created: "${createdAt}"`);
+    lines.push(`updated: "${updatedAt}"`);
     lines.push(`provider: "${this.escapeYamlValue(this.settings.provider)}"`);
     lines.push(`qa_model: "${this.escapeYamlValue(qaModel)}"`);
     lines.push(`embedding_model: "${this.escapeYamlValue(embeddingModel || "(not set)")}"`);
@@ -3124,15 +3301,44 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         lines.push("");
         lines.push("Sources:");
         for (const source of message.sources) {
-          lines.push(`- ${source.path} (${formatSimilarity(source.similarity)})`);
+          lines.push(`- [[${source.path}]] (${formatSimilarity(source.similarity)})`);
         }
       }
       lines.push("");
     }
+    return `${lines.join("\n").trim()}
+`;
+  }
+  async syncLocalQaTranscript(input) {
+    const now = /* @__PURE__ */ new Date();
+    const updatedAt = now.toISOString();
+    const createdDate = input.createdAt ? new Date(input.createdAt) : now;
+    const createdAt = Number.isNaN(createdDate.getTime()) ? updatedAt : createdDate.toISOString();
+    const threadId = this.normalizeThreadId(input.threadId, new Date(createdAt));
+    const outputPath = input.threadPath ? this.resolveSafeMarkdownPath(input.threadPath, "Chat thread") : await this.allocateLocalQaThreadPath(threadId);
+    const markdown = this.buildLocalQaTranscriptMarkdown({
+      messages: input.messages,
+      threadId,
+      createdAt,
+      updatedAt
+    });
     await this.ensureParentFolder(outputPath);
-    await this.app.vault.adapter.write(outputPath, `${lines.join("\n").trim()}
-`);
-    return outputPath;
+    await this.app.vault.adapter.write(outputPath, markdown);
+    return {
+      path: outputPath,
+      threadId,
+      createdAt,
+      updatedAt
+    };
+  }
+  async saveLocalQaTranscript(messages) {
+    const now = /* @__PURE__ */ new Date();
+    const synced = await this.syncLocalQaTranscript({
+      messages,
+      threadId: `chat-${formatBackupStamp(now)}`,
+      createdAt: now.toISOString()
+    });
+    return synced.path;
   }
   async applyRecommendedOllamaModel(notify) {
     var _a;
@@ -3312,6 +3518,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
       this.settings.qaAllowNonLocalEndpoint = DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
+    }
+    if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
+      this.settings.qaThreadAutoSyncEnabled = DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
     }
     if (typeof this.settings.chatTranscriptRootPath !== "string") {
       this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;
