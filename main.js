@@ -1361,6 +1361,39 @@ function formatBackupStamp(date) {
   const sec = String(date.getSeconds()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}_${hh}-${min}-${sec}`;
 }
+function splitThinkingBlocks(rawText) {
+  const raw = rawText != null ? rawText : "";
+  if (!raw) {
+    return { answer: "", thinking: "", hasOpenThinking: false };
+  }
+  let cursor = 0;
+  let answer = "";
+  let hasOpenThinking = false;
+  const thinkingParts = [];
+  while (cursor < raw.length) {
+    const start = raw.indexOf("<think>", cursor);
+    if (start < 0) {
+      answer += raw.slice(cursor);
+      break;
+    }
+    answer += raw.slice(cursor, start);
+    const thinkStart = start + "<think>".length;
+    const end = raw.indexOf("</think>", thinkStart);
+    if (end < 0) {
+      thinkingParts.push(raw.slice(thinkStart));
+      hasOpenThinking = true;
+      cursor = raw.length;
+      break;
+    }
+    thinkingParts.push(raw.slice(thinkStart, end));
+    cursor = end + "</think>".length;
+  }
+  return {
+    answer: answer.replace(/<\/?think>/g, ""),
+    thinking: thinkingParts.join("\n\n").trim(),
+    hasOpenThinking
+  };
+}
 function mergeUniqueStrings(base, additions) {
   const out = [...base];
   const seen = new Set(base);
@@ -2051,6 +2084,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.syncTimer = null;
     this.syncInFlight = false;
     this.syncQueued = false;
+    this.renderVersion = 0;
+    this.streamRenderTimer = null;
     this.plugin = plugin;
   }
   getViewType() {
@@ -2074,6 +2109,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     if (this.syncTimer !== null) {
       window.clearTimeout(this.syncTimer);
       this.syncTimer = null;
+    }
+    if (this.streamRenderTimer !== null) {
+      window.clearTimeout(this.streamRenderTimer);
+      this.streamRenderTimer = null;
     }
     if (this.plugin.isQaThreadAutoSyncEnabledForQa() || this.threadPath) {
       await this.flushThreadSync(true);
@@ -2240,6 +2279,37 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const ss = String(date.getSeconds()).padStart(2, "0");
     return `${hh}:${mm}:${ss}`;
   }
+  scheduleStreamRender(delayMs = 80) {
+    if (this.streamRenderTimer !== null) {
+      return;
+    }
+    this.streamRenderTimer = window.setTimeout(() => {
+      this.streamRenderTimer = null;
+      this.renderMessages();
+    }, delayMs);
+  }
+  renderMarkdownBody(container, markdown, sourcePath, version) {
+    container.empty();
+    void import_obsidian4.MarkdownRenderer.renderMarkdown(markdown, container, sourcePath, this).catch(() => {
+      container.setText(markdown);
+    }).finally(() => {
+      if (version === this.renderVersion) {
+        this.threadEl.scrollTop = this.threadEl.scrollHeight;
+      }
+    });
+  }
+  renderThinkingCard(parent, message) {
+    const details = parent.createEl("details", { cls: "auto-linker-chat-thinking-details" });
+    if (message.isDraft) {
+      details.open = true;
+    }
+    details.createEl("summary", {
+      text: message.isDraft ? "Thinking (live)" : "Thinking",
+      cls: "auto-linker-chat-thinking-summary"
+    });
+    const body = details.createDiv({ cls: "auto-linker-chat-thinking-body" });
+    body.setText(message.text || "(empty)");
+  }
   async startNewThread() {
     if (this.messages.length > 0 && (this.plugin.isQaThreadAutoSyncEnabledForQa() || this.threadPath)) {
       await this.flushThreadSync(true);
@@ -2343,6 +2413,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     });
   }
   renderMessages() {
+    var _a;
+    this.renderVersion += 1;
+    const version = this.renderVersion;
     this.threadEl.empty();
     if (this.messages.length === 0) {
       this.threadEl.createDiv({
@@ -2355,6 +2428,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       const box = this.threadEl.createDiv({
         cls: `auto-linker-chat-message auto-linker-chat-message-${message.role}`
       });
+      if (message.role === "thinking") {
+        this.renderThinkingCard(box, message);
+        continue;
+      }
       const head = box.createDiv({ cls: "auto-linker-chat-message-head" });
       head.createEl("strong", {
         text: message.role === "assistant" ? "Assistant" : message.role === "user" ? "You" : "System"
@@ -2364,7 +2441,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         cls: "auto-linker-chat-message-time"
       });
       const body = box.createDiv({ cls: "auto-linker-chat-message-body" });
-      body.setText(message.text);
+      if (message.role === "assistant" && !message.isDraft) {
+        body.addClass("auto-linker-chat-markdown");
+        this.renderMarkdownBody(body, message.text, (_a = this.threadPath) != null ? _a : "", version);
+      } else {
+        body.setText(message.text);
+      }
       if (message.role === "assistant" && message.sources && message.sources.length > 0) {
         const src = box.createDiv({ cls: "auto-linker-chat-sources" });
         src.createDiv({
@@ -2391,21 +2473,6 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     this.renderMessages();
     this.scheduleThreadSync();
-  }
-  clearPendingSystemMessage() {
-    let removed = false;
-    for (let i = this.messages.length - 1; i >= 0; i -= 1) {
-      const item = this.messages[i];
-      if (item.role === "system" && item.text.includes("\uC0DD\uC131 \uC911")) {
-        this.messages.splice(i, 1);
-        removed = true;
-        break;
-      }
-    }
-    if (removed) {
-      this.renderMessages();
-      this.scheduleThreadSync(250);
-    }
   }
   buildHistoryTurns() {
     const turns = this.messages.filter((item) => item.role === "user" || item.role === "assistant").map((item) => ({
@@ -2455,36 +2522,74 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     });
     this.running = true;
     this.sendButton.disabled = true;
-    this.pushMessage({
-      role: "system",
-      text: "\uAC80\uC0C9 \uBC0F \uB2F5\uBCC0 \uC0DD\uC131 \uC911...",
-      timestamp: (/* @__PURE__ */ new Date()).toISOString()
-    });
+    const thinkingMessage = {
+      role: "thinking",
+      text: "- Retrieving relevant notes...",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      isDraft: true
+    };
+    this.messages.push(thinkingMessage);
+    const thinkingIndex = this.messages.length - 1;
     const draftMessage = {
       role: "assistant",
       text: "",
-      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      isDraft: true
     };
     this.messages.push(draftMessage);
     const draftIndex = this.messages.length - 1;
     this.renderMessages();
     this.scheduleThreadSync(300);
+    const progressLines = ["Retrieval started"];
+    let modelThinking = "";
+    let rawResponse = "";
+    const updateThinkingMessage = (isDraft) => {
+      const item = this.messages[thinkingIndex];
+      if (!item || item.role !== "thinking") {
+        return;
+      }
+      const chunks = [];
+      if (progressLines.length > 0) {
+        chunks.push(progressLines.map((line) => `- ${line}`).join("\n"));
+      }
+      if (modelThinking.trim()) {
+        chunks.push(modelThinking.trim());
+      }
+      item.text = chunks.join("\n\n").trim();
+      item.isDraft = isDraft;
+      item.timestamp = (/* @__PURE__ */ new Date()).toISOString();
+      this.scheduleStreamRender(80);
+      this.scheduleThreadSync(900);
+    };
     try {
       const result = await this.plugin.askLocalQa(
         question,
         topK,
         this.buildHistoryTurns(),
         (token) => {
-          this.clearPendingSystemMessage();
+          rawResponse += token;
+          const parsed = splitThinkingBlocks(rawResponse);
           const draft2 = this.messages[draftIndex];
           if (draft2 && draft2.role === "assistant") {
-            draft2.text += token;
-            this.renderMessages();
+            draft2.text = parsed.answer;
+            draft2.isDraft = true;
+          }
+          if (parsed.thinking.trim()) {
+            modelThinking = parsed.thinking.trim();
+          }
+          updateThinkingMessage(parsed.hasOpenThinking || modelThinking.length > 0);
+          if (!parsed.thinking.trim()) {
+            this.scheduleStreamRender(70);
             this.scheduleThreadSync(1100);
           }
+        },
+        (event) => {
+          if (!progressLines.includes(event)) {
+            progressLines.push(event);
+          }
+          updateThinkingMessage(true);
         }
       );
-      this.clearPendingSystemMessage();
       const draft = this.messages[draftIndex];
       if (draft && draft.role === "assistant") {
         draft.text = result.answer;
@@ -2494,6 +2599,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         draft.embeddingModel = result.embeddingModel;
         draft.retrievalCacheHits = result.retrievalCacheHits;
         draft.retrievalCacheWrites = result.retrievalCacheWrites;
+        draft.isDraft = false;
+        if (result.thinking.trim()) {
+          modelThinking = result.thinking.trim();
+        }
+        progressLines.push("Answer generated");
+        updateThinkingMessage(false);
         this.renderMessages();
         this.scheduleThreadSync(120);
       } else {
@@ -2505,15 +2616,34 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           model: result.model,
           embeddingModel: result.embeddingModel,
           retrievalCacheHits: result.retrievalCacheHits,
-          retrievalCacheWrites: result.retrievalCacheWrites
+          retrievalCacheWrites: result.retrievalCacheWrites,
+          isDraft: false
         });
       }
+      const thinking = this.messages[thinkingIndex];
+      if (thinking && thinking.role === "thinking") {
+        if (!thinking.text.trim()) {
+          this.messages.splice(thinkingIndex, 1);
+        } else {
+          thinking.isDraft = false;
+          thinking.timestamp = (/* @__PURE__ */ new Date()).toISOString();
+        }
+      }
+      this.renderMessages();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown local QA error";
-      this.clearPendingSystemMessage();
       const draft = this.messages[draftIndex];
       if (draft && draft.role === "assistant" && !draft.text.trim()) {
         this.messages.splice(draftIndex, 1);
+      } else if (draft && draft.role === "assistant") {
+        draft.isDraft = false;
+      }
+      const thinking = this.messages[thinkingIndex];
+      if (thinking && thinking.role === "thinking") {
+        progressLines.push(`Error: ${message}`);
+        thinking.text = progressLines.map((line) => `- ${line}`).join("\n");
+        thinking.isDraft = false;
+        thinking.timestamp = (/* @__PURE__ */ new Date()).toISOString();
       }
       this.pushMessage({
         role: "system",
@@ -2524,6 +2654,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     } finally {
       this.running = false;
       this.sendButton.disabled = false;
+      if (this.streamRenderTimer !== null) {
+        window.clearTimeout(this.streamRenderTimer);
+        this.streamRenderTimer = null;
+      }
       this.inputEl.focus();
     }
   }
@@ -3294,7 +3428,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         lines.push("");
         continue;
       }
-      const label = message.role === "assistant" ? "Assistant" : "User";
+      const label = message.role === "assistant" ? "Assistant" : message.role === "thinking" ? "Thinking" : "User";
       lines.push(`## ${label} (${message.timestamp})`);
       lines.push(message.text);
       if (message.role === "assistant" && message.sources && message.sources.length > 0) {
@@ -3979,12 +4113,14 @@ ${item.content}`
       "Answer only from the provided sources.",
       "Use the same language as the user's question.",
       "Tone: natural conversation, concise, not stiff.",
-      "Do not force rigid sections. Use bullets only if they improve clarity.",
+      "Output in markdown. Use headings/bullets only when helpful.",
+      "If comparing choices or plans, prefer a markdown table.",
       "Start with a direct answer in 1-3 sentences.",
-      "If useful, add short insight synthesis (patterns, contradictions, implications).",
+      "Then add short synthesis (patterns, contradictions, implications) if useful.",
       "If evidence is insufficient, clearly say what is missing.",
       "When making claims, cite source paths inline in parentheses.",
       "Respect previous turns when they remain consistent with the provided sources.",
+      "Do not invent facts outside the provided sources.",
       "",
       "Conversation so far:",
       historyText,
@@ -3998,7 +4134,7 @@ ${item.content}`
   async openLocalQaChatModal() {
     await this.openLocalQaWorkspaceView();
   }
-  async askLocalQa(question, topK, history = [], onToken) {
+  async askLocalQa(question, topK, history = [], onToken, onEvent) {
     var _a;
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
@@ -4032,7 +4168,8 @@ ${item.content}`
         throw new Error("Embedding model is empty. Refresh embedding detection first.");
       }
       this.setStatus("semantic retrieval for local qa...");
-      const retrievalCandidateK = Math.max(safeTopK * 3, safeTopK);
+      onEvent == null ? void 0 : onEvent("Embedding retrieval started");
+      const retrievalCandidateK = Math.max(safeTopK * 6, 24);
       const retrieval = await searchSemanticNotesByQuery(
         this.app,
         selectedFiles,
@@ -4040,16 +4177,25 @@ ${item.content}`
         safeQuestion,
         retrievalCandidateK
       );
+      onEvent == null ? void 0 : onEvent(
+        `Retrieved ${retrieval.hits.length} candidate notes (cache hits=${retrieval.cacheHits}, writes=${retrieval.cacheWrites})`
+      );
       if (retrieval.errors.length > 0) {
         this.notice(`Semantic retrieval had ${retrieval.errors.length} issue(s).`, 6e3);
+        onEvent == null ? void 0 : onEvent(`Retrieval warnings: ${retrieval.errors.length}`);
       }
       if (retrieval.hits.length === 0) {
         throw new Error("No relevant notes were found for this question.");
       }
-      const rankedHits = this.rerankQaHits(retrieval.hits, safeQuestion, safeTopK);
+      const rankedHits = this.rerankQaHits(
+        retrieval.hits,
+        safeQuestion,
+        Math.max(safeTopK * 2, safeTopK)
+      );
       if (rankedHits.length === 0) {
         throw new Error("No relevant notes were found for this question.");
       }
+      onEvent == null ? void 0 : onEvent(`Reranked to ${rankedHits.length} notes`);
       const maxContextChars = Math.max(2e3, this.settings.qaMaxContextChars);
       const sourceBlocks = [];
       let usedChars = 0;
@@ -4074,10 +4220,12 @@ ${item.content}`
         });
         usedChars += snippet.length;
       }
+      onEvent == null ? void 0 : onEvent(`Context built from ${sourceBlocks.length} notes (${usedChars} chars)`);
       if (sourceBlocks.length === 0) {
         throw new Error("Relevant notes found but no readable content extracted.");
       }
       const prompt = this.buildLocalQaPrompt(safeQuestion, sourceBlocks, history);
+      onEvent == null ? void 0 : onEvent("Generation started");
       this.setStatus("asking local qa model...");
       let answer = "";
       if (onToken) {
@@ -4149,17 +4297,20 @@ ${item.content}`
         }
         answer = typeof ((_a = response.json) == null ? void 0 : _a.response) === "string" ? response.json.response.trim() : response.text.trim();
       }
-      answer = answer.trim();
-      if (!answer) {
+      const split = splitThinkingBlocks(answer);
+      const finalAnswer = split.answer.trim() || answer.trim();
+      if (!finalAnswer) {
         throw new Error("Local Q&A returned an empty answer.");
       }
+      onEvent == null ? void 0 : onEvent("Generation completed");
       const sourceList = sourceBlocks.map((item) => ({
         path: item.path,
         similarity: item.similarity
       }));
       return {
         question: safeQuestion,
-        answer,
+        answer: finalAnswer,
+        thinking: split.thinking,
         model: qaModel,
         embeddingModel,
         sources: sourceList,

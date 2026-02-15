@@ -10,6 +10,8 @@ Auto-Linker is a local-first Obsidian plugin for:
 ## Release update (2026-02-15)
 
 - Redesigned `Local AI Chat (Selected Notes)` layout (header, controls, message cards, source list, composer).
+- Assistant messages now render as markdown (including tables/lists/headers).
+- Added live `Thinking` timeline card while retrieval/generation is running.
 - Source references in chat are now clickable and open the target note directly.
 - Chat transcript scope was reduced to top retrieval sources instead of linking every selected file.
 - Added configurable dry-run cleanup report folder.
@@ -33,8 +35,9 @@ Auto-Linker is a local-first Obsidian plugin for:
 - Command palette: `Ask local AI from selected notes`
 2. Select notes/folders scope.
 3. Ask questions in natural language.
-4. Click source links in each answer to jump to notes.
-5. Use `Open chat note` to open the synced thread note.
+4. Watch the live `Thinking` card for retrieval/generation progress.
+5. Click source links in each answer to jump to notes.
+6. Use `Open chat note` to open the synced thread note.
 
 Thread behavior:
 - Default mode is auto-sync (`Auto-sync chat thread = ON`).

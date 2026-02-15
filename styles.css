@@ -178,6 +178,12 @@
   background: var(--background-modifier-hover);
 }
 
+.auto-linker-chat-message-thinking {
+  margin-right: auto;
+  max-width: 92%;
+  background: color-mix(in srgb, var(--background-secondary) 92%, var(--interactive-accent) 8%);
+}
+
 .auto-linker-chat-message-time {
   opacity: 0.82;
   font-size: 12px;
@@ -189,6 +195,61 @@
   white-space: pre-wrap;
   line-height: 1.55;
   word-break: break-word;
+}
+
+.auto-linker-chat-markdown {
+  white-space: normal;
+}
+
+.auto-linker-chat-markdown p {
+  margin: 0.45em 0;
+}
+
+.auto-linker-chat-markdown ul,
+.auto-linker-chat-markdown ol {
+  margin: 0.35em 0 0.35em 1.2em;
+}
+
+.auto-linker-chat-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.auto-linker-chat-markdown th,
+.auto-linker-chat-markdown td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.auto-linker-chat-markdown th {
+  background: var(--background-modifier-hover);
+}
+
+.auto-linker-chat-thinking-details {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--background-primary) 92%, var(--interactive-accent) 8%);
+}
+
+.auto-linker-chat-thinking-summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+}
+
+.auto-linker-chat-thinking-body {
+  padding: 0 8px 8px;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .auto-linker-chat-message-meta {
@@ -221,11 +282,12 @@
 }
 
 .auto-linker-chat-source-link {
-  color: var(--text-normal);
+  color: var(--text-accent);
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .auto-linker-chat-source-link:hover {

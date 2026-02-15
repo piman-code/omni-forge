@@ -10,10 +10,12 @@ All notable changes to this project are documented in this file.
 - Configurable `Chat transcript folder path`.
 - Configurable `Cleanup dry-run report folder`.
 - `Auto-sync chat thread` setting for continuous thread-note synchronization.
+- Live `Thinking` timeline card for retrieval/generation progress.
 
 ### Changed
 
 - Redesigned Local AI chat workspace UI for clearer layout and readability.
+- Assistant responses are rendered as markdown (tables/lists/headers supported).
 - Source list in chat messages now renders as clickable note links.
 - Chat transcript `scope_files` now stores top retrieval sources instead of full selected scope.
 
