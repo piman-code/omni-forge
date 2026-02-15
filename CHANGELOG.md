@@ -7,15 +7,20 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - Live `Thinking` timeline card for retrieval/generation progress in local Q&A.
+- Thinking timeline now shows stage-typed event cards (`retrieval`, `generation`, `thinking`, `warning`, `error`) with timestamps.
 - Auto-sync chat thread mode for continuously updating a single transcript note.
 - New chat actions: `New thread`, `Open chat note`, and left ribbon shortcut.
 - Configurable folders for chat transcripts and cleanup dry-run reports.
+- Q&A settings: `Prefer Ollama /api/chat (with fallback)` and `Structured answer guard`.
 
 ### Changed
 
 - Local AI chat UI was redesigned for clearer structure and readability.
 - Assistant responses are rendered as markdown (tables/lists/headers supported).
 - Q&A retrieval pipeline now expands candidates more aggressively before reranking.
+- Local Q&A generation path now prefers Ollama `/api/chat` and automatically falls back to `/api/generate`.
+- Q&A prompt policy now enforces intent-aware structured output (comparison table/checklist/source-only list).
+- RAG snippet extraction changed from line-based to paragraph/heading blocks with reduced path-bias reranking.
 - Transcript `scope_files` now focuses on top retrieved sources (instead of full scope dump).
 
 ### Fixed
@@ -23,6 +28,7 @@ All notable changes to this project are documented in this file.
 - Command palette labels no longer duplicate `Auto-Linker:` prefixes.
 - Cleanup dry-run report path now uses safe vault-relative validation.
 - Improved source row visibility in themes with high color-contrast differences.
+- Markdown render consistency improvements for table/checklist/blockquote/code blocks across themes.
 
 ## [0.1.1] - 2026-02-15
 

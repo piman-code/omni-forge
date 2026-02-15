@@ -96,6 +96,8 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaTopK: 5,
   qaMaxContextChars: 12000,
   qaAllowNonLocalEndpoint: false,
+  qaPreferChatApi: true,
+  qaStructureGuardEnabled: true,
   qaThreadAutoSyncEnabled: true,
   chatTranscriptRootPath: "Auto-Linker Chats",
   cleanupReportRootPath: "Auto-Linker Reports",
@@ -1137,6 +1139,25 @@ interface LocalQASourceItem {
   similarity: number;
 }
 
+type LocalQaProgressStage =
+  | "retrieval"
+  | "generation"
+  | "thinking"
+  | "warning"
+  | "error"
+  | "info";
+
+interface LocalQaProgressEvent {
+  stage: LocalQaProgressStage;
+  message: string;
+  timestamp: string;
+  detail?: string;
+  thinkingChunk?: string;
+}
+
+type LocalQaResponseIntent = "default" | "comparison" | "plan" | "sources_only";
+type LocalQaEndpointKind = "chat" | "generate";
+
 interface LocalQAResultPayload {
   question: string;
   answer: string;
@@ -1157,6 +1178,8 @@ interface LocalQAViewMessage {
   role: "user" | "assistant" | "system" | "thinking";
   text: string;
   timestamp: string;
+  timeline?: LocalQaProgressEvent[];
+  thinkingDetails?: string;
   sources?: LocalQASourceItem[];
   model?: string;
   embeddingModel?: string;
@@ -1598,6 +1621,44 @@ class LocalQAWorkspaceView extends ItemView {
     return `${hh}:${mm}:${ss}`;
   }
 
+  private formatThinkingStage(stage: LocalQaProgressStage): string {
+    switch (stage) {
+      case "retrieval":
+        return "RETRIEVE";
+      case "generation":
+        return "GENERATE";
+      case "thinking":
+        return "THINK";
+      case "warning":
+        return "WARN";
+      case "error":
+        return "ERROR";
+      default:
+        return "INFO";
+    }
+  }
+
+  private buildThinkingTranscriptText(
+    timeline: LocalQaProgressEvent[],
+    modelThinking: string,
+  ): string {
+    const lines = timeline.map(
+      (event) =>
+        `- [${this.formatTime(event.timestamp)}] [${this.formatThinkingStage(event.stage)}] ${event.message}`,
+    );
+    const trimmedThinking = modelThinking.trim();
+    if (!trimmedThinking) {
+      return lines.join("\n");
+    }
+
+    return [
+      ...lines,
+      "",
+      "Model thinking (raw):",
+      trimmedThinking,
+    ].join("\n");
+  }
+
   private scheduleStreamRender(delayMs = 80): void {
     if (this.streamRenderTimer !== null) {
       return;
@@ -1631,12 +1692,58 @@ class LocalQAWorkspaceView extends ItemView {
     if (message.isDraft) {
       details.open = true;
     }
+    const timeline = message.timeline ?? [];
+    const latest = timeline.length > 0 ? timeline[timeline.length - 1] : undefined;
+    const summaryPrefix = message.isDraft ? "Thinking (live)" : "Thinking timeline";
+    const summaryText = latest
+      ? `${summaryPrefix} · ${timeline.length} events · ${this.formatThinkingStage(latest.stage)}`
+      : summaryPrefix;
     details.createEl("summary", {
-      text: message.isDraft ? "Thinking (live)" : "Thinking",
+      text: summaryText,
       cls: "auto-linker-chat-thinking-summary",
     });
     const body = details.createDiv({ cls: "auto-linker-chat-thinking-body" });
-    body.setText(message.text || "(empty)");
+    if (timeline.length > 0) {
+      const timelineEl = body.createDiv({ cls: "auto-linker-chat-thinking-timeline" });
+      for (const event of timeline.slice(-24)) {
+        const card = timelineEl.createDiv({
+          cls: `auto-linker-chat-thinking-event auto-linker-chat-thinking-event-${event.stage}`,
+        });
+        card.createEl("span", {
+          cls: "auto-linker-chat-thinking-event-stage",
+          text: this.formatThinkingStage(event.stage),
+        });
+        const content = card.createDiv({ cls: "auto-linker-chat-thinking-event-content" });
+        content.createDiv({
+          cls: "auto-linker-chat-thinking-event-message",
+          text: event.message,
+        });
+        if (event.detail) {
+          content.createDiv({
+            cls: "auto-linker-chat-thinking-event-detail",
+            text: event.detail,
+          });
+        }
+        card.createEl("span", {
+          cls: "auto-linker-chat-thinking-event-time",
+          text: this.formatTime(event.timestamp),
+        });
+      }
+    }
+
+    if (message.thinkingDetails?.trim()) {
+      const raw = body.createDiv({ cls: "auto-linker-chat-thinking-raw" });
+      raw.createEl("div", {
+        cls: "auto-linker-chat-thinking-raw-title",
+        text: "Model thinking (raw)",
+      });
+      raw.createEl("pre", {
+        cls: "auto-linker-chat-thinking-raw-body",
+        text: message.thinkingDetails.trim(),
+      });
+    } else if (!timeline.length) {
+      body.setText(message.text || "(empty)");
+    }
   }
 
   private async startNewThread(): Promise<void> {
@@ -1907,28 +2014,54 @@ class LocalQAWorkspaceView extends ItemView {
     this.renderMessages();
     this.scheduleThreadSync(300);
 
-    const progressLines: string[] = ["Retrieval started"];
+    const timeline: LocalQaProgressEvent[] = [];
     let modelThinking = "";
     let rawResponse = "";
+    let thinkingStreamAnnounced = false;
 
-    const updateThinkingMessage = (isDraft: boolean): void => {
+    const updateThinkingMessage = (isDraft: boolean, forceTimestamp?: string): void => {
       const item = this.messages[thinkingIndex];
       if (!item || item.role !== "thinking") {
         return;
       }
-      const chunks: string[] = [];
-      if (progressLines.length > 0) {
-        chunks.push(progressLines.map((line) => `- ${line}`).join("\n"));
-      }
-      if (modelThinking.trim()) {
-        chunks.push(modelThinking.trim());
-      }
-      item.text = chunks.join("\n\n").trim();
+      item.timeline = [...timeline];
+      item.thinkingDetails = modelThinking.trim() || undefined;
+      item.text = this.buildThinkingTranscriptText(timeline, modelThinking);
       item.isDraft = isDraft;
-      item.timestamp = new Date().toISOString();
+      item.timestamp = forceTimestamp ?? new Date().toISOString();
       this.scheduleStreamRender(80);
       this.scheduleThreadSync(900);
     };
+
+    const pushTimelineEvent = (event: Omit<LocalQaProgressEvent, "timestamp"> & {
+      timestamp?: string;
+    }): void => {
+      const timestamp = event.timestamp ?? new Date().toISOString();
+      const prev = timeline[timeline.length - 1];
+      if (
+        prev &&
+        prev.stage === event.stage &&
+        prev.message === event.message &&
+        prev.detail === event.detail
+      ) {
+        return;
+      }
+      timeline.push({
+        stage: event.stage,
+        message: event.message,
+        detail: event.detail,
+        timestamp,
+      });
+      if (timeline.length > 80) {
+        timeline.splice(0, timeline.length - 80);
+      }
+      updateThinkingMessage(true, timestamp);
+    };
+
+    pushTimelineEvent({
+      stage: "retrieval",
+      message: "Retrieval started",
+    });
 
     try {
       const result = await this.plugin.askLocalQa(
@@ -1953,15 +2086,21 @@ class LocalQAWorkspaceView extends ItemView {
           }
         },
         (event) => {
-          if (event.startsWith("__THINK__")) {
-            modelThinking += event.slice("__THINK__".length);
-            updateThinkingMessage(true);
+          if (event.thinkingChunk) {
+            modelThinking += event.thinkingChunk;
+            if (!thinkingStreamAnnounced) {
+              pushTimelineEvent({
+                stage: "thinking",
+                message: "Model thinking stream started",
+                timestamp: event.timestamp,
+              });
+              thinkingStreamAnnounced = true;
+            } else {
+              updateThinkingMessage(true, event.timestamp);
+            }
             return;
           }
-          if (!progressLines.includes(event)) {
-            progressLines.push(event);
-          }
-          updateThinkingMessage(true);
+          pushTimelineEvent(event);
         },
       );
       const draft = this.messages[draftIndex];
@@ -1976,8 +2115,18 @@ class LocalQAWorkspaceView extends ItemView {
         draft.isDraft = false;
         if (result.thinking.trim()) {
           modelThinking = result.thinking.trim();
+          if (!thinkingStreamAnnounced) {
+            pushTimelineEvent({
+              stage: "thinking",
+              message: "Model thinking captured",
+            });
+            thinkingStreamAnnounced = true;
+          }
         }
-        progressLines.push("Answer generated");
+        pushTimelineEvent({
+          stage: "generation",
+          message: "Answer generated",
+        });
         updateThinkingMessage(false);
         this.renderMessages();
         this.scheduleThreadSync(120);
@@ -1997,11 +2146,14 @@ class LocalQAWorkspaceView extends ItemView {
 
       const thinking = this.messages[thinkingIndex];
       if (thinking && thinking.role === "thinking") {
-        if (!thinking.text.trim()) {
+        const hasTimeline = (thinking.timeline?.length ?? 0) > 0;
+        const hasThinkingText = Boolean(thinking.thinkingDetails?.trim());
+        if (!hasTimeline && !hasThinkingText) {
           this.messages.splice(thinkingIndex, 1);
         } else {
           thinking.isDraft = false;
           thinking.timestamp = new Date().toISOString();
+          thinking.text = this.buildThinkingTranscriptText(timeline, modelThinking);
         }
       }
       this.renderMessages();
@@ -2015,8 +2167,10 @@ class LocalQAWorkspaceView extends ItemView {
       }
       const thinking = this.messages[thinkingIndex];
       if (thinking && thinking.role === "thinking") {
-        progressLines.push(`Error: ${message}`);
-        thinking.text = progressLines.map((line) => `- ${line}`).join("\n");
+        pushTimelineEvent({
+          stage: "error",
+          message: `Error: ${message}`,
+        });
         thinking.isDraft = false;
         thinking.timestamp = new Date().toISOString();
       }
@@ -2606,6 +2760,18 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Prefer Ollama /api/chat (with fallback)")
+      .setDesc("Use role-based chat first, then fallback to /api/generate when unavailable.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaPreferChatApi)
+          .onChange(async (value) => {
+            this.plugin.settings.qaPreferChatApi = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Q&A retrieval top-k")
       .addText((text) =>
         text
@@ -2632,6 +2798,18 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
               value,
               this.plugin.settings.qaMaxContextChars,
             );
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Structured answer guard")
+      .setDesc("Enforce table/checklist/link structure for comparison/plan/source questions.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaStructureGuardEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.qaStructureGuardEnabled = value;
             await this.plugin.saveSettings();
           }),
       );
@@ -3556,6 +3734,12 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       this.settings.qaAllowNonLocalEndpoint =
         DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
     }
+    if (typeof this.settings.qaPreferChatApi !== "boolean") {
+      this.settings.qaPreferChatApi = DEFAULT_SETTINGS.qaPreferChatApi;
+    }
+    if (typeof this.settings.qaStructureGuardEnabled !== "boolean") {
+      this.settings.qaStructureGuardEnabled = DEFAULT_SETTINGS.qaStructureGuardEnabled;
+    }
     if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
       this.settings.qaThreadAutoSyncEnabled =
         DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
@@ -4003,6 +4187,24 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return collapsed.slice(0, Math.max(400, maxChars));
   }
 
+  private emitQaEvent(
+    onEvent: ((event: LocalQaProgressEvent) => void) | undefined,
+    stage: LocalQaProgressStage,
+    message: string,
+    options: { detail?: string; thinkingChunk?: string } = {},
+  ): void {
+    if (!onEvent) {
+      return;
+    }
+    onEvent({
+      stage,
+      message,
+      detail: options.detail,
+      thinkingChunk: options.thinkingChunk,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   private tokenizeQuery(text: string): string[] {
     return [...new Set(
       text
@@ -4011,6 +4213,72 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         .map((token) => token.trim())
         .filter((token) => token.length >= 2),
     )];
+  }
+
+  private countTermMatches(text: string, terms: string[]): number {
+    if (terms.length === 0) {
+      return 0;
+    }
+    let matched = 0;
+    for (const term of terms) {
+      if (text.includes(term)) {
+        matched += 1;
+      }
+    }
+    return matched;
+  }
+
+  private detectLocalQaIntent(question: string): LocalQaResponseIntent {
+    const normalized = question.toLowerCase();
+    if (
+      /(출처|근거|source|sources|reference|references|링크만|links?\s+only|only\s+links|cite)/i
+        .test(normalized)
+    ) {
+      return "sources_only";
+    }
+    if (
+      /(비교|차이|장단점|vs\b|versus|compare|comparison|trade[- ]?off|선택지)/i
+        .test(normalized)
+    ) {
+      return "comparison";
+    }
+    if (
+      /(계획|플랜|로드맵|체크리스트|준비|실행|우선순위|plan|roadmap|checklist|todo|action\s+plan)/i
+        .test(normalized)
+    ) {
+      return "plan";
+    }
+    return "default";
+  }
+
+  private resolveQaRetrievalCandidateK(intent: LocalQaResponseIntent, topK: number): number {
+    if (intent === "comparison" || intent === "plan") {
+      return Math.max(topK * 8, 28);
+    }
+    if (intent === "sources_only") {
+      return Math.max(topK * 5, 24);
+    }
+    return Math.max(topK * 6, 24);
+  }
+
+  private resolveQaRerankTopK(intent: LocalQaResponseIntent, topK: number): number {
+    if (intent === "comparison" || intent === "plan") {
+      return Math.max(topK * 3, topK + 4);
+    }
+    if (intent === "sources_only") {
+      return Math.max(topK * 2, 6);
+    }
+    return Math.max(topK * 2, topK);
+  }
+
+  private resolveQaContextCharLimit(intent: LocalQaResponseIntent): number {
+    if (intent === "comparison" || intent === "plan") {
+      return Math.max(3200, this.settings.qaMaxContextChars);
+    }
+    if (intent === "sources_only") {
+      return Math.max(2200, this.settings.qaMaxContextChars);
+    }
+    return Math.max(2000, this.settings.qaMaxContextChars);
   }
 
   private rerankQaHits(
@@ -4024,13 +4292,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         return { ...hit, boosted: hit.similarity };
       }
       const lowerPath = hit.path.toLowerCase();
-      let matched = 0;
-      for (const term of terms) {
-        if (lowerPath.includes(term)) {
-          matched += 1;
-        }
-      }
-      const boost = Math.min(0.24, matched * 0.08);
+      const matched = this.countTermMatches(lowerPath, terms);
+      const boost = Math.min(0.09, matched * 0.03);
       return {
         ...hit,
         boosted: hit.similarity + boost,
@@ -4044,36 +4307,84 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }));
   }
 
+  private splitSourceIntoContextBlocks(source: string): Array<{
+    index: number;
+    text: string;
+    lower: string;
+    heading: boolean;
+  }> {
+    const normalized = source.replace(/\r\n/g, "\n");
+    const rawBlocks = normalized
+      .split(/\n{2,}/)
+      .map((block) => block.trim())
+      .filter((block) => block.length > 0);
+
+    const mergedBlocks: string[] = [];
+    for (let i = 0; i < rawBlocks.length; i += 1) {
+      let segment = rawBlocks[i];
+      if (
+        /^#{1,6}\s/.test(segment) &&
+        i + 1 < rawBlocks.length &&
+        !/^#{1,6}\s/.test(rawBlocks[i + 1])
+      ) {
+        segment = `${segment}\n${rawBlocks[i + 1]}`;
+        i += 1;
+      }
+
+      if (segment.length <= 1700) {
+        mergedBlocks.push(segment);
+        continue;
+      }
+
+      const lines = segment.split("\n");
+      let chunk = "";
+      for (const line of lines) {
+        const candidate = chunk ? `${chunk}\n${line}` : line;
+        if (candidate.length > 1200 && chunk.length > 0) {
+          mergedBlocks.push(chunk.trim());
+          chunk = line;
+        } else {
+          chunk = candidate;
+        }
+      }
+      if (chunk.trim().length > 0) {
+        mergedBlocks.push(chunk.trim());
+      }
+    }
+
+    return mergedBlocks.map((text, index) => ({
+      index,
+      text,
+      lower: text.toLowerCase(),
+      heading: /^#{1,6}\s/.test(text),
+    }));
+  }
+
   private extractRelevantSnippet(
     source: string,
     query: string,
     maxChars: number,
   ): string {
-    const normalized = source.replace(/\r\n/g, "\n");
-    const lines = normalized.split("\n");
     const terms = this.tokenizeQuery(query);
+    const blocks = this.splitSourceIntoContextBlocks(source);
 
-    if (terms.length === 0) {
+    if (terms.length === 0 || blocks.length === 0) {
       return this.trimTextForContext(source, maxChars);
     }
 
-    const lowerLines = lines.map((line) => line.toLowerCase());
-    const scored: Array<{ idx: number; score: number }> = [];
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lowerLines[i];
-      if (!line.trim()) {
-        continue;
-      }
-      let score = 0;
-      for (const term of terms) {
-        if (line.includes(term)) {
-          score += 1;
+    const queryLower = query.trim().toLowerCase();
+    const scored = blocks
+      .map((block) => {
+        let score = this.countTermMatches(block.lower, terms);
+        if (block.heading) {
+          score += 0.35;
         }
-      }
-      if (score > 0) {
-        scored.push({ idx: i, score });
-      }
-    }
+        if (queryLower.length >= 8 && block.lower.includes(queryLower.slice(0, 64))) {
+          score += 0.6;
+        }
+        return { idx: block.index, score };
+      })
+      .filter((item) => item.score > 0);
 
     if (scored.length === 0) {
       return this.trimTextForContext(source, maxChars);
@@ -4081,31 +4392,32 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
     const pickedIndexes = new Set<number>();
-    for (const item of scored.slice(0, 12)) {
-      const start = Math.max(0, item.idx - 1);
-      const end = Math.min(lines.length - 1, item.idx + 1);
-      for (let i = start; i <= end; i += 1) {
-        pickedIndexes.add(i);
+    for (const item of scored.slice(0, 10)) {
+      pickedIndexes.add(item.idx);
+      if (item.score >= 2.2 && item.idx > 0) {
+        pickedIndexes.add(item.idx - 1);
+      }
+      if (item.score >= 2.2 && item.idx + 1 < blocks.length) {
+        pickedIndexes.add(item.idx + 1);
       }
     }
 
     const ordered = [...pickedIndexes].sort((a, b) => a - b);
     let output = "";
-    let prev = -10;
     for (const idx of ordered) {
-      const line = lines[idx].trimEnd();
-      if (!line.trim()) {
+      const block = blocks[idx];
+      if (!block || !block.text.trim()) {
         continue;
       }
-      if (idx - prev > 2 && output.length > 0) {
-        output += "\n...\n";
-      }
-      const candidate = output.length > 0 ? `${output}\n${line}` : line;
+      const segment = block.text.trimEnd();
+      const candidate =
+        output.length > 0
+          ? `${output}\n\n---\n\n${segment}`
+          : segment;
       if (candidate.length > maxChars) {
         break;
       }
       output = candidate;
-      prev = idx;
     }
 
     if (!output) {
@@ -4114,9 +4426,112 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return output;
   }
 
-  private buildLocalQaPrompt(
-    question: string,
+  private hasMarkdownTable(answer: string): boolean {
+    const lines = answer.split("\n");
+    for (let i = 0; i < lines.length - 1; i += 1) {
+      const head = lines[i];
+      const divider = lines[i + 1];
+      if (!head.includes("|")) {
+        continue;
+      }
+      if (/^\s*\|?\s*[-:]+\s*(\|\s*[-:]+\s*)+\|?\s*$/.test(divider.trim())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private hasChecklist(answer: string): boolean {
+    return /^\s*[-*]\s+\[[ xX]\]\s+/m.test(answer);
+  }
+
+  private hasSourceLinkList(answer: string): boolean {
+    const matches = answer.match(
+      /^\s*[-*]\s+.*(\[\[[^\]]+\]\]|\[[^\]]+\]\([^)]+\)|https?:\/\/\S+)/gm,
+    );
+    return (matches?.length ?? 0) > 0;
+  }
+
+  private needsQaStructureRepair(intent: LocalQaResponseIntent, answer: string): boolean {
+    if (intent === "comparison") {
+      return !this.hasMarkdownTable(answer);
+    }
+    if (intent === "plan") {
+      return !this.hasChecklist(answer);
+    }
+    if (intent === "sources_only") {
+      return !this.hasSourceLinkList(answer);
+    }
+    return false;
+  }
+
+  private getQaContractLines(intent: LocalQaResponseIntent): string[] {
+    if (intent === "comparison") {
+      return [
+        "Output contract:",
+        "- Start with 1-2 sentence conclusion.",
+        "- Include at least one markdown table for comparison.",
+        "- If information is missing, fill with '정보 부족' and explain briefly.",
+      ];
+    }
+    if (intent === "plan") {
+      return [
+        "Output contract:",
+        "- Start with 1-2 sentence overview.",
+        "- Include a checklist using '- [ ]' format.",
+        "- Add priority or order hints for each checklist item.",
+      ];
+    }
+    if (intent === "sources_only") {
+      return [
+        "Output contract:",
+        "- Return source links only (bullet list).",
+        "- No extra narrative unless required for missing evidence.",
+      ];
+    }
+    return [
+      "Output contract:",
+      "- Start with a direct answer in 1-3 sentences.",
+      "- Add concise synthesis only when useful.",
+    ];
+  }
+
+  private buildLocalQaSourceContext(
     sourceBlocks: Array<{ path: string; similarity: number; content: string }>,
+  ): string {
+    return sourceBlocks
+      .map(
+        (item, index) =>
+          `Source ${index + 1}\nPath: ${item.path}\nSimilarity: ${formatSimilarity(item.similarity)}\nContent:\n${item.content}`,
+      )
+      .join("\n\n---\n\n");
+  }
+
+  private buildLocalQaSystemPrompt(intent: LocalQaResponseIntent): string {
+    return [
+      "You are a local-note assistant for Obsidian.",
+      "Answer only from the provided sources.",
+      "Use the same language as the user's question.",
+      "Keep tone natural, direct, and concise.",
+      "Output in markdown.",
+      "When making claims, cite source paths inline in parentheses.",
+      "If evidence is insufficient, state it clearly and do not invent facts.",
+      ...this.getQaContractLines(intent),
+    ].join("\n");
+  }
+
+  private buildLocalQaUserPrompt(question: string, sourceContext: string): string {
+    return [
+      `Question: ${question}`,
+      "",
+      "Sources:",
+      sourceContext,
+    ].join("\n");
+  }
+
+  private buildLocalQaGeneratePrompt(
+    systemPrompt: string,
+    userPrompt: string,
     history: LocalQAConversationTurn[],
   ): string {
     const historyText =
@@ -4129,36 +4544,375 @@ export default class KnowledgeWeaverPlugin extends Plugin {
             )
             .join("\n")
         : "(none)";
-    const contextText = sourceBlocks
-      .map(
-        (item, index) =>
-          `Source ${index + 1}\nPath: ${item.path}\nSimilarity: ${formatSimilarity(item.similarity)}\nContent:\n${item.content}`,
-      )
-      .join("\n\n---\n\n");
 
     return [
-      "You are a local-note assistant for Obsidian.",
-      "Answer only from the provided sources.",
-      "Use the same language as the user's question.",
-      "Tone: natural conversation, concise, not stiff.",
-      "Output in markdown. Use headings/bullets only when helpful.",
-      "If comparing choices or plans, prefer a markdown table.",
-      "When the user asks for plan/checklist/comparison, 반드시 표 또는 체크리스트를 포함하라.",
-      "Start with a direct answer in 1-3 sentences.",
-      "Then add short synthesis (patterns, contradictions, implications) if useful.",
-      "If evidence is insufficient, clearly say what is missing.",
-      "When making claims, cite source paths inline in parentheses.",
-      "Respect previous turns when they remain consistent with the provided sources.",
-      "Do not invent facts outside the provided sources.",
+      "System instructions:",
+      systemPrompt,
       "",
       "Conversation so far:",
       historyText,
       "",
+      userPrompt,
+    ].join("\n");
+  }
+
+  private buildLocalQaChatMessages(
+    systemPrompt: string,
+    userPrompt: string,
+    history: LocalQAConversationTurn[],
+  ): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: systemPrompt },
+    ];
+    for (const turn of history.slice(-6)) {
+      messages.push({
+        role: turn.role,
+        content: turn.text,
+      });
+    }
+    messages.push({ role: "user", content: userPrompt });
+    return messages;
+  }
+
+  private extractOllamaTokenChunk(payload: Record<string, unknown>): {
+    token: string;
+    thinking: string;
+  } {
+    let token = "";
+    let thinking = "";
+
+    const message = payload.message;
+    if (message && typeof message === "object") {
+      const parsed = message as Record<string, unknown>;
+      if (typeof parsed.content === "string") {
+        token = parsed.content;
+      }
+      if (typeof parsed.thinking === "string") {
+        thinking = parsed.thinking;
+      }
+    }
+
+    if (!token && typeof payload.response === "string") {
+      token = payload.response;
+    }
+    if (!thinking && typeof payload.thinking === "string") {
+      thinking = payload.thinking;
+    }
+
+    return { token, thinking };
+  }
+
+  private async consumeOllamaJsonLineStream(
+    body: ReadableStream<Uint8Array>,
+    onToken?: (token: string) => void,
+    onEvent?: (event: LocalQaProgressEvent) => void,
+  ): Promise<{ answer: string; thinking: string }> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let answer = "";
+    let thinking = "";
+
+    const consumeLine = (line: string): void => {
+      if (!line) {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const chunk = this.extractOllamaTokenChunk(parsed);
+        if (chunk.thinking) {
+          thinking += chunk.thinking;
+          this.emitQaEvent(onEvent, "thinking", "Model thinking chunk", {
+            thinkingChunk: chunk.thinking,
+          });
+        }
+        if (chunk.token) {
+          answer += chunk.token;
+          onToken?.(chunk.token);
+        }
+      } catch {
+        // ignore malformed stream lines
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let lineBreakIndex = buffer.indexOf("\n");
+      while (lineBreakIndex >= 0) {
+        const line = buffer.slice(0, lineBreakIndex).trim();
+        buffer = buffer.slice(lineBreakIndex + 1);
+        consumeLine(line);
+        lineBreakIndex = buffer.indexOf("\n");
+      }
+    }
+
+    const tail = buffer.trim();
+    if (tail) {
+      consumeLine(tail);
+    }
+
+    return { answer, thinking };
+  }
+
+  private async requestLocalQaGenerate(params: {
+    qaBaseUrl: string;
+    qaModel: string;
+    prompt: string;
+    onToken?: (token: string) => void;
+    onEvent?: (event: LocalQaProgressEvent) => void;
+  }): Promise<{ answer: string; thinking: string }> {
+    const { qaBaseUrl, qaModel, prompt, onToken, onEvent } = params;
+    const base = qaBaseUrl.replace(/\/$/, "");
+    if (onToken) {
+      const streamResponse = await fetch(`${base}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: qaModel,
+          prompt,
+          stream: true,
+        }),
+      });
+      if (!streamResponse.ok || !streamResponse.body) {
+        throw new Error(`Local Q&A request failed: ${streamResponse.status}`);
+      }
+      return this.consumeOllamaJsonLineStream(streamResponse.body, onToken, onEvent);
+    }
+
+    const response = await requestUrl({
+      url: `${base}/api/generate`,
+      method: "POST",
+      contentType: "application/json",
+      body: JSON.stringify({
+        model: qaModel,
+        prompt,
+        stream: false,
+      }),
+      throw: false,
+    });
+    if (response.status >= 300) {
+      throw new Error(`Local Q&A request failed: ${response.status}`);
+    }
+
+    const parsed =
+      response.json && typeof response.json === "object"
+        ? (response.json as Record<string, unknown>)
+        : {};
+    const chunk = this.extractOllamaTokenChunk(parsed);
+    const answer = chunk.token.trim() || response.text.trim();
+    return {
+      answer,
+      thinking: chunk.thinking.trim(),
+    };
+  }
+
+  private async requestLocalQaChat(params: {
+    qaBaseUrl: string;
+    qaModel: string;
+    systemPrompt: string;
+    userPrompt: string;
+    history: LocalQAConversationTurn[];
+    onToken?: (token: string) => void;
+    onEvent?: (event: LocalQaProgressEvent) => void;
+  }): Promise<{ answer: string; thinking: string }> {
+    const {
+      qaBaseUrl,
+      qaModel,
+      systemPrompt,
+      userPrompt,
+      history,
+      onToken,
+      onEvent,
+    } = params;
+    const messages = this.buildLocalQaChatMessages(systemPrompt, userPrompt, history);
+    const base = qaBaseUrl.replace(/\/$/, "");
+
+    if (onToken) {
+      const streamResponse = await fetch(`${base}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: qaModel,
+          messages,
+          stream: true,
+        }),
+      });
+      if (!streamResponse.ok || !streamResponse.body) {
+        throw new Error(`Local Q&A chat request failed: ${streamResponse.status}`);
+      }
+      return this.consumeOllamaJsonLineStream(streamResponse.body, onToken, onEvent);
+    }
+
+    const response = await requestUrl({
+      url: `${base}/api/chat`,
+      method: "POST",
+      contentType: "application/json",
+      body: JSON.stringify({
+        model: qaModel,
+        messages,
+        stream: false,
+      }),
+      throw: false,
+    });
+    if (response.status >= 300) {
+      throw new Error(`Local Q&A chat request failed: ${response.status}`);
+    }
+    const parsed =
+      response.json && typeof response.json === "object"
+        ? (response.json as Record<string, unknown>)
+        : {};
+    const chunk = this.extractOllamaTokenChunk(parsed);
+    const answer = chunk.token.trim() || response.text.trim();
+    return {
+      answer,
+      thinking: chunk.thinking.trim(),
+    };
+  }
+
+  private async requestLocalQaCompletion(params: {
+    qaBaseUrl: string;
+    qaModel: string;
+    systemPrompt: string;
+    userPrompt: string;
+    history: LocalQAConversationTurn[];
+    onToken?: (token: string) => void;
+    onEvent?: (event: LocalQaProgressEvent) => void;
+  }): Promise<{ answer: string; thinking: string; endpoint: LocalQaEndpointKind }> {
+    const {
+      qaBaseUrl,
+      qaModel,
+      systemPrompt,
+      userPrompt,
+      history,
+      onToken,
+      onEvent,
+    } = params;
+
+    if (this.settings.qaPreferChatApi) {
+      try {
+        this.emitQaEvent(onEvent, "generation", "Using /api/chat endpoint");
+        const chatResult = await this.requestLocalQaChat({
+          qaBaseUrl,
+          qaModel,
+          systemPrompt,
+          userPrompt,
+          history,
+          onToken,
+          onEvent,
+        });
+        return {
+          ...chatResult,
+          endpoint: "chat",
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown /api/chat error";
+        this.emitQaEvent(onEvent, "warning", "Falling back to /api/generate", {
+          detail: message,
+        });
+      }
+    }
+
+    this.emitQaEvent(onEvent, "generation", "Using /api/generate endpoint");
+    const prompt = this.buildLocalQaGeneratePrompt(systemPrompt, userPrompt, history);
+    const generateResult = await this.requestLocalQaGenerate({
+      qaBaseUrl,
+      qaModel,
+      prompt,
+      onToken,
+      onEvent,
+    });
+    return {
+      ...generateResult,
+      endpoint: "generate",
+    };
+  }
+
+  private buildSourceOnlyFallback(
+    sourceBlocks: Array<{ path: string; similarity: number; content: string }>,
+  ): string {
+    const lines = sourceBlocks
+      .slice(0, 8)
+      .map((item) => `- [[${item.path}]] (${formatSimilarity(item.similarity)})`);
+    return lines.length > 0 ? lines.join("\n") : "- (no sources)";
+  }
+
+  private async repairQaStructureIfNeeded(params: {
+    intent: LocalQaResponseIntent;
+    answer: string;
+    question: string;
+    sourceBlocks: Array<{ path: string; similarity: number; content: string }>;
+    qaBaseUrl: string;
+    qaModel: string;
+    onEvent?: (event: LocalQaProgressEvent) => void;
+  }): Promise<string> {
+    const {
+      intent,
+      answer,
+      question,
+      sourceBlocks,
+      qaBaseUrl,
+      qaModel,
+      onEvent,
+    } = params;
+    if (!this.settings.qaStructureGuardEnabled) {
+      return answer;
+    }
+    if (!this.needsQaStructureRepair(intent, answer)) {
+      return answer;
+    }
+
+    this.emitQaEvent(onEvent, "generation", "Applying structured output guard");
+    const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
+    const systemPrompt = [
+      "You are a markdown structure normalizer for local-note answers.",
+      "Keep language identical to the draft answer.",
+      "Do not add facts not present in draft answer or provided source excerpts.",
+      "Preserve source path citations whenever possible.",
+      "Return markdown only.",
+      ...this.getQaContractLines(intent),
+    ].join("\n");
+
+    const userPrompt = [
       `Question: ${question}`,
       "",
-      "Sources:",
-      contextText,
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      sourceContext,
     ].join("\n");
+
+    try {
+      const repaired = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+      });
+      const split = splitThinkingBlocks(repaired.answer);
+      const normalized = split.answer.trim() || repaired.answer.trim();
+      if (normalized && !this.needsQaStructureRepair(intent, normalized)) {
+        this.emitQaEvent(onEvent, "generation", "Structured output guard applied");
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", "Structured output guard could not enforce format");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown structure guard error";
+      this.emitQaEvent(onEvent, "warning", "Structured output guard failed", {
+        detail: message,
+      });
+    }
+
+    if (intent === "sources_only") {
+      return this.buildSourceOnlyFallback(sourceBlocks);
+    }
+    return answer;
   }
 
   private async openLocalQaChatModal(): Promise<void> {
@@ -4170,7 +4924,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     topK: number,
     history: LocalQAConversationTurn[] = [],
     onToken?: (token: string) => void,
-    onEvent?: (event: string) => void,
+    onEvent?: (event: LocalQaProgressEvent) => void,
   ): Promise<LocalQAResultPayload> {
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
@@ -4181,6 +4935,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!safeQuestion) {
       throw new Error("Question is empty.");
     }
+    const intent = this.detectLocalQaIntent(safeQuestion);
 
     const safeTopK = Math.max(1, Math.min(15, topK));
     const qaBaseUrl = this.resolveQaBaseUrl();
@@ -4212,8 +4967,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
 
       this.setStatus("semantic retrieval for local qa...");
-      onEvent?.("Embedding retrieval started");
-      const retrievalCandidateK = Math.max(safeTopK * 6, 24);
+      this.emitQaEvent(onEvent, "retrieval", "Embedding retrieval started");
+      const retrievalCandidateK = this.resolveQaRetrievalCandidateK(intent, safeTopK);
       const retrieval = await searchSemanticNotesByQuery(
         this.app,
         selectedFiles,
@@ -4221,13 +4976,15 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         safeQuestion,
         retrievalCandidateK,
       );
-      onEvent?.(
-        `Retrieved ${retrieval.hits.length} candidate notes (cache hits=${retrieval.cacheHits}, writes=${retrieval.cacheWrites})`,
+      this.emitQaEvent(
+        onEvent,
+        "retrieval",
+        `Retrieved ${retrieval.hits.length} candidates (cache hits=${retrieval.cacheHits}, writes=${retrieval.cacheWrites})`,
       );
 
       if (retrieval.errors.length > 0) {
         this.notice(`Semantic retrieval had ${retrieval.errors.length} issue(s).`, 6000);
-        onEvent?.(`Retrieval warnings: ${retrieval.errors.length}`);
+        this.emitQaEvent(onEvent, "warning", `Retrieval warnings: ${retrieval.errors.length}`);
       }
       if (retrieval.hits.length === 0) {
         throw new Error("No relevant notes were found for this question.");
@@ -4236,15 +4993,21 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       const rankedHits = this.rerankQaHits(
         retrieval.hits,
         safeQuestion,
-        Math.max(safeTopK * 2, safeTopK),
+        this.resolveQaRerankTopK(intent, safeTopK),
       );
       if (rankedHits.length === 0) {
         throw new Error("No relevant notes were found for this question.");
       }
-      onEvent?.(`Reranked to ${rankedHits.length} notes`);
+      this.emitQaEvent(onEvent, "retrieval", `Reranked to ${rankedHits.length} notes`);
 
-      const maxContextChars = Math.max(2000, this.settings.qaMaxContextChars);
-      const sourceBlocks: Array<{ path: string; similarity: number; content: string }> = [];
+      const maxContextChars = this.resolveQaContextCharLimit(intent);
+      const queryTerms = this.tokenizeQuery(safeQuestion);
+      const sourceCandidates: Array<{
+        path: string;
+        similarity: number;
+        content: string;
+        relevance: number;
+      }> = [];
       let usedChars = 0;
 
       for (const hit of rankedHits) {
@@ -4263,129 +5026,76 @@ export default class KnowledgeWeaverPlugin extends Plugin {
           continue;
         }
 
-        sourceBlocks.push({
+        const snippetMatch = this.countTermMatches(snippet.toLowerCase(), queryTerms);
+        const relevance = hit.similarity + Math.min(0.22, snippetMatch * 0.03);
+        sourceCandidates.push({
           path: hit.path,
           similarity: hit.similarity,
           content: snippet,
+          relevance,
         });
         usedChars += snippet.length;
       }
-      onEvent?.(`Context built from ${sourceBlocks.length} notes (${usedChars} chars)`);
+      sourceCandidates.sort(
+        (a, b) => b.relevance - a.relevance || a.path.localeCompare(b.path),
+      );
+      const sourceLimit =
+        intent === "comparison" || intent === "plan"
+          ? Math.max(safeTopK + 2, safeTopK)
+          : intent === "sources_only"
+            ? Math.max(safeTopK, 5)
+            : safeTopK;
+      const sourceBlocks = sourceCandidates.slice(0, sourceLimit).map((item) => ({
+        path: item.path,
+        similarity: item.similarity,
+        content: item.content,
+      }));
+      this.emitQaEvent(
+        onEvent,
+        "retrieval",
+        `Context built from ${sourceBlocks.length} notes (${usedChars} chars)`,
+      );
 
       if (sourceBlocks.length === 0) {
         throw new Error("Relevant notes found but no readable content extracted.");
       }
 
-      const prompt = this.buildLocalQaPrompt(safeQuestion, sourceBlocks, history);
-      onEvent?.("Generation started");
+      const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
+      const systemPrompt = this.buildLocalQaSystemPrompt(intent);
+      const userPrompt = this.buildLocalQaUserPrompt(safeQuestion, sourceContext);
+      this.emitQaEvent(onEvent, "generation", "Generation started");
 
       this.setStatus("asking local qa model...");
-      let answer = "";
-      let streamThinking = "";
-      if (onToken) {
-        const streamResponse = await fetch(`${qaBaseUrl.replace(/\/$/, "")}/api/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: qaModel,
-            prompt,
-            stream: true,
-          }),
-        });
-        if (!streamResponse.ok || !streamResponse.body) {
-          throw new Error(`Local Q&A request failed: ${streamResponse.status}`);
-        }
-
-        const reader = streamResponse.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            break;
-          }
-          buffer += decoder.decode(value, { stream: true });
-
-          let lineBreakIndex = buffer.indexOf("\n");
-          while (lineBreakIndex >= 0) {
-            const line = buffer.slice(0, lineBreakIndex).trim();
-            buffer = buffer.slice(lineBreakIndex + 1);
-            if (line) {
-              try {
-                const parsed = JSON.parse(line) as Record<string, unknown>;
-                const token =
-                  typeof parsed.response === "string" ? parsed.response : "";
-                const thinkChunk =
-                  typeof parsed.thinking === "string" ? parsed.thinking : "";
-                if (thinkChunk) {
-                  streamThinking += thinkChunk;
-                  onEvent?.(`__THINK__${thinkChunk}`);
-                }
-                if (token) {
-                  answer += token;
-                  onToken(token);
-                }
-              } catch {
-                // ignore malformed stream line
-              }
-            }
-            lineBreakIndex = buffer.indexOf("\n");
-          }
-        }
-
-        const tail = buffer.trim();
-        if (tail) {
-          try {
-            const parsed = JSON.parse(tail) as Record<string, unknown>;
-            const token = typeof parsed.response === "string" ? parsed.response : "";
-            const thinkChunk =
-              typeof parsed.thinking === "string" ? parsed.thinking : "";
-            if (thinkChunk) {
-              streamThinking += thinkChunk;
-              onEvent?.(`__THINK__${thinkChunk}`);
-            }
-            if (token) {
-              answer += token;
-              onToken(token);
-            }
-          } catch {
-            // ignore malformed tail chunk
-          }
-        }
-      } else {
-        const response = await requestUrl({
-          url: `${qaBaseUrl.replace(/\/$/, "")}/api/generate`,
-          method: "POST",
-          contentType: "application/json",
-          body: JSON.stringify({
-            model: qaModel,
-            prompt,
-            stream: false,
-          }),
-          throw: false,
-        });
-
-        if (response.status >= 300) {
-          throw new Error(`Local Q&A request failed: ${response.status}`);
-        }
-
-        answer =
-          typeof response.json?.response === "string"
-            ? response.json.response.trim()
-            : response.text.trim();
-      }
-
-      const split = splitThinkingBlocks(answer);
-      const finalAnswer = split.answer.trim() || answer.trim();
-      if (!finalAnswer) {
+      const completion = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history,
+        onToken,
+        onEvent,
+      });
+      const split = splitThinkingBlocks(completion.answer);
+      const initialAnswer = split.answer.trim() || completion.answer.trim();
+      if (!initialAnswer) {
         throw new Error("Local Q&A returned an empty answer.");
       }
-      onEvent?.("Generation completed");
-      const mergedThinking = [streamThinking.trim(), split.thinking.trim()]
+
+      const repairedAnswer = await this.repairQaStructureIfNeeded({
+        intent,
+        answer: initialAnswer,
+        question: safeQuestion,
+        sourceBlocks,
+        qaBaseUrl,
+        qaModel,
+        onEvent,
+      });
+
+      const mergedThinking = [completion.thinking.trim(), split.thinking.trim()]
         .filter((item) => item.length > 0)
         .join("\n\n")
         .trim();
+      this.emitQaEvent(onEvent, "generation", `Generation completed (${completion.endpoint})`);
 
       const sourceList: LocalQASourceItem[] = sourceBlocks.map((item) => ({
         path: item.path,
@@ -4394,7 +5104,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
       return {
         question: safeQuestion,
-        answer: finalAnswer,
+        answer: repairedAnswer,
         thinking: mergedThinking,
         model: qaModel,
         embeddingModel,

@@ -1297,6 +1297,8 @@ var DEFAULT_SETTINGS = {
   qaTopK: 5,
   qaMaxContextChars: 12e3,
   qaAllowNonLocalEndpoint: false,
+  qaPreferChatApi: true,
+  qaStructureGuardEnabled: true,
   qaThreadAutoSyncEnabled: true,
   chatTranscriptRootPath: "Auto-Linker Chats",
   cleanupReportRootPath: "Auto-Linker Reports",
@@ -2279,6 +2281,37 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const ss = String(date.getSeconds()).padStart(2, "0");
     return `${hh}:${mm}:${ss}`;
   }
+  formatThinkingStage(stage) {
+    switch (stage) {
+      case "retrieval":
+        return "RETRIEVE";
+      case "generation":
+        return "GENERATE";
+      case "thinking":
+        return "THINK";
+      case "warning":
+        return "WARN";
+      case "error":
+        return "ERROR";
+      default:
+        return "INFO";
+    }
+  }
+  buildThinkingTranscriptText(timeline, modelThinking) {
+    const lines = timeline.map(
+      (event) => `- [${this.formatTime(event.timestamp)}] [${this.formatThinkingStage(event.stage)}] ${event.message}`
+    );
+    const trimmedThinking = modelThinking.trim();
+    if (!trimmedThinking) {
+      return lines.join("\n");
+    }
+    return [
+      ...lines,
+      "",
+      "Model thinking (raw):",
+      trimmedThinking
+    ].join("\n");
+  }
   scheduleStreamRender(delayMs = 80) {
     if (this.streamRenderTimer !== null) {
       return;
@@ -2299,16 +2332,60 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     });
   }
   renderThinkingCard(parent, message) {
+    var _a, _b;
     const details = parent.createEl("details", { cls: "auto-linker-chat-thinking-details" });
     if (message.isDraft) {
       details.open = true;
     }
+    const timeline = (_a = message.timeline) != null ? _a : [];
+    const latest = timeline.length > 0 ? timeline[timeline.length - 1] : void 0;
+    const summaryPrefix = message.isDraft ? "Thinking (live)" : "Thinking timeline";
+    const summaryText = latest ? `${summaryPrefix} \xB7 ${timeline.length} events \xB7 ${this.formatThinkingStage(latest.stage)}` : summaryPrefix;
     details.createEl("summary", {
-      text: message.isDraft ? "Thinking (live)" : "Thinking",
+      text: summaryText,
       cls: "auto-linker-chat-thinking-summary"
     });
     const body = details.createDiv({ cls: "auto-linker-chat-thinking-body" });
-    body.setText(message.text || "(empty)");
+    if (timeline.length > 0) {
+      const timelineEl = body.createDiv({ cls: "auto-linker-chat-thinking-timeline" });
+      for (const event of timeline.slice(-24)) {
+        const card = timelineEl.createDiv({
+          cls: `auto-linker-chat-thinking-event auto-linker-chat-thinking-event-${event.stage}`
+        });
+        card.createEl("span", {
+          cls: "auto-linker-chat-thinking-event-stage",
+          text: this.formatThinkingStage(event.stage)
+        });
+        const content = card.createDiv({ cls: "auto-linker-chat-thinking-event-content" });
+        content.createDiv({
+          cls: "auto-linker-chat-thinking-event-message",
+          text: event.message
+        });
+        if (event.detail) {
+          content.createDiv({
+            cls: "auto-linker-chat-thinking-event-detail",
+            text: event.detail
+          });
+        }
+        card.createEl("span", {
+          cls: "auto-linker-chat-thinking-event-time",
+          text: this.formatTime(event.timestamp)
+        });
+      }
+    }
+    if ((_b = message.thinkingDetails) == null ? void 0 : _b.trim()) {
+      const raw = body.createDiv({ cls: "auto-linker-chat-thinking-raw" });
+      raw.createEl("div", {
+        cls: "auto-linker-chat-thinking-raw-title",
+        text: "Model thinking (raw)"
+      });
+      raw.createEl("pre", {
+        cls: "auto-linker-chat-thinking-raw-body",
+        text: message.thinkingDetails.trim()
+      });
+    } else if (!timeline.length) {
+      body.setText(message.text || "(empty)");
+    }
   }
   async startNewThread() {
     if (this.messages.length > 0 && (this.plugin.isQaThreadAutoSyncEnabledForQa() || this.threadPath)) {
@@ -2493,6 +2570,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     );
   }
   async submitQuestion() {
+    var _a, _b, _c;
     if (this.running) {
       return;
     }
@@ -2540,27 +2618,45 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const draftIndex = this.messages.length - 1;
     this.renderMessages();
     this.scheduleThreadSync(300);
-    const progressLines = ["Retrieval started"];
+    const timeline = [];
     let modelThinking = "";
     let rawResponse = "";
-    const updateThinkingMessage = (isDraft) => {
+    let thinkingStreamAnnounced = false;
+    const updateThinkingMessage = (isDraft, forceTimestamp) => {
       const item = this.messages[thinkingIndex];
       if (!item || item.role !== "thinking") {
         return;
       }
-      const chunks = [];
-      if (progressLines.length > 0) {
-        chunks.push(progressLines.map((line) => `- ${line}`).join("\n"));
-      }
-      if (modelThinking.trim()) {
-        chunks.push(modelThinking.trim());
-      }
-      item.text = chunks.join("\n\n").trim();
+      item.timeline = [...timeline];
+      item.thinkingDetails = modelThinking.trim() || void 0;
+      item.text = this.buildThinkingTranscriptText(timeline, modelThinking);
       item.isDraft = isDraft;
-      item.timestamp = (/* @__PURE__ */ new Date()).toISOString();
+      item.timestamp = forceTimestamp != null ? forceTimestamp : (/* @__PURE__ */ new Date()).toISOString();
       this.scheduleStreamRender(80);
       this.scheduleThreadSync(900);
     };
+    const pushTimelineEvent = (event) => {
+      var _a2;
+      const timestamp = (_a2 = event.timestamp) != null ? _a2 : (/* @__PURE__ */ new Date()).toISOString();
+      const prev = timeline[timeline.length - 1];
+      if (prev && prev.stage === event.stage && prev.message === event.message && prev.detail === event.detail) {
+        return;
+      }
+      timeline.push({
+        stage: event.stage,
+        message: event.message,
+        detail: event.detail,
+        timestamp
+      });
+      if (timeline.length > 80) {
+        timeline.splice(0, timeline.length - 80);
+      }
+      updateThinkingMessage(true, timestamp);
+    };
+    pushTimelineEvent({
+      stage: "retrieval",
+      message: "Retrieval started"
+    });
     try {
       const result = await this.plugin.askLocalQa(
         question,
@@ -2584,15 +2680,21 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           }
         },
         (event) => {
-          if (event.startsWith("__THINK__")) {
-            modelThinking += event.slice("__THINK__".length);
-            updateThinkingMessage(true);
+          if (event.thinkingChunk) {
+            modelThinking += event.thinkingChunk;
+            if (!thinkingStreamAnnounced) {
+              pushTimelineEvent({
+                stage: "thinking",
+                message: "Model thinking stream started",
+                timestamp: event.timestamp
+              });
+              thinkingStreamAnnounced = true;
+            } else {
+              updateThinkingMessage(true, event.timestamp);
+            }
             return;
           }
-          if (!progressLines.includes(event)) {
-            progressLines.push(event);
-          }
-          updateThinkingMessage(true);
+          pushTimelineEvent(event);
         }
       );
       const draft = this.messages[draftIndex];
@@ -2607,8 +2709,18 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         draft.isDraft = false;
         if (result.thinking.trim()) {
           modelThinking = result.thinking.trim();
+          if (!thinkingStreamAnnounced) {
+            pushTimelineEvent({
+              stage: "thinking",
+              message: "Model thinking captured"
+            });
+            thinkingStreamAnnounced = true;
+          }
         }
-        progressLines.push("Answer generated");
+        pushTimelineEvent({
+          stage: "generation",
+          message: "Answer generated"
+        });
         updateThinkingMessage(false);
         this.renderMessages();
         this.scheduleThreadSync(120);
@@ -2627,11 +2739,14 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       const thinking = this.messages[thinkingIndex];
       if (thinking && thinking.role === "thinking") {
-        if (!thinking.text.trim()) {
+        const hasTimeline = ((_b = (_a = thinking.timeline) == null ? void 0 : _a.length) != null ? _b : 0) > 0;
+        const hasThinkingText = Boolean((_c = thinking.thinkingDetails) == null ? void 0 : _c.trim());
+        if (!hasTimeline && !hasThinkingText) {
           this.messages.splice(thinkingIndex, 1);
         } else {
           thinking.isDraft = false;
           thinking.timestamp = (/* @__PURE__ */ new Date()).toISOString();
+          thinking.text = this.buildThinkingTranscriptText(timeline, modelThinking);
         }
       }
       this.renderMessages();
@@ -2645,8 +2760,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       const thinking = this.messages[thinkingIndex];
       if (thinking && thinking.role === "thinking") {
-        progressLines.push(`Error: ${message}`);
-        thinking.text = progressLines.map((line) => `- ${line}`).join("\n");
+        pushTimelineEvent({
+          stage: "error",
+          message: `Error: ${message}`
+        });
         thinking.isDraft = false;
         thinking.timestamp = (/* @__PURE__ */ new Date()).toISOString();
       }
@@ -2988,6 +3105,12 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Prefer Ollama /api/chat (with fallback)").setDesc("Use role-based chat first, then fallback to /api/generate when unavailable.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaPreferChatApi).onChange(async (value) => {
+        this.plugin.settings.qaPreferChatApi = value;
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Q&A retrieval top-k").addText(
       (text) => text.setPlaceholder("5").setValue(String(this.plugin.settings.qaTopK)).onChange(async (value) => {
         this.plugin.settings.qaTopK = parsePositiveInt(
@@ -3003,6 +3126,12 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
           value,
           this.plugin.settings.qaMaxContextChars
         );
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Structured answer guard").setDesc("Enforce table/checklist/link structure for comparison/plan/source questions.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaStructureGuardEnabled).onChange(async (value) => {
+        this.plugin.settings.qaStructureGuardEnabled = value;
         await this.plugin.saveSettings();
       })
     );
@@ -3658,6 +3787,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
       this.settings.qaAllowNonLocalEndpoint = DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
     }
+    if (typeof this.settings.qaPreferChatApi !== "boolean") {
+      this.settings.qaPreferChatApi = DEFAULT_SETTINGS.qaPreferChatApi;
+    }
+    if (typeof this.settings.qaStructureGuardEnabled !== "boolean") {
+      this.settings.qaStructureGuardEnabled = DEFAULT_SETTINGS.qaStructureGuardEnabled;
+    }
     if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
       this.settings.qaThreadAutoSyncEnabled = DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
     }
@@ -4012,10 +4147,74 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const collapsed = source.replace(/\s+/g, " ").trim();
     return collapsed.slice(0, Math.max(400, maxChars));
   }
+  emitQaEvent(onEvent, stage, message, options = {}) {
+    if (!onEvent) {
+      return;
+    }
+    onEvent({
+      stage,
+      message,
+      detail: options.detail,
+      thinkingChunk: options.thinkingChunk,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  }
   tokenizeQuery(text) {
     return [...new Set(
       text.toLowerCase().split(/[\s,.;:!?()[\]{}"'<>\\/|`~!@#$%^&*+=_-]+/).map((token) => token.trim()).filter((token) => token.length >= 2)
     )];
+  }
+  countTermMatches(text, terms) {
+    if (terms.length === 0) {
+      return 0;
+    }
+    let matched = 0;
+    for (const term of terms) {
+      if (text.includes(term)) {
+        matched += 1;
+      }
+    }
+    return matched;
+  }
+  detectLocalQaIntent(question) {
+    const normalized = question.toLowerCase();
+    if (/(출처|근거|source|sources|reference|references|링크만|links?\s+only|only\s+links|cite)/i.test(normalized)) {
+      return "sources_only";
+    }
+    if (/(비교|차이|장단점|vs\b|versus|compare|comparison|trade[- ]?off|선택지)/i.test(normalized)) {
+      return "comparison";
+    }
+    if (/(계획|플랜|로드맵|체크리스트|준비|실행|우선순위|plan|roadmap|checklist|todo|action\s+plan)/i.test(normalized)) {
+      return "plan";
+    }
+    return "default";
+  }
+  resolveQaRetrievalCandidateK(intent, topK) {
+    if (intent === "comparison" || intent === "plan") {
+      return Math.max(topK * 8, 28);
+    }
+    if (intent === "sources_only") {
+      return Math.max(topK * 5, 24);
+    }
+    return Math.max(topK * 6, 24);
+  }
+  resolveQaRerankTopK(intent, topK) {
+    if (intent === "comparison" || intent === "plan") {
+      return Math.max(topK * 3, topK + 4);
+    }
+    if (intent === "sources_only") {
+      return Math.max(topK * 2, 6);
+    }
+    return Math.max(topK * 2, topK);
+  }
+  resolveQaContextCharLimit(intent) {
+    if (intent === "comparison" || intent === "plan") {
+      return Math.max(3200, this.settings.qaMaxContextChars);
+    }
+    if (intent === "sources_only") {
+      return Math.max(2200, this.settings.qaMaxContextChars);
+    }
+    return Math.max(2e3, this.settings.qaMaxContextChars);
   }
   rerankQaHits(hits, question, topK) {
     const terms = this.tokenizeQuery(question);
@@ -4024,13 +4223,8 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         return { ...hit, boosted: hit.similarity };
       }
       const lowerPath = hit.path.toLowerCase();
-      let matched = 0;
-      for (const term of terms) {
-        if (lowerPath.includes(term)) {
-          matched += 1;
-        }
-      }
-      const boost = Math.min(0.24, matched * 0.08);
+      const matched = this.countTermMatches(lowerPath, terms);
+      const boost = Math.min(0.09, matched * 0.03);
       return {
         ...hit,
         boosted: hit.similarity + boost
@@ -4042,106 +4236,492 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       similarity: item.similarity
     }));
   }
-  extractRelevantSnippet(source, query, maxChars) {
+  splitSourceIntoContextBlocks(source) {
     const normalized = source.replace(/\r\n/g, "\n");
-    const lines = normalized.split("\n");
-    const terms = this.tokenizeQuery(query);
-    if (terms.length === 0) {
-      return this.trimTextForContext(source, maxChars);
-    }
-    const lowerLines = lines.map((line) => line.toLowerCase());
-    const scored = [];
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lowerLines[i];
-      if (!line.trim()) {
+    const rawBlocks = normalized.split(/\n{2,}/).map((block) => block.trim()).filter((block) => block.length > 0);
+    const mergedBlocks = [];
+    for (let i = 0; i < rawBlocks.length; i += 1) {
+      let segment = rawBlocks[i];
+      if (/^#{1,6}\s/.test(segment) && i + 1 < rawBlocks.length && !/^#{1,6}\s/.test(rawBlocks[i + 1])) {
+        segment = `${segment}
+${rawBlocks[i + 1]}`;
+        i += 1;
+      }
+      if (segment.length <= 1700) {
+        mergedBlocks.push(segment);
         continue;
       }
-      let score = 0;
-      for (const term of terms) {
-        if (line.includes(term)) {
-          score += 1;
+      const lines = segment.split("\n");
+      let chunk = "";
+      for (const line of lines) {
+        const candidate = chunk ? `${chunk}
+${line}` : line;
+        if (candidate.length > 1200 && chunk.length > 0) {
+          mergedBlocks.push(chunk.trim());
+          chunk = line;
+        } else {
+          chunk = candidate;
         }
       }
-      if (score > 0) {
-        scored.push({ idx: i, score });
+      if (chunk.trim().length > 0) {
+        mergedBlocks.push(chunk.trim());
       }
     }
+    return mergedBlocks.map((text, index) => ({
+      index,
+      text,
+      lower: text.toLowerCase(),
+      heading: /^#{1,6}\s/.test(text)
+    }));
+  }
+  extractRelevantSnippet(source, query, maxChars) {
+    const terms = this.tokenizeQuery(query);
+    const blocks = this.splitSourceIntoContextBlocks(source);
+    if (terms.length === 0 || blocks.length === 0) {
+      return this.trimTextForContext(source, maxChars);
+    }
+    const queryLower = query.trim().toLowerCase();
+    const scored = blocks.map((block) => {
+      let score = this.countTermMatches(block.lower, terms);
+      if (block.heading) {
+        score += 0.35;
+      }
+      if (queryLower.length >= 8 && block.lower.includes(queryLower.slice(0, 64))) {
+        score += 0.6;
+      }
+      return { idx: block.index, score };
+    }).filter((item) => item.score > 0);
     if (scored.length === 0) {
       return this.trimTextForContext(source, maxChars);
     }
     scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
     const pickedIndexes = /* @__PURE__ */ new Set();
-    for (const item of scored.slice(0, 12)) {
-      const start = Math.max(0, item.idx - 1);
-      const end = Math.min(lines.length - 1, item.idx + 1);
-      for (let i = start; i <= end; i += 1) {
-        pickedIndexes.add(i);
+    for (const item of scored.slice(0, 10)) {
+      pickedIndexes.add(item.idx);
+      if (item.score >= 2.2 && item.idx > 0) {
+        pickedIndexes.add(item.idx - 1);
+      }
+      if (item.score >= 2.2 && item.idx + 1 < blocks.length) {
+        pickedIndexes.add(item.idx + 1);
       }
     }
     const ordered = [...pickedIndexes].sort((a, b) => a - b);
     let output = "";
-    let prev = -10;
     for (const idx of ordered) {
-      const line = lines[idx].trimEnd();
-      if (!line.trim()) {
+      const block = blocks[idx];
+      if (!block || !block.text.trim()) {
         continue;
       }
-      if (idx - prev > 2 && output.length > 0) {
-        output += "\n...\n";
-      }
+      const segment = block.text.trimEnd();
       const candidate = output.length > 0 ? `${output}
-${line}` : line;
+
+---
+
+${segment}` : segment;
       if (candidate.length > maxChars) {
         break;
       }
       output = candidate;
-      prev = idx;
     }
     if (!output) {
       return this.trimTextForContext(source, maxChars);
     }
     return output;
   }
-  buildLocalQaPrompt(question, sourceBlocks, history) {
-    const historyText = history.length > 0 ? history.slice(-6).map(
-      (turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.text}`
-    ).join("\n") : "(none)";
-    const contextText = sourceBlocks.map(
+  hasMarkdownTable(answer) {
+    const lines = answer.split("\n");
+    for (let i = 0; i < lines.length - 1; i += 1) {
+      const head = lines[i];
+      const divider = lines[i + 1];
+      if (!head.includes("|")) {
+        continue;
+      }
+      if (/^\s*\|?\s*[-:]+\s*(\|\s*[-:]+\s*)+\|?\s*$/.test(divider.trim())) {
+        return true;
+      }
+    }
+    return false;
+  }
+  hasChecklist(answer) {
+    return /^\s*[-*]\s+\[[ xX]\]\s+/m.test(answer);
+  }
+  hasSourceLinkList(answer) {
+    var _a;
+    const matches = answer.match(
+      /^\s*[-*]\s+.*(\[\[[^\]]+\]\]|\[[^\]]+\]\([^)]+\)|https?:\/\/\S+)/gm
+    );
+    return ((_a = matches == null ? void 0 : matches.length) != null ? _a : 0) > 0;
+  }
+  needsQaStructureRepair(intent, answer) {
+    if (intent === "comparison") {
+      return !this.hasMarkdownTable(answer);
+    }
+    if (intent === "plan") {
+      return !this.hasChecklist(answer);
+    }
+    if (intent === "sources_only") {
+      return !this.hasSourceLinkList(answer);
+    }
+    return false;
+  }
+  getQaContractLines(intent) {
+    if (intent === "comparison") {
+      return [
+        "Output contract:",
+        "- Start with 1-2 sentence conclusion.",
+        "- Include at least one markdown table for comparison.",
+        "- If information is missing, fill with '\uC815\uBCF4 \uBD80\uC871' and explain briefly."
+      ];
+    }
+    if (intent === "plan") {
+      return [
+        "Output contract:",
+        "- Start with 1-2 sentence overview.",
+        "- Include a checklist using '- [ ]' format.",
+        "- Add priority or order hints for each checklist item."
+      ];
+    }
+    if (intent === "sources_only") {
+      return [
+        "Output contract:",
+        "- Return source links only (bullet list).",
+        "- No extra narrative unless required for missing evidence."
+      ];
+    }
+    return [
+      "Output contract:",
+      "- Start with a direct answer in 1-3 sentences.",
+      "- Add concise synthesis only when useful."
+    ];
+  }
+  buildLocalQaSourceContext(sourceBlocks) {
+    return sourceBlocks.map(
       (item, index) => `Source ${index + 1}
 Path: ${item.path}
 Similarity: ${formatSimilarity(item.similarity)}
 Content:
 ${item.content}`
     ).join("\n\n---\n\n");
+  }
+  buildLocalQaSystemPrompt(intent) {
     return [
       "You are a local-note assistant for Obsidian.",
       "Answer only from the provided sources.",
       "Use the same language as the user's question.",
-      "Tone: natural conversation, concise, not stiff.",
-      "Output in markdown. Use headings/bullets only when helpful.",
-      "If comparing choices or plans, prefer a markdown table.",
-      "When the user asks for plan/checklist/comparison, \uBC18\uB4DC\uC2DC \uD45C \uB610\uB294 \uCCB4\uD06C\uB9AC\uC2A4\uD2B8\uB97C \uD3EC\uD568\uD558\uB77C.",
-      "Start with a direct answer in 1-3 sentences.",
-      "Then add short synthesis (patterns, contradictions, implications) if useful.",
-      "If evidence is insufficient, clearly say what is missing.",
+      "Keep tone natural, direct, and concise.",
+      "Output in markdown.",
       "When making claims, cite source paths inline in parentheses.",
-      "Respect previous turns when they remain consistent with the provided sources.",
-      "Do not invent facts outside the provided sources.",
+      "If evidence is insufficient, state it clearly and do not invent facts.",
+      ...this.getQaContractLines(intent)
+    ].join("\n");
+  }
+  buildLocalQaUserPrompt(question, sourceContext) {
+    return [
+      `Question: ${question}`,
+      "",
+      "Sources:",
+      sourceContext
+    ].join("\n");
+  }
+  buildLocalQaGeneratePrompt(systemPrompt, userPrompt, history) {
+    const historyText = history.length > 0 ? history.slice(-6).map(
+      (turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.text}`
+    ).join("\n") : "(none)";
+    return [
+      "System instructions:",
+      systemPrompt,
       "",
       "Conversation so far:",
       historyText,
       "",
+      userPrompt
+    ].join("\n");
+  }
+  buildLocalQaChatMessages(systemPrompt, userPrompt, history) {
+    const messages = [
+      { role: "system", content: systemPrompt }
+    ];
+    for (const turn of history.slice(-6)) {
+      messages.push({
+        role: turn.role,
+        content: turn.text
+      });
+    }
+    messages.push({ role: "user", content: userPrompt });
+    return messages;
+  }
+  extractOllamaTokenChunk(payload) {
+    let token = "";
+    let thinking = "";
+    const message = payload.message;
+    if (message && typeof message === "object") {
+      const parsed = message;
+      if (typeof parsed.content === "string") {
+        token = parsed.content;
+      }
+      if (typeof parsed.thinking === "string") {
+        thinking = parsed.thinking;
+      }
+    }
+    if (!token && typeof payload.response === "string") {
+      token = payload.response;
+    }
+    if (!thinking && typeof payload.thinking === "string") {
+      thinking = payload.thinking;
+    }
+    return { token, thinking };
+  }
+  async consumeOllamaJsonLineStream(body, onToken, onEvent) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let answer = "";
+    let thinking = "";
+    const consumeLine = (line) => {
+      if (!line) {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(line);
+        const chunk = this.extractOllamaTokenChunk(parsed);
+        if (chunk.thinking) {
+          thinking += chunk.thinking;
+          this.emitQaEvent(onEvent, "thinking", "Model thinking chunk", {
+            thinkingChunk: chunk.thinking
+          });
+        }
+        if (chunk.token) {
+          answer += chunk.token;
+          onToken == null ? void 0 : onToken(chunk.token);
+        }
+      } catch (e) {
+      }
+    };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let lineBreakIndex = buffer.indexOf("\n");
+      while (lineBreakIndex >= 0) {
+        const line = buffer.slice(0, lineBreakIndex).trim();
+        buffer = buffer.slice(lineBreakIndex + 1);
+        consumeLine(line);
+        lineBreakIndex = buffer.indexOf("\n");
+      }
+    }
+    const tail = buffer.trim();
+    if (tail) {
+      consumeLine(tail);
+    }
+    return { answer, thinking };
+  }
+  async requestLocalQaGenerate(params) {
+    const { qaBaseUrl, qaModel, prompt, onToken, onEvent } = params;
+    const base = qaBaseUrl.replace(/\/$/, "");
+    if (onToken) {
+      const streamResponse = await fetch(`${base}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: qaModel,
+          prompt,
+          stream: true
+        })
+      });
+      if (!streamResponse.ok || !streamResponse.body) {
+        throw new Error(`Local Q&A request failed: ${streamResponse.status}`);
+      }
+      return this.consumeOllamaJsonLineStream(streamResponse.body, onToken, onEvent);
+    }
+    const response = await (0, import_obsidian4.requestUrl)({
+      url: `${base}/api/generate`,
+      method: "POST",
+      contentType: "application/json",
+      body: JSON.stringify({
+        model: qaModel,
+        prompt,
+        stream: false
+      }),
+      throw: false
+    });
+    if (response.status >= 300) {
+      throw new Error(`Local Q&A request failed: ${response.status}`);
+    }
+    const parsed = response.json && typeof response.json === "object" ? response.json : {};
+    const chunk = this.extractOllamaTokenChunk(parsed);
+    const answer = chunk.token.trim() || response.text.trim();
+    return {
+      answer,
+      thinking: chunk.thinking.trim()
+    };
+  }
+  async requestLocalQaChat(params) {
+    const {
+      qaBaseUrl,
+      qaModel,
+      systemPrompt,
+      userPrompt,
+      history,
+      onToken,
+      onEvent
+    } = params;
+    const messages = this.buildLocalQaChatMessages(systemPrompt, userPrompt, history);
+    const base = qaBaseUrl.replace(/\/$/, "");
+    if (onToken) {
+      const streamResponse = await fetch(`${base}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: qaModel,
+          messages,
+          stream: true
+        })
+      });
+      if (!streamResponse.ok || !streamResponse.body) {
+        throw new Error(`Local Q&A chat request failed: ${streamResponse.status}`);
+      }
+      return this.consumeOllamaJsonLineStream(streamResponse.body, onToken, onEvent);
+    }
+    const response = await (0, import_obsidian4.requestUrl)({
+      url: `${base}/api/chat`,
+      method: "POST",
+      contentType: "application/json",
+      body: JSON.stringify({
+        model: qaModel,
+        messages,
+        stream: false
+      }),
+      throw: false
+    });
+    if (response.status >= 300) {
+      throw new Error(`Local Q&A chat request failed: ${response.status}`);
+    }
+    const parsed = response.json && typeof response.json === "object" ? response.json : {};
+    const chunk = this.extractOllamaTokenChunk(parsed);
+    const answer = chunk.token.trim() || response.text.trim();
+    return {
+      answer,
+      thinking: chunk.thinking.trim()
+    };
+  }
+  async requestLocalQaCompletion(params) {
+    const {
+      qaBaseUrl,
+      qaModel,
+      systemPrompt,
+      userPrompt,
+      history,
+      onToken,
+      onEvent
+    } = params;
+    if (this.settings.qaPreferChatApi) {
+      try {
+        this.emitQaEvent(onEvent, "generation", "Using /api/chat endpoint");
+        const chatResult = await this.requestLocalQaChat({
+          qaBaseUrl,
+          qaModel,
+          systemPrompt,
+          userPrompt,
+          history,
+          onToken,
+          onEvent
+        });
+        return {
+          ...chatResult,
+          endpoint: "chat"
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown /api/chat error";
+        this.emitQaEvent(onEvent, "warning", "Falling back to /api/generate", {
+          detail: message
+        });
+      }
+    }
+    this.emitQaEvent(onEvent, "generation", "Using /api/generate endpoint");
+    const prompt = this.buildLocalQaGeneratePrompt(systemPrompt, userPrompt, history);
+    const generateResult = await this.requestLocalQaGenerate({
+      qaBaseUrl,
+      qaModel,
+      prompt,
+      onToken,
+      onEvent
+    });
+    return {
+      ...generateResult,
+      endpoint: "generate"
+    };
+  }
+  buildSourceOnlyFallback(sourceBlocks) {
+    const lines = sourceBlocks.slice(0, 8).map((item) => `- [[${item.path}]] (${formatSimilarity(item.similarity)})`);
+    return lines.length > 0 ? lines.join("\n") : "- (no sources)";
+  }
+  async repairQaStructureIfNeeded(params) {
+    const {
+      intent,
+      answer,
+      question,
+      sourceBlocks,
+      qaBaseUrl,
+      qaModel,
+      onEvent
+    } = params;
+    if (!this.settings.qaStructureGuardEnabled) {
+      return answer;
+    }
+    if (!this.needsQaStructureRepair(intent, answer)) {
+      return answer;
+    }
+    this.emitQaEvent(onEvent, "generation", "Applying structured output guard");
+    const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
+    const systemPrompt = [
+      "You are a markdown structure normalizer for local-note answers.",
+      "Keep language identical to the draft answer.",
+      "Do not add facts not present in draft answer or provided source excerpts.",
+      "Preserve source path citations whenever possible.",
+      "Return markdown only.",
+      ...this.getQaContractLines(intent)
+    ].join("\n");
+    const userPrompt = [
       `Question: ${question}`,
       "",
-      "Sources:",
-      contextText
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      sourceContext
     ].join("\n");
+    try {
+      const repaired = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: []
+      });
+      const split = splitThinkingBlocks(repaired.answer);
+      const normalized = split.answer.trim() || repaired.answer.trim();
+      if (normalized && !this.needsQaStructureRepair(intent, normalized)) {
+        this.emitQaEvent(onEvent, "generation", "Structured output guard applied");
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", "Structured output guard could not enforce format");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown structure guard error";
+      this.emitQaEvent(onEvent, "warning", "Structured output guard failed", {
+        detail: message
+      });
+    }
+    if (intent === "sources_only") {
+      return this.buildSourceOnlyFallback(sourceBlocks);
+    }
+    return answer;
   }
   async openLocalQaChatModal() {
     await this.openLocalQaWorkspaceView();
   }
   async askLocalQa(question, topK, history = [], onToken, onEvent) {
-    var _a;
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
       throw new Error("No target notes selected. Open selector first.");
@@ -4150,6 +4730,7 @@ ${item.content}`
     if (!safeQuestion) {
       throw new Error("Question is empty.");
     }
+    const intent = this.detectLocalQaIntent(safeQuestion);
     const safeTopK = Math.max(1, Math.min(15, topK));
     const qaBaseUrl = this.resolveQaBaseUrl();
     if (!qaBaseUrl) {
@@ -4174,8 +4755,8 @@ ${item.content}`
         throw new Error("Embedding model is empty. Refresh embedding detection first.");
       }
       this.setStatus("semantic retrieval for local qa...");
-      onEvent == null ? void 0 : onEvent("Embedding retrieval started");
-      const retrievalCandidateK = Math.max(safeTopK * 6, 24);
+      this.emitQaEvent(onEvent, "retrieval", "Embedding retrieval started");
+      const retrievalCandidateK = this.resolveQaRetrievalCandidateK(intent, safeTopK);
       const retrieval = await searchSemanticNotesByQuery(
         this.app,
         selectedFiles,
@@ -4183,12 +4764,14 @@ ${item.content}`
         safeQuestion,
         retrievalCandidateK
       );
-      onEvent == null ? void 0 : onEvent(
-        `Retrieved ${retrieval.hits.length} candidate notes (cache hits=${retrieval.cacheHits}, writes=${retrieval.cacheWrites})`
+      this.emitQaEvent(
+        onEvent,
+        "retrieval",
+        `Retrieved ${retrieval.hits.length} candidates (cache hits=${retrieval.cacheHits}, writes=${retrieval.cacheWrites})`
       );
       if (retrieval.errors.length > 0) {
         this.notice(`Semantic retrieval had ${retrieval.errors.length} issue(s).`, 6e3);
-        onEvent == null ? void 0 : onEvent(`Retrieval warnings: ${retrieval.errors.length}`);
+        this.emitQaEvent(onEvent, "warning", `Retrieval warnings: ${retrieval.errors.length}`);
       }
       if (retrieval.hits.length === 0) {
         throw new Error("No relevant notes were found for this question.");
@@ -4196,14 +4779,15 @@ ${item.content}`
       const rankedHits = this.rerankQaHits(
         retrieval.hits,
         safeQuestion,
-        Math.max(safeTopK * 2, safeTopK)
+        this.resolveQaRerankTopK(intent, safeTopK)
       );
       if (rankedHits.length === 0) {
         throw new Error("No relevant notes were found for this question.");
       }
-      onEvent == null ? void 0 : onEvent(`Reranked to ${rankedHits.length} notes`);
-      const maxContextChars = Math.max(2e3, this.settings.qaMaxContextChars);
-      const sourceBlocks = [];
+      this.emitQaEvent(onEvent, "retrieval", `Reranked to ${rankedHits.length} notes`);
+      const maxContextChars = this.resolveQaContextCharLimit(intent);
+      const queryTerms = this.tokenizeQuery(safeQuestion);
+      const sourceCandidates = [];
       let usedChars = 0;
       for (const hit of rankedHits) {
         if (usedChars >= maxContextChars) {
@@ -4219,115 +4803,70 @@ ${item.content}`
         if (!snippet) {
           continue;
         }
-        sourceBlocks.push({
+        const snippetMatch = this.countTermMatches(snippet.toLowerCase(), queryTerms);
+        const relevance = hit.similarity + Math.min(0.22, snippetMatch * 0.03);
+        sourceCandidates.push({
           path: hit.path,
           similarity: hit.similarity,
-          content: snippet
+          content: snippet,
+          relevance
         });
         usedChars += snippet.length;
       }
-      onEvent == null ? void 0 : onEvent(`Context built from ${sourceBlocks.length} notes (${usedChars} chars)`);
+      sourceCandidates.sort(
+        (a, b) => b.relevance - a.relevance || a.path.localeCompare(b.path)
+      );
+      const sourceLimit = intent === "comparison" || intent === "plan" ? Math.max(safeTopK + 2, safeTopK) : intent === "sources_only" ? Math.max(safeTopK, 5) : safeTopK;
+      const sourceBlocks = sourceCandidates.slice(0, sourceLimit).map((item) => ({
+        path: item.path,
+        similarity: item.similarity,
+        content: item.content
+      }));
+      this.emitQaEvent(
+        onEvent,
+        "retrieval",
+        `Context built from ${sourceBlocks.length} notes (${usedChars} chars)`
+      );
       if (sourceBlocks.length === 0) {
         throw new Error("Relevant notes found but no readable content extracted.");
       }
-      const prompt = this.buildLocalQaPrompt(safeQuestion, sourceBlocks, history);
-      onEvent == null ? void 0 : onEvent("Generation started");
+      const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
+      const systemPrompt = this.buildLocalQaSystemPrompt(intent);
+      const userPrompt = this.buildLocalQaUserPrompt(safeQuestion, sourceContext);
+      this.emitQaEvent(onEvent, "generation", "Generation started");
       this.setStatus("asking local qa model...");
-      let answer = "";
-      let streamThinking = "";
-      if (onToken) {
-        const streamResponse = await fetch(`${qaBaseUrl.replace(/\/$/, "")}/api/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: qaModel,
-            prompt,
-            stream: true
-          })
-        });
-        if (!streamResponse.ok || !streamResponse.body) {
-          throw new Error(`Local Q&A request failed: ${streamResponse.status}`);
-        }
-        const reader = streamResponse.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            break;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          let lineBreakIndex = buffer.indexOf("\n");
-          while (lineBreakIndex >= 0) {
-            const line = buffer.slice(0, lineBreakIndex).trim();
-            buffer = buffer.slice(lineBreakIndex + 1);
-            if (line) {
-              try {
-                const parsed = JSON.parse(line);
-                const token = typeof parsed.response === "string" ? parsed.response : "";
-                const thinkChunk = typeof parsed.thinking === "string" ? parsed.thinking : "";
-                if (thinkChunk) {
-                  streamThinking += thinkChunk;
-                  onEvent == null ? void 0 : onEvent(`__THINK__${thinkChunk}`);
-                }
-                if (token) {
-                  answer += token;
-                  onToken(token);
-                }
-              } catch (e) {
-              }
-            }
-            lineBreakIndex = buffer.indexOf("\n");
-          }
-        }
-        const tail = buffer.trim();
-        if (tail) {
-          try {
-            const parsed = JSON.parse(tail);
-            const token = typeof parsed.response === "string" ? parsed.response : "";
-            const thinkChunk = typeof parsed.thinking === "string" ? parsed.thinking : "";
-            if (thinkChunk) {
-              streamThinking += thinkChunk;
-              onEvent == null ? void 0 : onEvent(`__THINK__${thinkChunk}`);
-            }
-            if (token) {
-              answer += token;
-              onToken(token);
-            }
-          } catch (e) {
-          }
-        }
-      } else {
-        const response = await (0, import_obsidian4.requestUrl)({
-          url: `${qaBaseUrl.replace(/\/$/, "")}/api/generate`,
-          method: "POST",
-          contentType: "application/json",
-          body: JSON.stringify({
-            model: qaModel,
-            prompt,
-            stream: false
-          }),
-          throw: false
-        });
-        if (response.status >= 300) {
-          throw new Error(`Local Q&A request failed: ${response.status}`);
-        }
-        answer = typeof ((_a = response.json) == null ? void 0 : _a.response) === "string" ? response.json.response.trim() : response.text.trim();
-      }
-      const split = splitThinkingBlocks(answer);
-      const finalAnswer = split.answer.trim() || answer.trim();
-      if (!finalAnswer) {
+      const completion = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history,
+        onToken,
+        onEvent
+      });
+      const split = splitThinkingBlocks(completion.answer);
+      const initialAnswer = split.answer.trim() || completion.answer.trim();
+      if (!initialAnswer) {
         throw new Error("Local Q&A returned an empty answer.");
       }
-      onEvent == null ? void 0 : onEvent("Generation completed");
-      const mergedThinking = [streamThinking.trim(), split.thinking.trim()].filter((item) => item.length > 0).join("\n\n").trim();
+      const repairedAnswer = await this.repairQaStructureIfNeeded({
+        intent,
+        answer: initialAnswer,
+        question: safeQuestion,
+        sourceBlocks,
+        qaBaseUrl,
+        qaModel,
+        onEvent
+      });
+      const mergedThinking = [completion.thinking.trim(), split.thinking.trim()].filter((item) => item.length > 0).join("\n\n").trim();
+      this.emitQaEvent(onEvent, "generation", `Generation completed (${completion.endpoint})`);
       const sourceList = sourceBlocks.map((item) => ({
         path: item.path,
         similarity: item.similarity
       }));
       return {
         question: safeQuestion,
-        answer: finalAnswer,
+        answer: repairedAnswer,
         thinking: mergedThinking,
         model: qaModel,
         embeddingModel,
