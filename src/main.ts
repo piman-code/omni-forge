@@ -2,8 +2,10 @@ import {
   App,
   Modal,
   Notice,
+  parseYaml,
   Plugin,
   PluginSettingTab,
+  requestUrl,
   Setting,
   TFile,
   TFolder,
@@ -26,7 +28,16 @@ import {
   getProviderModelLabel,
   isOllamaModelAnalyzable,
 } from "./providers";
-import { buildSemanticNeighborMap, type SemanticNeighbor } from "./semantic";
+import {
+  buildOllamaEmbeddingModelOptions,
+  buildSemanticNeighborMap,
+  detectOllamaEmbeddingModels,
+  isOllamaModelEmbeddingCapable,
+  searchSemanticNotesByQuery,
+  type OllamaEmbeddingDetectionResult,
+  type OllamaEmbeddingModelOption,
+  type SemanticNeighbor,
+} from "./semantic";
 import type {
   AnalysisRunSummary,
   BackupDecision,
@@ -68,10 +79,16 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   maxLinked: 8,
   semanticLinkingEnabled: false,
   semanticOllamaBaseUrl: "http://127.0.0.1:11434",
-  semanticOllamaModel: "nomic-embed-text",
+  semanticOllamaModel: "",
+  semanticAutoPickEnabled: true,
   semanticTopK: 24,
   semanticMinSimilarity: 0.25,
   semanticMaxChars: 5000,
+  qaOllamaBaseUrl: "http://127.0.0.1:11434",
+  qaOllamaModel: "",
+  qaTopK: 5,
+  qaMaxContextChars: 12000,
+  qaAllowNonLocalEndpoint: false,
   propertyCleanupEnabled: false,
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
@@ -170,6 +187,11 @@ interface SelectionSubmitPayload {
   selectedFolderPaths: string[];
   includeSubfolders: boolean;
   pathWidthPercent: number;
+}
+
+interface CleanupKeyStat {
+  key: string;
+  count: number;
 }
 
 class SelectionModal extends Modal {
@@ -439,6 +461,142 @@ class SelectionModal extends Modal {
   private updateFooterCounter(): void {
     this.footerCounterEl.setText(
       `Selected files: ${this.selectedFilePaths.size}, selected folders: ${this.selectedFolderPaths.size}, include subfolders: ${this.includeSubfolders ? "yes" : "no"}, path width: ${this.pathWidthPercent}%`,
+    );
+  }
+}
+
+class CleanupKeyPickerModal extends Modal {
+  private readonly keyStats: CleanupKeyStat[];
+  private readonly selectedKeys: Set<string>;
+  private readonly onSubmit: (selected: string[]) => Promise<void>;
+  private searchValue = "";
+  private listContainer!: HTMLElement;
+  private footerSummaryEl!: HTMLElement;
+
+  constructor(
+    app: App,
+    keyStats: CleanupKeyStat[],
+    initialSelectedKeys: string[],
+    onSubmit: (selected: string[]) => Promise<void>,
+  ) {
+    super(app);
+    this.keyStats = keyStats;
+    this.onSubmit = onSubmit;
+    this.selectedKeys = new Set(initialSelectedKeys);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Select cleanup keys from selected notes" });
+
+    contentEl.createEl("p", {
+      text: "Only checked keys will be written to 'Cleanup exact keys'. Counts show in how many selected notes each key appears.",
+    });
+
+    const searchWrapper = contentEl.createDiv();
+    searchWrapper.createEl("label", { text: "Filter keys" });
+    const searchInput = searchWrapper.createEl("input", { type: "text" });
+    searchInput.style.width = "100%";
+    searchInput.placeholder = "type key fragment...";
+    searchInput.oninput = () => {
+      this.searchValue = searchInput.value.trim().toLowerCase();
+      this.renderList();
+    };
+
+    const actions = contentEl.createDiv();
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
+    actions.style.marginTop = "8px";
+    const selectAll = actions.createEl("button", { text: "Select all (filtered)" });
+    const clearAll = actions.createEl("button", { text: "Clear all (filtered)" });
+
+    this.listContainer = contentEl.createDiv();
+    this.listContainer.style.maxHeight = "48vh";
+    this.listContainer.style.overflow = "auto";
+    this.listContainer.style.border = "1px solid var(--background-modifier-border)";
+    this.listContainer.style.borderRadius = "8px";
+    this.listContainer.style.marginTop = "8px";
+    this.listContainer.style.padding = "6px";
+
+    this.footerSummaryEl = contentEl.createDiv();
+    this.footerSummaryEl.style.marginTop = "8px";
+
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+
+    const cancelButton = footer.createEl("button", { text: "Cancel" });
+    cancelButton.onclick = () => this.close();
+
+    const saveButton = footer.createEl("button", { text: "Save", cls: "mod-cta" });
+    saveButton.onclick = async () => {
+      const selected = [...this.selectedKeys].sort((a, b) => a.localeCompare(b));
+      await this.onSubmit(selected);
+      this.close();
+    };
+
+    selectAll.onclick = () => {
+      for (const item of this.filteredStats()) {
+        this.selectedKeys.add(item.key);
+      }
+      this.renderList();
+    };
+    clearAll.onclick = () => {
+      for (const item of this.filteredStats()) {
+        this.selectedKeys.delete(item.key);
+      }
+      this.renderList();
+    };
+
+    this.renderList();
+  }
+
+  private filteredStats(): CleanupKeyStat[] {
+    if (!this.searchValue) {
+      return this.keyStats;
+    }
+    return this.keyStats.filter((item) => item.key.includes(this.searchValue));
+  }
+
+  private renderList(): void {
+    this.listContainer.empty();
+    const rows = this.filteredStats();
+
+    if (rows.length === 0) {
+      this.listContainer.createEl("div", { text: "No matching keys." });
+      this.footerSummaryEl.setText(`Selected: ${this.selectedKeys.size}`);
+      return;
+    }
+
+    for (const item of rows) {
+      const row = this.listContainer.createDiv();
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      row.style.padding = "6px 8px";
+      row.style.borderBottom = "1px solid var(--background-modifier-border)";
+
+      const checkbox = row.createEl("input", { type: "checkbox" });
+      checkbox.checked = this.selectedKeys.has(item.key);
+      checkbox.onchange = () => {
+        if (checkbox.checked) {
+          this.selectedKeys.add(item.key);
+        } else {
+          this.selectedKeys.delete(item.key);
+        }
+        this.footerSummaryEl.setText(`Selected: ${this.selectedKeys.size}`);
+      };
+
+      row.createEl("span", { text: item.key });
+      const countEl = row.createEl("small", { text: `${item.count}` });
+      countEl.style.marginLeft = "auto";
+    }
+
+    this.footerSummaryEl.setText(
+      `Listed: ${rows.length} keys | Selected: ${this.selectedKeys.size}`,
     );
   }
 }
@@ -806,6 +964,134 @@ class SuggestionPreviewModal extends Modal {
       list.createEl("small", {
         text: `...and ${candidates.length - previewCount} more`,
       });
+    }
+  }
+}
+
+interface LocalQARequestPayload {
+  question: string;
+  topK: number;
+}
+
+interface LocalQASourceItem {
+  path: string;
+  similarity: number;
+}
+
+interface LocalQAResultPayload {
+  question: string;
+  answer: string;
+  model: string;
+  embeddingModel: string;
+  sources: LocalQASourceItem[];
+}
+
+class LocalQAInputModal extends Modal {
+  private readonly defaultTopK: number;
+  private readonly onSubmit: (payload: LocalQARequestPayload) => Promise<void>;
+
+  constructor(
+    app: App,
+    defaultTopK: number,
+    onSubmit: (payload: LocalQARequestPayload) => Promise<void>,
+  ) {
+    super(app);
+    this.defaultTopK = defaultTopK;
+    this.onSubmit = onSubmit;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Ask local AI from selected notes" });
+
+    const questionLabel = contentEl.createEl("label", { text: "Question" });
+    questionLabel.style.display = "block";
+    questionLabel.style.marginBottom = "6px";
+    const questionInput = contentEl.createEl("textarea");
+    questionInput.style.width = "100%";
+    questionInput.style.minHeight = "120px";
+    questionInput.placeholder = "What do you want to find from selected notes?";
+
+    const topKWrapper = contentEl.createDiv();
+    topKWrapper.style.marginTop = "10px";
+    topKWrapper.createEl("label", { text: "Top sources (1-15)" });
+    const topKInput = topKWrapper.createEl("input", { type: "number" });
+    topKInput.min = "1";
+    topKInput.max = "15";
+    topKInput.value = String(this.defaultTopK);
+
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+
+    const cancelButton = footer.createEl("button", { text: "Cancel" });
+    cancelButton.onclick = () => this.close();
+
+    const askButton = footer.createEl("button", { text: "Ask", cls: "mod-cta" });
+    askButton.onclick = async () => {
+      const question = questionInput.value.trim();
+      if (!question) {
+        new Notice("Question is empty.");
+        return;
+      }
+
+      const parsedTopK = Number.parseInt(topKInput.value, 10);
+      const topK =
+        Number.isFinite(parsedTopK) && parsedTopK >= 1
+          ? Math.min(15, parsedTopK)
+          : this.defaultTopK;
+
+      await this.onSubmit({ question, topK });
+      this.close();
+    };
+  }
+}
+
+class LocalQAResultModal extends Modal {
+  private readonly payload: LocalQAResultPayload;
+
+  constructor(app: App, payload: LocalQAResultPayload) {
+    super(app);
+    this.payload = payload;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Local AI answer from selected notes" });
+
+    const meta = contentEl.createDiv();
+    meta.style.border = "1px solid var(--background-modifier-border)";
+    meta.style.borderRadius = "8px";
+    meta.style.padding = "8px";
+    meta.style.marginBottom = "8px";
+    meta.createEl("div", { text: `Model: ${this.payload.model}` });
+    meta.createEl("div", { text: `Embedding model: ${this.payload.embeddingModel}` });
+    meta.createEl("div", { text: `Question: ${this.payload.question}` });
+
+    const answerBlock = contentEl.createDiv();
+    answerBlock.style.border = "1px solid var(--background-modifier-border)";
+    answerBlock.style.borderRadius = "8px";
+    answerBlock.style.padding = "10px";
+    answerBlock.style.whiteSpace = "pre-wrap";
+    answerBlock.style.maxHeight = "46vh";
+    answerBlock.style.overflow = "auto";
+    answerBlock.setText(this.payload.answer || "(empty answer)");
+
+    const sourcesBlock = contentEl.createDiv();
+    sourcesBlock.style.marginTop = "10px";
+    sourcesBlock.createEl("strong", { text: "Sources" });
+    if (this.payload.sources.length === 0) {
+      sourcesBlock.createEl("div", { text: "No sources." });
+    } else {
+      for (const source of this.payload.sources) {
+        sourcesBlock.createEl("div", {
+          text: `- ${source.path} (${formatSimilarity(source.similarity)})`,
+        });
+      }
     }
   }
 }
@@ -1202,12 +1488,78 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.semanticOllamaBaseUrl = value.trim();
             await this.plugin.saveSettings();
+            await this.plugin.refreshEmbeddingModelDetection({
+              notify: false,
+              autoApply: true,
+            });
           }),
       );
 
+    const embeddingOptions = this.plugin.getEmbeddingModelOptions();
     new Setting(containerEl)
-      .setName("Embedding model")
-      .setDesc("For example: nomic-embed-text or bge-m3")
+      .setName("Embedding detected model picker")
+      .setDesc(
+        "Choose among detected models. (추천)=recommended, (불가)=not suitable for embeddings.",
+      )
+      .addDropdown((dropdown) => {
+        if (embeddingOptions.length === 0) {
+          dropdown.addOption("", "(No models detected)");
+          dropdown.setValue("");
+        } else {
+          for (const option of embeddingOptions) {
+            const suffix =
+              option.status === "recommended"
+                ? " (추천)"
+                : option.status === "unavailable"
+                  ? " (불가)"
+                  : "";
+            dropdown.addOption(option.model, `${option.model}${suffix}`);
+          }
+
+          const current = this.plugin.settings.semanticOllamaModel;
+          if (
+            current &&
+            embeddingOptions.some((option) => option.model === current)
+          ) {
+            dropdown.setValue(current);
+          } else {
+            dropdown.setValue(embeddingOptions[0]?.model ?? "");
+          }
+        }
+
+        dropdown.onChange(async (value) => {
+          if (!value) {
+            return;
+          }
+          this.plugin.settings.semanticOllamaModel = value;
+          await this.plugin.saveSettings();
+
+          if (!isOllamaModelEmbeddingCapable(value)) {
+            new Notice(`Selected model is marked as (불가): ${value}`, 4500);
+          }
+
+          this.display();
+        });
+      })
+      .addButton((button) =>
+        button.setButtonText("Refresh").onClick(async () => {
+          await this.plugin.refreshEmbeddingModelDetection({
+            notify: true,
+            autoApply: true,
+          });
+          this.display();
+        }),
+      )
+      .addButton((button) =>
+        button.setButtonText("Use recommended").onClick(async () => {
+          await this.plugin.applyRecommendedEmbeddingModel(true);
+          this.display();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Embedding model (manual)")
+      .setDesc("Manual override if you want a custom embedding model name.")
       .addText((text) =>
         text
           .setPlaceholder("nomic-embed-text")
@@ -1217,6 +1569,24 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    new Setting(containerEl)
+      .setName("Auto-pick recommended embedding model")
+      .setDesc(
+        "Detect local models and auto-choose recommended when current is missing.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.semanticAutoPickEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.semanticAutoPickEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Embedding detection summary")
+      .setDesc(this.plugin.getEmbeddingDetectionSummary());
 
     new Setting(containerEl)
       .setName("Semantic top-k candidates")
@@ -1265,6 +1635,77 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           }),
       );
 
+    containerEl.createEl("h3", { text: "Local Q&A (security-first)" });
+
+    new Setting(containerEl)
+      .setName("Q&A Ollama base URL")
+      .setDesc("Leave empty to use main Ollama base URL.")
+      .addText((text) =>
+        text
+          .setPlaceholder("http://127.0.0.1:11434")
+          .setValue(this.plugin.settings.qaOllamaBaseUrl)
+          .onChange(async (value) => {
+            this.plugin.settings.qaOllamaBaseUrl = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Q&A model")
+      .setDesc("Leave empty to use main analysis model.")
+      .addText((text) =>
+        text
+          .setPlaceholder("qwen2.5:7b")
+          .setValue(this.plugin.settings.qaOllamaModel)
+          .onChange(async (value) => {
+            this.plugin.settings.qaOllamaModel = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Q&A retrieval top-k")
+      .addText((text) =>
+        text
+          .setPlaceholder("5")
+          .setValue(String(this.plugin.settings.qaTopK))
+          .onChange(async (value) => {
+            this.plugin.settings.qaTopK = parsePositiveInt(
+              value,
+              this.plugin.settings.qaTopK,
+            );
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Q&A max context chars")
+      .setDesc("Maximum total note characters to send to local LLM.")
+      .addText((text) =>
+        text
+          .setPlaceholder("12000")
+          .setValue(String(this.plugin.settings.qaMaxContextChars))
+          .onChange(async (value) => {
+            this.plugin.settings.qaMaxContextChars = parsePositiveInt(
+              value,
+              this.plugin.settings.qaMaxContextChars,
+            );
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Allow non-local Q&A endpoint (danger)")
+      .setDesc("Off by default. Keep disabled to prevent note data leaving localhost.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.qaAllowNonLocalEndpoint)
+          .onChange(async (value) => {
+            this.plugin.settings.qaAllowNonLocalEndpoint = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
     new Setting(containerEl)
       .setName("Remove legacy AI-prefixed keys")
       .setDesc(
@@ -1304,6 +1745,16 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
             this.plugin.settings.propertyCleanupKeys = value;
             await this.plugin.saveSettings();
           }),
+      );
+
+    new Setting(containerEl)
+      .setName("Pick cleanup keys from selected notes")
+      .setDesc("Scan selected notes and choose keys by checkbox.")
+      .addButton((button) =>
+        button.setButtonText("Open picker").onClick(async () => {
+          await this.plugin.openCleanupKeyPicker();
+          this.display();
+        }),
       );
 
     new Setting(containerEl)
@@ -1475,6 +1926,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   private ollamaDetectionOptions: OllamaModelOption[] = [];
   private ollamaDetectionSummary =
     "Model detection has not run yet. Click refresh to detect installed Ollama models.";
+  private embeddingDetectionCache: OllamaEmbeddingDetectionResult | null = null;
+  private embeddingDetectionOptions: OllamaEmbeddingModelOption[] = [];
+  private embeddingDetectionSummary =
+    "Embedding model detection has not run yet. Click refresh to detect installed Ollama models.";
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -1530,10 +1985,24 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "select-cleanup-keys-from-selected-notes",
+      name: "Auto-Linker: Select cleanup keys from selected notes",
+      callback: async () => this.openCleanupKeyPicker(),
+    });
+
+    this.addCommand({
       id: "refresh-ollama-models",
       name: "Auto-Linker: Refresh Ollama model detection",
       callback: async () => {
         await this.refreshOllamaDetection({ notify: true, autoApply: true });
+      },
+    });
+
+    this.addCommand({
+      id: "refresh-embedding-models",
+      name: "Auto-Linker: Refresh embedding model detection",
+      callback: async () => {
+        await this.refreshEmbeddingModelDetection({ notify: true, autoApply: true });
       },
     });
 
@@ -1543,9 +2012,16 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       callback: async () => this.generateMocFromSelection(),
     });
 
+    this.addCommand({
+      id: "ask-local-ai-from-selected-notes",
+      name: "Auto-Linker: Ask local AI from selected notes",
+      callback: async () => this.openLocalQaInputModal(),
+    });
+
     this.addSettingTab(new KnowledgeWeaverSettingTab(this.app, this));
 
     await this.refreshOllamaDetection({ notify: false, autoApply: true });
+    await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
   }
 
   onunload(): void {
@@ -1558,6 +2034,14 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
   getOllamaModelOptions(): OllamaModelOption[] {
     return this.ollamaDetectionOptions;
+  }
+
+  getEmbeddingDetectionSummary(): string {
+    return this.embeddingDetectionSummary;
+  }
+
+  getEmbeddingModelOptions(): OllamaEmbeddingModelOption[] {
+    return this.embeddingDetectionOptions;
   }
 
   async applyRecommendedOllamaModel(notify: boolean): Promise<void> {
@@ -1573,6 +2057,24 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     if (notify) {
       this.notice(`Ollama model set to recommended: ${this.settings.ollamaModel}`);
+    }
+  }
+
+  async applyRecommendedEmbeddingModel(notify: boolean): Promise<void> {
+    if (!this.embeddingDetectionCache?.recommended) {
+      if (notify) {
+        this.notice("No recommended embedding model found. Refresh detection first.");
+      }
+      return;
+    }
+
+    this.settings.semanticOllamaModel = this.embeddingDetectionCache.recommended;
+    await this.saveSettings();
+
+    if (notify) {
+      this.notice(
+        `Embedding model set to recommended: ${this.settings.semanticOllamaModel}`,
+      );
     }
   }
 
@@ -1632,6 +2134,72 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
   }
 
+  async refreshEmbeddingModelDetection(options: {
+    notify: boolean;
+    autoApply: boolean;
+  }): Promise<OllamaEmbeddingDetectionResult | null> {
+    const baseUrl =
+      this.settings.semanticOllamaBaseUrl.trim() || this.settings.ollamaBaseUrl.trim();
+    if (!baseUrl) {
+      this.embeddingDetectionSummary = "Embedding detection skipped: base URL is empty.";
+      if (options.notify) {
+        this.notice(this.embeddingDetectionSummary);
+      }
+      return null;
+    }
+
+    try {
+      const detected = await detectOllamaEmbeddingModels(baseUrl);
+      this.embeddingDetectionCache = detected;
+      this.embeddingDetectionOptions = buildOllamaEmbeddingModelOptions(
+        detected.models,
+        detected.recommended,
+      );
+
+      const modelListPreview =
+        detected.models.length > 0
+          ? detected.models.slice(0, 5).join(", ")
+          : "(none)";
+      this.embeddingDetectionSummary = [
+        `Detected: ${detected.models.length} model(s).`,
+        `Current: ${this.settings.semanticOllamaModel || "(not set)"}.`,
+        `Recommended: ${detected.recommended || "(none)"}.`,
+        `Reason: ${detected.reason}`,
+        `Preview: ${modelListPreview}`,
+      ].join(" ");
+
+      if (options.autoApply && this.settings.semanticAutoPickEnabled) {
+        const current = this.settings.semanticOllamaModel.trim();
+        const currentExists = current.length > 0 && detected.models.includes(current);
+        if ((!current || !currentExists) && detected.recommended) {
+          this.settings.semanticOllamaModel = detected.recommended;
+          await this.saveSettings();
+          if (options.notify) {
+            this.notice(
+              `Auto-selected embedding model: ${detected.recommended} (${detected.reason})`,
+            );
+          }
+        }
+      }
+
+      if (options.notify) {
+        this.notice(this.embeddingDetectionSummary, 5000);
+      }
+
+      return detected;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown embedding detection error";
+      this.embeddingDetectionCache = null;
+      this.embeddingDetectionOptions = [];
+      this.embeddingDetectionSummary = `Embedding detection failed: ${message}`;
+      if (options.notify) {
+        this.notice(`Embedding model detection failed: ${message}`);
+      }
+      return null;
+    }
+  }
+
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 
@@ -1663,11 +2231,30 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!Number.isFinite(this.settings.semanticMaxChars)) {
       this.settings.semanticMaxChars = DEFAULT_SETTINGS.semanticMaxChars;
     }
+    if (!Number.isFinite(this.settings.qaTopK)) {
+      this.settings.qaTopK = DEFAULT_SETTINGS.qaTopK;
+    }
+    if (!Number.isFinite(this.settings.qaMaxContextChars)) {
+      this.settings.qaMaxContextChars = DEFAULT_SETTINGS.qaMaxContextChars;
+    }
     if (!this.settings.semanticOllamaBaseUrl) {
       this.settings.semanticOllamaBaseUrl = DEFAULT_SETTINGS.semanticOllamaBaseUrl;
     }
     if (!this.settings.semanticOllamaModel) {
       this.settings.semanticOllamaModel = DEFAULT_SETTINGS.semanticOllamaModel;
+    }
+    if (typeof this.settings.qaOllamaBaseUrl !== "string") {
+      this.settings.qaOllamaBaseUrl = DEFAULT_SETTINGS.qaOllamaBaseUrl;
+    }
+    if (typeof this.settings.qaOllamaModel !== "string") {
+      this.settings.qaOllamaModel = DEFAULT_SETTINGS.qaOllamaModel;
+    }
+    if (typeof this.settings.semanticAutoPickEnabled !== "boolean") {
+      this.settings.semanticAutoPickEnabled = DEFAULT_SETTINGS.semanticAutoPickEnabled;
+    }
+    if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
+      this.settings.qaAllowNonLocalEndpoint =
+        DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
     }
     if (typeof this.settings.propertyCleanupKeys !== "string") {
       this.settings.propertyCleanupKeys = DEFAULT_SETTINGS.propertyCleanupKeys;
@@ -1700,6 +2287,445 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       .split(/[\n,;]+/)
       .map((item) => item.trim().toLowerCase())
       .filter((item) => item.length > 0);
+  }
+
+  private parseFrontmatterFromContent(
+    content: string,
+  ): Record<string, unknown> | null {
+    const lines = content.split("\n");
+    if (lines.length < 3 || lines[0].trim() !== "---") {
+      return null;
+    }
+
+    let end = -1;
+    for (let i = 1; i < lines.length; i += 1) {
+      if (lines[i].trim() === "---") {
+        end = i;
+        break;
+      }
+    }
+    if (end < 1) {
+      return null;
+    }
+
+    const yamlRaw = lines.slice(1, end).join("\n").trim();
+    if (!yamlRaw) {
+      return {};
+    }
+
+    try {
+      const parsed = parseYaml(yamlRaw);
+      if (parsed && typeof parsed === "object") {
+        return parsed as Record<string, unknown>;
+      }
+      return {};
+    } catch {
+      return null;
+    }
+  }
+
+  private async readFrontmatterSnapshot(
+    file: TFile,
+  ): Promise<Record<string, unknown> | null> {
+    const raw = await this.app.vault.cachedRead(file);
+    return this.parseFrontmatterFromContent(raw);
+  }
+
+  private async collectCleanupKeyStats(files: TFile[]): Promise<CleanupKeyStat[]> {
+    const counts = new Map<string, number>();
+
+    for (const file of files) {
+      const frontmatter = await this.readFrontmatterSnapshot(file);
+      if (!frontmatter) {
+        continue;
+      }
+
+      const keys = Object.keys(frontmatter)
+        .map((key) => key.trim().toLowerCase())
+        .filter((key) => key.length > 0);
+
+      const unique = new Set(keys);
+      for (const key of unique) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+
+    return [...counts.entries()]
+      .map(([key, count]) => ({ key, count }))
+      .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+  }
+
+  async openCleanupKeyPicker(): Promise<void> {
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length === 0) {
+      this.notice("No target notes selected. Open selector first.");
+      await this.openSelectionModal();
+      return;
+    }
+
+    this.setStatus("scanning cleanup keys...");
+    const keyStats = await this.collectCleanupKeyStats(selectedFiles);
+    this.setStatus("idle");
+
+    if (keyStats.length === 0) {
+      this.notice("No frontmatter keys found in selected notes.");
+      return;
+    }
+
+    const currentKeys = this.parseSimpleList(this.settings.propertyCleanupKeys);
+    new CleanupKeyPickerModal(
+      this.app,
+      keyStats,
+      currentKeys,
+      async (selected) => {
+        this.settings.propertyCleanupKeys = selected.join(", ");
+        await this.saveSettings();
+        this.notice(`Cleanup exact keys updated (${selected.length} selected).`, 5000);
+      },
+    ).open();
+  }
+
+  private isLocalEndpoint(urlText: string): boolean {
+    try {
+      const parsed = new URL(urlText);
+      const host = parsed.hostname.toLowerCase();
+      return (
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "::1" ||
+        host === "0.0.0.0"
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private resolveQaBaseUrl(): string {
+    const qa = this.settings.qaOllamaBaseUrl.trim();
+    const fallback = this.settings.ollamaBaseUrl.trim();
+    return qa || fallback;
+  }
+
+  private resolveQaModel(): string {
+    const qa = this.settings.qaOllamaModel.trim();
+    const fallback = this.settings.ollamaModel.trim();
+    return qa || fallback;
+  }
+
+  private trimTextForContext(source: string, maxChars: number): string {
+    const collapsed = source.replace(/\s+/g, " ").trim();
+    return collapsed.slice(0, Math.max(400, maxChars));
+  }
+
+  private tokenizeQuery(text: string): string[] {
+    return [...new Set(
+      text
+        .toLowerCase()
+        .split(/[\s,.;:!?()[\]{}"'<>\\/|`~!@#$%^&*+=_-]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 2),
+    )];
+  }
+
+  private rerankQaHits(
+    hits: { path: string; similarity: number }[],
+    question: string,
+    topK: number,
+  ): { path: string; similarity: number }[] {
+    const terms = this.tokenizeQuery(question);
+    const scored = hits.map((hit) => {
+      if (terms.length === 0) {
+        return { ...hit, boosted: hit.similarity };
+      }
+      const lowerPath = hit.path.toLowerCase();
+      let matched = 0;
+      for (const term of terms) {
+        if (lowerPath.includes(term)) {
+          matched += 1;
+        }
+      }
+      const boost = Math.min(0.24, matched * 0.08);
+      return {
+        ...hit,
+        boosted: hit.similarity + boost,
+      };
+    });
+
+    scored.sort((a, b) => b.boosted - a.boosted || a.path.localeCompare(b.path));
+    return scored.slice(0, Math.max(1, topK)).map((item) => ({
+      path: item.path,
+      similarity: item.similarity,
+    }));
+  }
+
+  private extractRelevantSnippet(
+    source: string,
+    query: string,
+    maxChars: number,
+  ): string {
+    const normalized = source.replace(/\r\n/g, "\n");
+    const lines = normalized.split("\n");
+    const terms = this.tokenizeQuery(query);
+
+    if (terms.length === 0) {
+      return this.trimTextForContext(source, maxChars);
+    }
+
+    const lowerLines = lines.map((line) => line.toLowerCase());
+    const scored: Array<{ idx: number; score: number }> = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lowerLines[i];
+      if (!line.trim()) {
+        continue;
+      }
+      let score = 0;
+      for (const term of terms) {
+        if (line.includes(term)) {
+          score += 1;
+        }
+      }
+      if (score > 0) {
+        scored.push({ idx: i, score });
+      }
+    }
+
+    if (scored.length === 0) {
+      return this.trimTextForContext(source, maxChars);
+    }
+
+    scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+    const pickedIndexes = new Set<number>();
+    for (const item of scored.slice(0, 12)) {
+      const start = Math.max(0, item.idx - 1);
+      const end = Math.min(lines.length - 1, item.idx + 1);
+      for (let i = start; i <= end; i += 1) {
+        pickedIndexes.add(i);
+      }
+    }
+
+    const ordered = [...pickedIndexes].sort((a, b) => a - b);
+    let output = "";
+    let prev = -10;
+    for (const idx of ordered) {
+      const line = lines[idx].trimEnd();
+      if (!line.trim()) {
+        continue;
+      }
+      if (idx - prev > 2 && output.length > 0) {
+        output += "\n...\n";
+      }
+      const candidate = output.length > 0 ? `${output}\n${line}` : line;
+      if (candidate.length > maxChars) {
+        break;
+      }
+      output = candidate;
+      prev = idx;
+    }
+
+    if (!output) {
+      return this.trimTextForContext(source, maxChars);
+    }
+    return output;
+  }
+
+  private buildLocalQaPrompt(
+    question: string,
+    sourceBlocks: Array<{ path: string; similarity: number; content: string }>,
+  ): string {
+    const contextText = sourceBlocks
+      .map(
+        (item, index) =>
+          `Source ${index + 1}\nPath: ${item.path}\nSimilarity: ${formatSimilarity(item.similarity)}\nContent:\n${item.content}`,
+      )
+      .join("\n\n---\n\n");
+
+    return [
+      "You are a local-note assistant for Obsidian.",
+      "Answer only from the provided sources.",
+      "Use the same language as the user's question.",
+      "Tone: natural conversation, concise, not stiff.",
+      "Do not force rigid sections. Use bullets only if they improve clarity.",
+      "Start with a direct answer in 1-3 sentences.",
+      "If useful, add short insight synthesis (patterns, contradictions, implications).",
+      "If evidence is insufficient, clearly say what is missing.",
+      "When making claims, cite source paths inline in parentheses.",
+      "",
+      `Question: ${question}`,
+      "",
+      "Sources:",
+      contextText,
+    ].join("\n");
+  }
+
+  private async openLocalQaInputModal(): Promise<void> {
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length === 0) {
+      this.notice("No target notes selected. Open selector first.");
+      await this.openSelectionModal();
+      return;
+    }
+
+    new LocalQAInputModal(
+      this.app,
+      this.settings.qaTopK,
+      async (payload) => {
+        await this.runLocalQa(payload.question, payload.topK);
+      },
+    ).open();
+  }
+
+  private async runLocalQa(question: string, topK: number): Promise<void> {
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length === 0) {
+      this.notice("No target notes selected. Open selector first.");
+      return;
+    }
+
+    const qaBaseUrl = this.resolveQaBaseUrl();
+    if (!qaBaseUrl) {
+      this.notice("Q&A base URL is empty.");
+      return;
+    }
+    if (
+      !this.settings.qaAllowNonLocalEndpoint &&
+      !this.isLocalEndpoint(qaBaseUrl)
+    ) {
+      this.notice(
+        "Blocked by security policy: Q&A endpoint must be localhost unless explicitly allowed.",
+        7000,
+      );
+      return;
+    }
+
+    const qaModel = this.resolveQaModel();
+    if (!qaModel) {
+      this.notice("Q&A model is empty.");
+      return;
+    }
+    if (!isOllamaModelAnalyzable(qaModel)) {
+      this.notice(`Q&A model is not suitable: ${qaModel}`, 6000);
+      return;
+    }
+
+    await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+    const embeddingModel = this.settings.semanticOllamaModel.trim();
+    if (!embeddingModel) {
+      this.notice("Embedding model is empty. Refresh embedding detection first.", 6000);
+      return;
+    }
+
+    this.setStatus("semantic retrieval for local qa...");
+    const retrievalCandidateK = Math.max(topK * 3, topK);
+    const retrieval = await searchSemanticNotesByQuery(
+      this.app,
+      selectedFiles,
+      this.settings,
+      question,
+      retrievalCandidateK,
+    );
+
+    if (retrieval.errors.length > 0) {
+      this.notice(
+        `Semantic retrieval had ${retrieval.errors.length} issue(s).`,
+        6000,
+      );
+    }
+    if (retrieval.hits.length === 0) {
+      this.notice("No relevant notes were found for this question.");
+      this.setStatus("idle");
+      return;
+    }
+
+    const rankedHits = this.rerankQaHits(retrieval.hits, question, topK);
+    if (rankedHits.length === 0) {
+      this.notice("No relevant notes were found for this question.");
+      this.setStatus("idle");
+      return;
+    }
+
+    const maxContextChars = Math.max(2000, this.settings.qaMaxContextChars);
+    const sourceBlocks: Array<{ path: string; similarity: number; content: string }> = [];
+    let usedChars = 0;
+
+    for (const hit of rankedHits) {
+      if (usedChars >= maxContextChars) {
+        break;
+      }
+      const entry = this.app.vault.getAbstractFileByPath(hit.path);
+      if (!(entry instanceof TFile)) {
+        continue;
+      }
+
+      const raw = await this.app.vault.cachedRead(entry);
+      const remaining = Math.max(500, maxContextChars - usedChars);
+      const snippet = this.extractRelevantSnippet(raw, question, remaining);
+      if (!snippet) {
+        continue;
+      }
+
+      sourceBlocks.push({
+        path: hit.path,
+        similarity: hit.similarity,
+        content: snippet,
+      });
+      usedChars += snippet.length;
+    }
+
+    if (sourceBlocks.length === 0) {
+      this.notice("Relevant notes found but no readable content extracted.");
+      this.setStatus("idle");
+      return;
+    }
+
+    const prompt = this.buildLocalQaPrompt(question, sourceBlocks);
+
+    this.setStatus("asking local qa model...");
+    const response = await requestUrl({
+      url: `${qaBaseUrl.replace(/\/$/, "")}/api/generate`,
+      method: "POST",
+      contentType: "application/json",
+      body: JSON.stringify({
+        model: qaModel,
+        prompt,
+        stream: false,
+      }),
+      throw: false,
+    });
+
+    if (response.status >= 300) {
+      this.notice(`Local Q&A request failed: ${response.status}`, 6000);
+      this.setStatus("idle");
+      return;
+    }
+
+    const answer =
+      typeof response.json?.response === "string"
+        ? response.json.response.trim()
+        : response.text.trim();
+    if (!answer) {
+      this.notice("Local Q&A returned an empty answer.");
+      this.setStatus("idle");
+      return;
+    }
+
+    const sourceList: LocalQASourceItem[] = sourceBlocks.map((item) => ({
+      path: item.path,
+      similarity: item.similarity,
+    }));
+
+    new LocalQAResultModal(this.app, {
+      question,
+      answer,
+      model: qaModel,
+      embeddingModel,
+      sources: sourceList,
+    }).open();
+
+    this.notice(
+      `Local Q&A done. Sources=${sourceList.length}, cacheHits=${retrieval.cacheHits}, cacheWrites=${retrieval.cacheWrites}`,
+      6000,
+    );
+    this.setStatus("idle");
   }
 
   private getPropertyCleanupConfig(): FrontmatterCleanupConfig | undefined {
@@ -1959,27 +2985,24 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         `${dryRun ? "dry-run cleanup" : "cleaning"} ${index + 1}/${selectedFiles.length}`,
       );
 
-      const cachedFrontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter as
-        | Record<string, unknown>
-        | undefined;
-      if (!cachedFrontmatter || Object.keys(cachedFrontmatter).length === 0) {
-        events.push({ filePath: file.path, status: "ok", message: "no-frontmatter" });
-        continue;
-      }
-
       try {
-        const previewCleaned = cleanupFrontmatterRecord(cachedFrontmatter, {
-          cleanUnknown: this.settings.cleanUnknownFrontmatter,
-          cleanupConfig,
-        });
-        const previewRemoved = previewCleaned.removedKeys;
-
-        if (previewRemoved.length === 0) {
-          events.push({ filePath: file.path, status: "ok", message: "no-change" });
-          continue;
-        }
-
         if (dryRun) {
+          const snapshot = await this.readFrontmatterSnapshot(file);
+          if (!snapshot || Object.keys(snapshot).length === 0) {
+            events.push({ filePath: file.path, status: "ok", message: "no-frontmatter" });
+            continue;
+          }
+
+          const previewCleaned = cleanupFrontmatterRecord(snapshot, {
+            cleanUnknown: this.settings.cleanUnknownFrontmatter,
+            cleanupConfig,
+          });
+          const previewRemoved = previewCleaned.removedKeys;
+          if (previewRemoved.length === 0) {
+            events.push({ filePath: file.path, status: "ok", message: "no-change" });
+            continue;
+          }
+
           changedFiles += 1;
           removedKeysTotal += previewRemoved.length;
           events.push({
@@ -1994,7 +3017,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
               .join(", ")}`,
           );
           dryRunReportRows.push(
-            `- Before keys: ${Object.keys(cachedFrontmatter)
+            `- Before keys: ${Object.keys(snapshot)
               .sort((a, b) => a.localeCompare(b))
               .join(", ")}`,
           );
@@ -2028,6 +3051,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
             current[key] = value;
           }
         });
+
+        if (removedForFile === 0) {
+          events.push({ filePath: file.path, status: "ok", message: "no-change" });
+          continue;
+        }
 
         changedFiles += 1;
         removedKeysTotal += removedForFile;
@@ -2143,6 +3171,26 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
     }
 
+    if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
+      await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+      const embeddingModel = this.settings.semanticOllamaModel.trim();
+      if (!embeddingModel) {
+        this.notice(
+          "Embedding model is empty. Refresh embedding detection and select one.",
+          6000,
+        );
+        return;
+      }
+
+      if (!isOllamaModelEmbeddingCapable(embeddingModel)) {
+        this.notice(
+          `Selected embedding model is marked as (불가): ${embeddingModel}. Choose an embedding model first.`,
+          6000,
+        );
+        return;
+      }
+    }
+
     const decision = await this.askBackupDecision();
     if (!decision.proceed) {
       this.notice("Analysis cancelled.");
@@ -2180,7 +3228,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         );
 
         this.notice(
-          `Semantic candidates ready: vectors=${semanticResult.generatedVectors}, edges=${neighborCount}, model=${semanticResult.model}.`,
+          `Semantic candidates ready: vectors=${semanticResult.generatedVectors}, cacheHits=${semanticResult.cacheHits}, cacheWrites=${semanticResult.cacheWrites}, edges=${neighborCount}, model=${semanticResult.model}.`,
           5000,
         );
 

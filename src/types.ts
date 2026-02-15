@@ -134,9 +134,15 @@ export interface KnowledgeWeaverSettings {
   semanticLinkingEnabled: boolean;
   semanticOllamaBaseUrl: string;
   semanticOllamaModel: string;
+  semanticAutoPickEnabled: boolean;
   semanticTopK: number;
   semanticMinSimilarity: number;
   semanticMaxChars: number;
+  qaOllamaBaseUrl: string;
+  qaOllamaModel: string;
+  qaTopK: number;
+  qaMaxContextChars: number;
+  qaAllowNonLocalEndpoint: boolean;
   propertyCleanupEnabled: boolean;
   propertyCleanupKeys: string;
   propertyCleanupPrefixes: string;

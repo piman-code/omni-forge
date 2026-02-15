@@ -735,6 +735,146 @@ async function analyzeWithFallback(settings, request) {
 // src/semantic.ts
 var import_obsidian3 = require("obsidian");
 var EMBEDDING_BATCH_SIZE = 8;
+var EMBEDDING_CACHE_PATH = "Auto-Linker Cache/semantic-embedding-cache.json";
+var EMBEDDING_CACHE_VERSION = 1;
+var EMBEDDING_MODEL_REGEX = /(embed|embedding|nomic-embed|mxbai|bge|e5|gte|arctic-embed|jina-emb)/i;
+var NON_EMBEDDING_MODEL_REGEX = /(whisper|tts|speech|transcribe|stt|rerank)/i;
+function isOllamaModelEmbeddingCapable(modelName) {
+  return EMBEDDING_MODEL_REGEX.test(modelName) && !NON_EMBEDDING_MODEL_REGEX.test(modelName);
+}
+function scoreEmbeddingModel(modelName) {
+  const lower = modelName.toLowerCase();
+  let score = 0;
+  if (/nomic-embed-text/.test(lower)) {
+    score += 40;
+  }
+  if (/bge-m3|bge-large|bge-base/.test(lower)) {
+    score += 35;
+  }
+  if (/mxbai-embed-large/.test(lower)) {
+    score += 30;
+  }
+  if (/e5-large|gte-large/.test(lower)) {
+    score += 25;
+  }
+  if (/embed|embedding/.test(lower)) {
+    score += 10;
+  }
+  if (/:large|:xl/.test(lower)) {
+    score += 5;
+  }
+  if (/:small|:mini|:base/.test(lower)) {
+    score -= 2;
+  }
+  return score;
+}
+function describeEmbeddingModel(modelName) {
+  const lower = modelName.toLowerCase();
+  if (!isOllamaModelEmbeddingCapable(modelName)) {
+    return "Looks non-embedding model for semantic retrieval.";
+  }
+  if (/nomic-embed-text/.test(lower)) {
+    return "Strong local embedding baseline with broad retrieval quality.";
+  }
+  if (/bge|e5|gte|mxbai/.test(lower)) {
+    return "Embedding family suitable for semantic note similarity.";
+  }
+  return "Embedding-capable model candidate.";
+}
+function recommendEmbeddingModel(models) {
+  var _a;
+  if (models.length === 0) {
+    return {
+      reason: "No local Ollama models were detected. Install at least one embedding model."
+    };
+  }
+  const candidates = models.filter((model) => isOllamaModelEmbeddingCapable(model));
+  if (candidates.length === 0) {
+    return {
+      reason: "No embedding-capable model detected. Install nomic-embed-text, bge, e5, or similar."
+    };
+  }
+  const scored = candidates.map((name) => ({ name, score: scoreEmbeddingModel(name) })).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  const winner = (_a = scored[0]) == null ? void 0 : _a.name;
+  if (!winner) {
+    return { reason: "Could not choose an embedding model." };
+  }
+  return {
+    recommended: winner,
+    reason: `Recommended '${winner}' for semantic embedding quality/speed balance.`
+  };
+}
+function buildOllamaEmbeddingModelOptions(models, recommended) {
+  const options = models.map((model) => {
+    if (!isOllamaModelEmbeddingCapable(model)) {
+      return {
+        model,
+        status: "unavailable",
+        reason: describeEmbeddingModel(model)
+      };
+    }
+    if (recommended && model === recommended) {
+      return {
+        model,
+        status: "recommended",
+        reason: describeEmbeddingModel(model)
+      };
+    }
+    return {
+      model,
+      status: "available",
+      reason: describeEmbeddingModel(model)
+    };
+  });
+  const weight = (status) => {
+    switch (status) {
+      case "recommended":
+        return 0;
+      case "available":
+        return 1;
+      case "unavailable":
+        return 2;
+      default:
+        return 3;
+    }
+  };
+  return options.sort(
+    (a, b) => weight(a.status) - weight(b.status) || a.model.localeCompare(b.model)
+  );
+}
+async function detectOllamaEmbeddingModels(baseUrl) {
+  var _a;
+  const url = `${baseUrl.replace(/\/$/, "")}/api/tags`;
+  const response = await (0, import_obsidian3.requestUrl)({
+    url,
+    method: "GET",
+    throw: false
+  });
+  if (response.status >= 300) {
+    throw new Error(`Ollama embedding model detection failed: ${response.status}`);
+  }
+  const rawModels = Array.isArray(
+    (_a = response.json) == null ? void 0 : _a.models
+  ) ? response.json.models : [];
+  const modelNames = rawModels.map((item) => {
+    if (typeof item.name === "string") {
+      return item.name.trim();
+    }
+    if (typeof item.model === "string") {
+      return item.model.trim();
+    }
+    return "";
+  }).filter((name) => name.length > 0);
+  const uniqueSorted = [...new Set(modelNames)].sort(
+    (a, b) => a.localeCompare(b)
+  );
+  const recommendation = recommendEmbeddingModel(uniqueSorted);
+  return {
+    models: uniqueSorted,
+    recommended: recommendation.recommended,
+    reason: recommendation.reason
+  };
+}
 function clampSimilarity(raw) {
   if (!Number.isFinite(raw)) {
     return 0;
@@ -802,6 +942,58 @@ function parseEmbeddings(payload) {
   }
   return out;
 }
+function fingerprintText(text) {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+function buildCacheKey(baseUrl, model, filePath) {
+  return `${baseUrl}::${model}::${filePath}`;
+}
+async function ensureParentFolder(app, path) {
+  const normalized = (0, import_obsidian3.normalizePath)(path);
+  const chunks = normalized.split("/");
+  chunks.pop();
+  if (chunks.length === 0) {
+    return;
+  }
+  let currentPath = "";
+  for (const part of chunks) {
+    currentPath = currentPath ? `${currentPath}/${part}` : part;
+    const existing = app.vault.getAbstractFileByPath(currentPath);
+    if (existing) {
+      continue;
+    }
+    await app.vault.createFolder(currentPath);
+  }
+}
+async function readEmbeddingCache(app) {
+  const path = (0, import_obsidian3.normalizePath)(EMBEDDING_CACHE_PATH);
+  const exists = await app.vault.adapter.exists(path);
+  if (!exists) {
+    return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+  }
+  try {
+    const raw = await app.vault.adapter.read(path);
+    const parsed = JSON.parse(raw);
+    const version = typeof parsed.version === "number" ? parsed.version : EMBEDDING_CACHE_VERSION;
+    const entries = parsed.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+    if (version !== EMBEDDING_CACHE_VERSION) {
+      return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+    }
+    return { version, entries };
+  } catch (e) {
+    return { version: EMBEDDING_CACHE_VERSION, entries: {} };
+  }
+}
+async function writeEmbeddingCache(app, cache) {
+  const path = (0, import_obsidian3.normalizePath)(EMBEDDING_CACHE_PATH);
+  await ensureParentFolder(app, path);
+  await app.vault.adapter.write(path, JSON.stringify(cache));
+}
 function normalizeSourceText(raw, maxChars) {
   const collapsed = raw.replace(/\s+/g, " ").trim();
   if (!collapsed) {
@@ -830,19 +1022,7 @@ async function requestOllamaEmbeddings(baseUrl, model, inputs) {
   }
   return parsed;
 }
-async function buildSemanticNeighborMap(app, files, settings) {
-  const neighborMap = /* @__PURE__ */ new Map();
-  for (const file of files) {
-    neighborMap.set(file.path, []);
-  }
-  if (files.length < 2) {
-    return {
-      neighborMap,
-      model: settings.semanticOllamaModel,
-      generatedVectors: 0,
-      errors: []
-    };
-  }
+function resolveEmbeddingConfig(settings) {
   const baseUrl = settings.semanticOllamaBaseUrl.trim() || settings.ollamaBaseUrl.trim();
   const model = settings.semanticOllamaModel.trim();
   if (!baseUrl) {
@@ -851,9 +1031,9 @@ async function buildSemanticNeighborMap(app, files, settings) {
   if (!model) {
     throw new Error("Semantic embedding model is empty.");
   }
-  const maxChars = Math.max(400, settings.semanticMaxChars);
-  const minSimilarity = Math.max(0, Math.min(1, settings.semanticMinSimilarity));
-  const topK = Math.max(1, settings.semanticTopK);
+  return { baseUrl, model };
+}
+async function buildFileVectorIndex(app, files, config, maxChars) {
   const corpus = [];
   for (const file of files) {
     const content = await app.vault.cachedRead(file);
@@ -864,12 +1044,33 @@ async function buildSemanticNeighborMap(app, files, settings) {
   }
   const vectorsByPath = /* @__PURE__ */ new Map();
   const errors = [];
-  for (let i = 0; i < corpus.length; i += EMBEDDING_BATCH_SIZE) {
-    const batch = corpus.slice(i, i + EMBEDDING_BATCH_SIZE);
+  const cache = await readEmbeddingCache(app);
+  let cacheHits = 0;
+  let cacheWrites = 0;
+  let cacheDirty = false;
+  const missing = [];
+  for (const item of corpus) {
+    const fingerprint = fingerprintText(item.text);
+    const cacheKey = buildCacheKey(config.baseUrl, config.model, item.file.path);
+    const hit = cache.entries[cacheKey];
+    if (hit && hit.fingerprint === fingerprint && Array.isArray(hit.vector) && hit.vector.length > 0) {
+      vectorsByPath.set(item.file.path, hit.vector);
+      cacheHits += 1;
+      continue;
+    }
+    missing.push({
+      file: item.file,
+      text: item.text,
+      cacheKey,
+      fingerprint
+    });
+  }
+  for (let i = 0; i < missing.length; i += EMBEDDING_BATCH_SIZE) {
+    const batch = missing.slice(i, i + EMBEDDING_BATCH_SIZE);
     try {
       const embeddings = await requestOllamaEmbeddings(
-        baseUrl,
-        model,
+        config.baseUrl,
+        config.model,
         batch.map((item) => item.text)
       );
       if (embeddings.length !== batch.length) {
@@ -878,7 +1079,16 @@ async function buildSemanticNeighborMap(app, files, settings) {
         );
       }
       for (let idx = 0; idx < batch.length; idx += 1) {
-        vectorsByPath.set(batch[idx].file.path, embeddings[idx]);
+        const entry = batch[idx];
+        const vector = embeddings[idx];
+        vectorsByPath.set(entry.file.path, vector);
+        cache.entries[entry.cacheKey] = {
+          fingerprint: entry.fingerprint,
+          vector,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        cacheWrites += 1;
+        cacheDirty = true;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown embedding error";
@@ -887,6 +1097,51 @@ async function buildSemanticNeighborMap(app, files, settings) {
       }
     }
   }
+  if (cacheDirty) {
+    try {
+      await writeEmbeddingCache(app, cache);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown embedding cache write error";
+      errors.push(`cache-write: ${message}`);
+    }
+  }
+  return {
+    vectorsByPath,
+    cacheHits,
+    cacheWrites,
+    errors
+  };
+}
+async function buildSemanticNeighborMap(app, files, settings) {
+  const neighborMap = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    neighborMap.set(file.path, []);
+  }
+  if (files.length < 2) {
+    return {
+      neighborMap,
+      model: settings.semanticOllamaModel,
+      generatedVectors: 0,
+      cacheHits: 0,
+      cacheWrites: 0,
+      errors: []
+    };
+  }
+  const config = resolveEmbeddingConfig(settings);
+  const model = config.model;
+  const maxChars = Math.max(400, settings.semanticMaxChars);
+  const minSimilarity = Math.max(0, Math.min(1, settings.semanticMinSimilarity));
+  const topK = Math.max(1, settings.semanticTopK);
+  const vectorBuild = await buildFileVectorIndex(
+    app,
+    files,
+    config,
+    maxChars
+  );
+  const vectorsByPath = vectorBuild.vectorsByPath;
+  const errors = [...vectorBuild.errors];
+  const cacheHits = vectorBuild.cacheHits;
+  const cacheWrites = vectorBuild.cacheWrites;
   for (const sourceFile of files) {
     const sourceVector = vectorsByPath.get(sourceFile.path);
     if (!sourceVector) {
@@ -917,6 +1172,63 @@ async function buildSemanticNeighborMap(app, files, settings) {
     neighborMap,
     model,
     generatedVectors: vectorsByPath.size,
+    cacheHits,
+    cacheWrites,
+    errors
+  };
+}
+async function searchSemanticNotesByQuery(app, files, settings, query, topK) {
+  var _a;
+  if (files.length === 0) {
+    return {
+      hits: [],
+      model: settings.semanticOllamaModel,
+      generatedVectors: 0,
+      cacheHits: 0,
+      cacheWrites: 0,
+      errors: []
+    };
+  }
+  const config = resolveEmbeddingConfig(settings);
+  const maxChars = Math.max(400, settings.semanticMaxChars);
+  const queryText = normalizeSourceText(query, maxChars);
+  const safeTopK = Math.max(1, topK);
+  const vectorBuild = await buildFileVectorIndex(app, files, config, maxChars);
+  const hits = [];
+  const errors = [...vectorBuild.errors];
+  let queryVector = null;
+  try {
+    const queryEmbeddings = await requestOllamaEmbeddings(config.baseUrl, config.model, [
+      queryText
+    ]);
+    queryVector = (_a = queryEmbeddings[0]) != null ? _a : null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown query embedding error";
+    errors.push(`query: ${message}`);
+  }
+  if (queryVector) {
+    for (const file of files) {
+      const fileVector = vectorBuild.vectorsByPath.get(file.path);
+      if (!fileVector) {
+        continue;
+      }
+      const similarity = cosineSimilarity(queryVector, fileVector);
+      if (similarity === null) {
+        continue;
+      }
+      hits.push({
+        path: file.path,
+        similarity
+      });
+    }
+  }
+  hits.sort((a, b) => b.similarity - a.similarity || a.path.localeCompare(b.path));
+  return {
+    hits: hits.slice(0, safeTopK),
+    model: config.model,
+    generatedVectors: vectorBuild.vectorsByPath.size,
+    cacheHits: vectorBuild.cacheHits,
+    cacheWrites: vectorBuild.cacheWrites,
     errors
   };
 }
@@ -949,10 +1261,16 @@ var DEFAULT_SETTINGS = {
   maxLinked: 8,
   semanticLinkingEnabled: false,
   semanticOllamaBaseUrl: "http://127.0.0.1:11434",
-  semanticOllamaModel: "nomic-embed-text",
+  semanticOllamaModel: "",
+  semanticAutoPickEnabled: true,
   semanticTopK: 24,
   semanticMinSimilarity: 0.25,
   semanticMaxChars: 5e3,
+  qaOllamaBaseUrl: "http://127.0.0.1:11434",
+  qaOllamaModel: "",
+  qaTopK: 5,
+  qaMaxContextChars: 12e3,
+  qaAllowNonLocalEndpoint: false,
   propertyCleanupEnabled: false,
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
@@ -1246,6 +1564,112 @@ var SelectionModal = class extends import_obsidian4.Modal {
     );
   }
 };
+var CleanupKeyPickerModal = class extends import_obsidian4.Modal {
+  constructor(app, keyStats, initialSelectedKeys, onSubmit) {
+    super(app);
+    this.searchValue = "";
+    this.keyStats = keyStats;
+    this.onSubmit = onSubmit;
+    this.selectedKeys = new Set(initialSelectedKeys);
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Select cleanup keys from selected notes" });
+    contentEl.createEl("p", {
+      text: "Only checked keys will be written to 'Cleanup exact keys'. Counts show in how many selected notes each key appears."
+    });
+    const searchWrapper = contentEl.createDiv();
+    searchWrapper.createEl("label", { text: "Filter keys" });
+    const searchInput = searchWrapper.createEl("input", { type: "text" });
+    searchInput.style.width = "100%";
+    searchInput.placeholder = "type key fragment...";
+    searchInput.oninput = () => {
+      this.searchValue = searchInput.value.trim().toLowerCase();
+      this.renderList();
+    };
+    const actions = contentEl.createDiv();
+    actions.style.display = "flex";
+    actions.style.gap = "8px";
+    actions.style.marginTop = "8px";
+    const selectAll = actions.createEl("button", { text: "Select all (filtered)" });
+    const clearAll = actions.createEl("button", { text: "Clear all (filtered)" });
+    this.listContainer = contentEl.createDiv();
+    this.listContainer.style.maxHeight = "48vh";
+    this.listContainer.style.overflow = "auto";
+    this.listContainer.style.border = "1px solid var(--background-modifier-border)";
+    this.listContainer.style.borderRadius = "8px";
+    this.listContainer.style.marginTop = "8px";
+    this.listContainer.style.padding = "6px";
+    this.footerSummaryEl = contentEl.createDiv();
+    this.footerSummaryEl.style.marginTop = "8px";
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+    const cancelButton = footer.createEl("button", { text: "Cancel" });
+    cancelButton.onclick = () => this.close();
+    const saveButton = footer.createEl("button", { text: "Save", cls: "mod-cta" });
+    saveButton.onclick = async () => {
+      const selected = [...this.selectedKeys].sort((a, b) => a.localeCompare(b));
+      await this.onSubmit(selected);
+      this.close();
+    };
+    selectAll.onclick = () => {
+      for (const item of this.filteredStats()) {
+        this.selectedKeys.add(item.key);
+      }
+      this.renderList();
+    };
+    clearAll.onclick = () => {
+      for (const item of this.filteredStats()) {
+        this.selectedKeys.delete(item.key);
+      }
+      this.renderList();
+    };
+    this.renderList();
+  }
+  filteredStats() {
+    if (!this.searchValue) {
+      return this.keyStats;
+    }
+    return this.keyStats.filter((item) => item.key.includes(this.searchValue));
+  }
+  renderList() {
+    this.listContainer.empty();
+    const rows = this.filteredStats();
+    if (rows.length === 0) {
+      this.listContainer.createEl("div", { text: "No matching keys." });
+      this.footerSummaryEl.setText(`Selected: ${this.selectedKeys.size}`);
+      return;
+    }
+    for (const item of rows) {
+      const row = this.listContainer.createDiv();
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      row.style.padding = "6px 8px";
+      row.style.borderBottom = "1px solid var(--background-modifier-border)";
+      const checkbox = row.createEl("input", { type: "checkbox" });
+      checkbox.checked = this.selectedKeys.has(item.key);
+      checkbox.onchange = () => {
+        if (checkbox.checked) {
+          this.selectedKeys.add(item.key);
+        } else {
+          this.selectedKeys.delete(item.key);
+        }
+        this.footerSummaryEl.setText(`Selected: ${this.selectedKeys.size}`);
+      };
+      row.createEl("span", { text: item.key });
+      const countEl = row.createEl("small", { text: `${item.count}` });
+      countEl.style.marginLeft = "auto";
+    }
+    this.footerSummaryEl.setText(
+      `Listed: ${rows.length} keys | Selected: ${this.selectedKeys.size}`
+    );
+  }
+};
 var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian4.Modal {
   constructor(app, defaultBackup, onResolve) {
     super(app);
@@ -1510,6 +1934,90 @@ var SuggestionPreviewModal = class extends import_obsidian4.Modal {
     }
   }
 };
+var LocalQAInputModal = class extends import_obsidian4.Modal {
+  constructor(app, defaultTopK, onSubmit) {
+    super(app);
+    this.defaultTopK = defaultTopK;
+    this.onSubmit = onSubmit;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Ask local AI from selected notes" });
+    const questionLabel = contentEl.createEl("label", { text: "Question" });
+    questionLabel.style.display = "block";
+    questionLabel.style.marginBottom = "6px";
+    const questionInput = contentEl.createEl("textarea");
+    questionInput.style.width = "100%";
+    questionInput.style.minHeight = "120px";
+    questionInput.placeholder = "What do you want to find from selected notes?";
+    const topKWrapper = contentEl.createDiv();
+    topKWrapper.style.marginTop = "10px";
+    topKWrapper.createEl("label", { text: "Top sources (1-15)" });
+    const topKInput = topKWrapper.createEl("input", { type: "number" });
+    topKInput.min = "1";
+    topKInput.max = "15";
+    topKInput.value = String(this.defaultTopK);
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+    const cancelButton = footer.createEl("button", { text: "Cancel" });
+    cancelButton.onclick = () => this.close();
+    const askButton = footer.createEl("button", { text: "Ask", cls: "mod-cta" });
+    askButton.onclick = async () => {
+      const question = questionInput.value.trim();
+      if (!question) {
+        new import_obsidian4.Notice("Question is empty.");
+        return;
+      }
+      const parsedTopK = Number.parseInt(topKInput.value, 10);
+      const topK = Number.isFinite(parsedTopK) && parsedTopK >= 1 ? Math.min(15, parsedTopK) : this.defaultTopK;
+      await this.onSubmit({ question, topK });
+      this.close();
+    };
+  }
+};
+var LocalQAResultModal = class extends import_obsidian4.Modal {
+  constructor(app, payload) {
+    super(app);
+    this.payload = payload;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Local AI answer from selected notes" });
+    const meta = contentEl.createDiv();
+    meta.style.border = "1px solid var(--background-modifier-border)";
+    meta.style.borderRadius = "8px";
+    meta.style.padding = "8px";
+    meta.style.marginBottom = "8px";
+    meta.createEl("div", { text: `Model: ${this.payload.model}` });
+    meta.createEl("div", { text: `Embedding model: ${this.payload.embeddingModel}` });
+    meta.createEl("div", { text: `Question: ${this.payload.question}` });
+    const answerBlock = contentEl.createDiv();
+    answerBlock.style.border = "1px solid var(--background-modifier-border)";
+    answerBlock.style.borderRadius = "8px";
+    answerBlock.style.padding = "10px";
+    answerBlock.style.whiteSpace = "pre-wrap";
+    answerBlock.style.maxHeight = "46vh";
+    answerBlock.style.overflow = "auto";
+    answerBlock.setText(this.payload.answer || "(empty answer)");
+    const sourcesBlock = contentEl.createDiv();
+    sourcesBlock.style.marginTop = "10px";
+    sourcesBlock.createEl("strong", { text: "Sources" });
+    if (this.payload.sources.length === 0) {
+      sourcesBlock.createEl("div", { text: "No sources." });
+    } else {
+      for (const source of this.payload.sources) {
+        sourcesBlock.createEl("div", {
+          text: `- ${source.path} (${formatSimilarity(source.similarity)})`
+        });
+      }
+    }
+  }
+};
 var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -1725,14 +2233,72 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       (text) => text.setPlaceholder("http://127.0.0.1:11434").setValue(this.plugin.settings.semanticOllamaBaseUrl).onChange(async (value) => {
         this.plugin.settings.semanticOllamaBaseUrl = value.trim();
         await this.plugin.saveSettings();
+        await this.plugin.refreshEmbeddingModelDetection({
+          notify: false,
+          autoApply: true
+        });
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Embedding model").setDesc("For example: nomic-embed-text or bge-m3").addText(
+    const embeddingOptions = this.plugin.getEmbeddingModelOptions();
+    new import_obsidian4.Setting(containerEl).setName("Embedding detected model picker").setDesc(
+      "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for embeddings."
+    ).addDropdown((dropdown) => {
+      var _a, _b;
+      if (embeddingOptions.length === 0) {
+        dropdown.addOption("", "(No models detected)");
+        dropdown.setValue("");
+      } else {
+        for (const option of embeddingOptions) {
+          const suffix = option.status === "recommended" ? " (\uCD94\uCC9C)" : option.status === "unavailable" ? " (\uBD88\uAC00)" : "";
+          dropdown.addOption(option.model, `${option.model}${suffix}`);
+        }
+        const current = this.plugin.settings.semanticOllamaModel;
+        if (current && embeddingOptions.some((option) => option.model === current)) {
+          dropdown.setValue(current);
+        } else {
+          dropdown.setValue((_b = (_a = embeddingOptions[0]) == null ? void 0 : _a.model) != null ? _b : "");
+        }
+      }
+      dropdown.onChange(async (value) => {
+        if (!value) {
+          return;
+        }
+        this.plugin.settings.semanticOllamaModel = value;
+        await this.plugin.saveSettings();
+        if (!isOllamaModelEmbeddingCapable(value)) {
+          new import_obsidian4.Notice(`Selected model is marked as (\uBD88\uAC00): ${value}`, 4500);
+        }
+        this.display();
+      });
+    }).addButton(
+      (button) => button.setButtonText("Refresh").onClick(async () => {
+        await this.plugin.refreshEmbeddingModelDetection({
+          notify: true,
+          autoApply: true
+        });
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Use recommended").onClick(async () => {
+        await this.plugin.applyRecommendedEmbeddingModel(true);
+        this.display();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Embedding model (manual)").setDesc("Manual override if you want a custom embedding model name.").addText(
       (text) => text.setPlaceholder("nomic-embed-text").setValue(this.plugin.settings.semanticOllamaModel).onChange(async (value) => {
         this.plugin.settings.semanticOllamaModel = value.trim();
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Auto-pick recommended embedding model").setDesc(
+      "Detect local models and auto-choose recommended when current is missing."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.semanticAutoPickEnabled).onChange(async (value) => {
+        this.plugin.settings.semanticAutoPickEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Embedding detection summary").setDesc(this.plugin.getEmbeddingDetectionSummary());
     new import_obsidian4.Setting(containerEl).setName("Semantic top-k candidates").addText(
       (text) => text.setPlaceholder("24").setValue(String(this.plugin.settings.semanticTopK)).onChange(async (value) => {
         this.plugin.settings.semanticTopK = parsePositiveInt(
@@ -1760,6 +2326,43 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
+    containerEl.createEl("h3", { text: "Local Q&A (security-first)" });
+    new import_obsidian4.Setting(containerEl).setName("Q&A Ollama base URL").setDesc("Leave empty to use main Ollama base URL.").addText(
+      (text) => text.setPlaceholder("http://127.0.0.1:11434").setValue(this.plugin.settings.qaOllamaBaseUrl).onChange(async (value) => {
+        this.plugin.settings.qaOllamaBaseUrl = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Q&A model").setDesc("Leave empty to use main analysis model.").addText(
+      (text) => text.setPlaceholder("qwen2.5:7b").setValue(this.plugin.settings.qaOllamaModel).onChange(async (value) => {
+        this.plugin.settings.qaOllamaModel = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Q&A retrieval top-k").addText(
+      (text) => text.setPlaceholder("5").setValue(String(this.plugin.settings.qaTopK)).onChange(async (value) => {
+        this.plugin.settings.qaTopK = parsePositiveInt(
+          value,
+          this.plugin.settings.qaTopK
+        );
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Q&A max context chars").setDesc("Maximum total note characters to send to local LLM.").addText(
+      (text) => text.setPlaceholder("12000").setValue(String(this.plugin.settings.qaMaxContextChars)).onChange(async (value) => {
+        this.plugin.settings.qaMaxContextChars = parsePositiveInt(
+          value,
+          this.plugin.settings.qaMaxContextChars
+        );
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Allow non-local Q&A endpoint (danger)").setDesc("Off by default. Keep disabled to prevent note data leaving localhost.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaAllowNonLocalEndpoint).onChange(async (value) => {
+        this.plugin.settings.qaAllowNonLocalEndpoint = value;
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Remove legacy AI-prefixed keys").setDesc(
       "If enabled, removes only legacy keys like ai_*/autolinker_* while preserving other existing keys (including linter date fields)."
     ).addToggle(
@@ -1779,6 +2382,12 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       (text) => text.setPlaceholder("related").setValue(this.plugin.settings.propertyCleanupKeys).onChange(async (value) => {
         this.plugin.settings.propertyCleanupKeys = value;
         await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Pick cleanup keys from selected notes").setDesc("Scan selected notes and choose keys by checkbox.").addButton(
+      (button) => button.setButtonText("Open picker").onClick(async () => {
+        await this.plugin.openCleanupKeyPicker();
+        this.display();
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Cleanup key prefixes").setDesc("Comma/newline separated prefixes. Example: temp_, draft_").addTextArea(
@@ -1867,6 +2476,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.ollamaDetectionCache = null;
     this.ollamaDetectionOptions = [];
     this.ollamaDetectionSummary = "Model detection has not run yet. Click refresh to detect installed Ollama models.";
+    this.embeddingDetectionCache = null;
+    this.embeddingDetectionOptions = [];
+    this.embeddingDetectionSummary = "Embedding model detection has not run yet. Click refresh to detect installed Ollama models.";
   }
   async onload() {
     await this.loadSettings();
@@ -1913,6 +2525,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       callback: async () => this.runPropertyCleanup(true)
     });
     this.addCommand({
+      id: "select-cleanup-keys-from-selected-notes",
+      name: "Auto-Linker: Select cleanup keys from selected notes",
+      callback: async () => this.openCleanupKeyPicker()
+    });
+    this.addCommand({
       id: "refresh-ollama-models",
       name: "Auto-Linker: Refresh Ollama model detection",
       callback: async () => {
@@ -1920,12 +2537,25 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       }
     });
     this.addCommand({
+      id: "refresh-embedding-models",
+      name: "Auto-Linker: Refresh embedding model detection",
+      callback: async () => {
+        await this.refreshEmbeddingModelDetection({ notify: true, autoApply: true });
+      }
+    });
+    this.addCommand({
       id: "generate-moc-now",
       name: "Auto-Linker: Generate MOC from selected notes",
       callback: async () => this.generateMocFromSelection()
     });
+    this.addCommand({
+      id: "ask-local-ai-from-selected-notes",
+      name: "Auto-Linker: Ask local AI from selected notes",
+      callback: async () => this.openLocalQaInputModal()
+    });
     this.addSettingTab(new KnowledgeWeaverSettingTab(this.app, this));
     await this.refreshOllamaDetection({ notify: false, autoApply: true });
+    await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
   }
   onunload() {
     this.setStatus("idle");
@@ -1935,6 +2565,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   getOllamaModelOptions() {
     return this.ollamaDetectionOptions;
+  }
+  getEmbeddingDetectionSummary() {
+    return this.embeddingDetectionSummary;
+  }
+  getEmbeddingModelOptions() {
+    return this.embeddingDetectionOptions;
   }
   async applyRecommendedOllamaModel(notify) {
     var _a;
@@ -1948,6 +2584,22 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     await this.saveSettings();
     if (notify) {
       this.notice(`Ollama model set to recommended: ${this.settings.ollamaModel}`);
+    }
+  }
+  async applyRecommendedEmbeddingModel(notify) {
+    var _a;
+    if (!((_a = this.embeddingDetectionCache) == null ? void 0 : _a.recommended)) {
+      if (notify) {
+        this.notice("No recommended embedding model found. Refresh detection first.");
+      }
+      return;
+    }
+    this.settings.semanticOllamaModel = this.embeddingDetectionCache.recommended;
+    await this.saveSettings();
+    if (notify) {
+      this.notice(
+        `Embedding model set to recommended: ${this.settings.semanticOllamaModel}`
+      );
     }
   }
   async refreshOllamaDetection(options) {
@@ -1994,6 +2646,58 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       return null;
     }
   }
+  async refreshEmbeddingModelDetection(options) {
+    const baseUrl = this.settings.semanticOllamaBaseUrl.trim() || this.settings.ollamaBaseUrl.trim();
+    if (!baseUrl) {
+      this.embeddingDetectionSummary = "Embedding detection skipped: base URL is empty.";
+      if (options.notify) {
+        this.notice(this.embeddingDetectionSummary);
+      }
+      return null;
+    }
+    try {
+      const detected = await detectOllamaEmbeddingModels(baseUrl);
+      this.embeddingDetectionCache = detected;
+      this.embeddingDetectionOptions = buildOllamaEmbeddingModelOptions(
+        detected.models,
+        detected.recommended
+      );
+      const modelListPreview = detected.models.length > 0 ? detected.models.slice(0, 5).join(", ") : "(none)";
+      this.embeddingDetectionSummary = [
+        `Detected: ${detected.models.length} model(s).`,
+        `Current: ${this.settings.semanticOllamaModel || "(not set)"}.`,
+        `Recommended: ${detected.recommended || "(none)"}.`,
+        `Reason: ${detected.reason}`,
+        `Preview: ${modelListPreview}`
+      ].join(" ");
+      if (options.autoApply && this.settings.semanticAutoPickEnabled) {
+        const current = this.settings.semanticOllamaModel.trim();
+        const currentExists = current.length > 0 && detected.models.includes(current);
+        if ((!current || !currentExists) && detected.recommended) {
+          this.settings.semanticOllamaModel = detected.recommended;
+          await this.saveSettings();
+          if (options.notify) {
+            this.notice(
+              `Auto-selected embedding model: ${detected.recommended} (${detected.reason})`
+            );
+          }
+        }
+      }
+      if (options.notify) {
+        this.notice(this.embeddingDetectionSummary, 5e3);
+      }
+      return detected;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown embedding detection error";
+      this.embeddingDetectionCache = null;
+      this.embeddingDetectionOptions = [];
+      this.embeddingDetectionSummary = `Embedding detection failed: ${message}`;
+      if (options.notify) {
+        this.notice(`Embedding model detection failed: ${message}`);
+      }
+      return null;
+    }
+  }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     if (!Array.isArray(this.settings.targetFilePaths)) {
@@ -2023,11 +2727,29 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (!Number.isFinite(this.settings.semanticMaxChars)) {
       this.settings.semanticMaxChars = DEFAULT_SETTINGS.semanticMaxChars;
     }
+    if (!Number.isFinite(this.settings.qaTopK)) {
+      this.settings.qaTopK = DEFAULT_SETTINGS.qaTopK;
+    }
+    if (!Number.isFinite(this.settings.qaMaxContextChars)) {
+      this.settings.qaMaxContextChars = DEFAULT_SETTINGS.qaMaxContextChars;
+    }
     if (!this.settings.semanticOllamaBaseUrl) {
       this.settings.semanticOllamaBaseUrl = DEFAULT_SETTINGS.semanticOllamaBaseUrl;
     }
     if (!this.settings.semanticOllamaModel) {
       this.settings.semanticOllamaModel = DEFAULT_SETTINGS.semanticOllamaModel;
+    }
+    if (typeof this.settings.qaOllamaBaseUrl !== "string") {
+      this.settings.qaOllamaBaseUrl = DEFAULT_SETTINGS.qaOllamaBaseUrl;
+    }
+    if (typeof this.settings.qaOllamaModel !== "string") {
+      this.settings.qaOllamaModel = DEFAULT_SETTINGS.qaOllamaModel;
+    }
+    if (typeof this.settings.semanticAutoPickEnabled !== "boolean") {
+      this.settings.semanticAutoPickEnabled = DEFAULT_SETTINGS.semanticAutoPickEnabled;
+    }
+    if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
+      this.settings.qaAllowNonLocalEndpoint = DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
     }
     if (typeof this.settings.propertyCleanupKeys !== "string") {
       this.settings.propertyCleanupKeys = DEFAULT_SETTINGS.propertyCleanupKeys;
@@ -2054,6 +2776,364 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   parseSimpleList(raw) {
     return raw.split(/[\n,;]+/).map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);
+  }
+  parseFrontmatterFromContent(content) {
+    const lines = content.split("\n");
+    if (lines.length < 3 || lines[0].trim() !== "---") {
+      return null;
+    }
+    let end = -1;
+    for (let i = 1; i < lines.length; i += 1) {
+      if (lines[i].trim() === "---") {
+        end = i;
+        break;
+      }
+    }
+    if (end < 1) {
+      return null;
+    }
+    const yamlRaw = lines.slice(1, end).join("\n").trim();
+    if (!yamlRaw) {
+      return {};
+    }
+    try {
+      const parsed = (0, import_obsidian4.parseYaml)(yamlRaw);
+      if (parsed && typeof parsed === "object") {
+        return parsed;
+      }
+      return {};
+    } catch (e) {
+      return null;
+    }
+  }
+  async readFrontmatterSnapshot(file) {
+    const raw = await this.app.vault.cachedRead(file);
+    return this.parseFrontmatterFromContent(raw);
+  }
+  async collectCleanupKeyStats(files) {
+    var _a;
+    const counts = /* @__PURE__ */ new Map();
+    for (const file of files) {
+      const frontmatter = await this.readFrontmatterSnapshot(file);
+      if (!frontmatter) {
+        continue;
+      }
+      const keys = Object.keys(frontmatter).map((key) => key.trim().toLowerCase()).filter((key) => key.length > 0);
+      const unique = new Set(keys);
+      for (const key of unique) {
+        counts.set(key, ((_a = counts.get(key)) != null ? _a : 0) + 1);
+      }
+    }
+    return [...counts.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+  }
+  async openCleanupKeyPicker() {
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length === 0) {
+      this.notice("No target notes selected. Open selector first.");
+      await this.openSelectionModal();
+      return;
+    }
+    this.setStatus("scanning cleanup keys...");
+    const keyStats = await this.collectCleanupKeyStats(selectedFiles);
+    this.setStatus("idle");
+    if (keyStats.length === 0) {
+      this.notice("No frontmatter keys found in selected notes.");
+      return;
+    }
+    const currentKeys = this.parseSimpleList(this.settings.propertyCleanupKeys);
+    new CleanupKeyPickerModal(
+      this.app,
+      keyStats,
+      currentKeys,
+      async (selected) => {
+        this.settings.propertyCleanupKeys = selected.join(", ");
+        await this.saveSettings();
+        this.notice(`Cleanup exact keys updated (${selected.length} selected).`, 5e3);
+      }
+    ).open();
+  }
+  isLocalEndpoint(urlText) {
+    try {
+      const parsed = new URL(urlText);
+      const host = parsed.hostname.toLowerCase();
+      return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
+    } catch (e) {
+      return false;
+    }
+  }
+  resolveQaBaseUrl() {
+    const qa = this.settings.qaOllamaBaseUrl.trim();
+    const fallback = this.settings.ollamaBaseUrl.trim();
+    return qa || fallback;
+  }
+  resolveQaModel() {
+    const qa = this.settings.qaOllamaModel.trim();
+    const fallback = this.settings.ollamaModel.trim();
+    return qa || fallback;
+  }
+  trimTextForContext(source, maxChars) {
+    const collapsed = source.replace(/\s+/g, " ").trim();
+    return collapsed.slice(0, Math.max(400, maxChars));
+  }
+  tokenizeQuery(text) {
+    return [...new Set(
+      text.toLowerCase().split(/[\s,.;:!?()[\]{}"'<>\\/|`~!@#$%^&*+=_-]+/).map((token) => token.trim()).filter((token) => token.length >= 2)
+    )];
+  }
+  rerankQaHits(hits, question, topK) {
+    const terms = this.tokenizeQuery(question);
+    const scored = hits.map((hit) => {
+      if (terms.length === 0) {
+        return { ...hit, boosted: hit.similarity };
+      }
+      const lowerPath = hit.path.toLowerCase();
+      let matched = 0;
+      for (const term of terms) {
+        if (lowerPath.includes(term)) {
+          matched += 1;
+        }
+      }
+      const boost = Math.min(0.24, matched * 0.08);
+      return {
+        ...hit,
+        boosted: hit.similarity + boost
+      };
+    });
+    scored.sort((a, b) => b.boosted - a.boosted || a.path.localeCompare(b.path));
+    return scored.slice(0, Math.max(1, topK)).map((item) => ({
+      path: item.path,
+      similarity: item.similarity
+    }));
+  }
+  extractRelevantSnippet(source, query, maxChars) {
+    const normalized = source.replace(/\r\n/g, "\n");
+    const lines = normalized.split("\n");
+    const terms = this.tokenizeQuery(query);
+    if (terms.length === 0) {
+      return this.trimTextForContext(source, maxChars);
+    }
+    const lowerLines = lines.map((line) => line.toLowerCase());
+    const scored = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lowerLines[i];
+      if (!line.trim()) {
+        continue;
+      }
+      let score = 0;
+      for (const term of terms) {
+        if (line.includes(term)) {
+          score += 1;
+        }
+      }
+      if (score > 0) {
+        scored.push({ idx: i, score });
+      }
+    }
+    if (scored.length === 0) {
+      return this.trimTextForContext(source, maxChars);
+    }
+    scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+    const pickedIndexes = /* @__PURE__ */ new Set();
+    for (const item of scored.slice(0, 12)) {
+      const start = Math.max(0, item.idx - 1);
+      const end = Math.min(lines.length - 1, item.idx + 1);
+      for (let i = start; i <= end; i += 1) {
+        pickedIndexes.add(i);
+      }
+    }
+    const ordered = [...pickedIndexes].sort((a, b) => a - b);
+    let output = "";
+    let prev = -10;
+    for (const idx of ordered) {
+      const line = lines[idx].trimEnd();
+      if (!line.trim()) {
+        continue;
+      }
+      if (idx - prev > 2 && output.length > 0) {
+        output += "\n...\n";
+      }
+      const candidate = output.length > 0 ? `${output}
+${line}` : line;
+      if (candidate.length > maxChars) {
+        break;
+      }
+      output = candidate;
+      prev = idx;
+    }
+    if (!output) {
+      return this.trimTextForContext(source, maxChars);
+    }
+    return output;
+  }
+  buildLocalQaPrompt(question, sourceBlocks) {
+    const contextText = sourceBlocks.map(
+      (item, index) => `Source ${index + 1}
+Path: ${item.path}
+Similarity: ${formatSimilarity(item.similarity)}
+Content:
+${item.content}`
+    ).join("\n\n---\n\n");
+    return [
+      "You are a local-note assistant for Obsidian.",
+      "Answer only from the provided sources.",
+      "Use the same language as the user's question.",
+      "Tone: natural conversation, concise, not stiff.",
+      "Do not force rigid sections. Use bullets only if they improve clarity.",
+      "Start with a direct answer in 1-3 sentences.",
+      "If useful, add short insight synthesis (patterns, contradictions, implications).",
+      "If evidence is insufficient, clearly say what is missing.",
+      "When making claims, cite source paths inline in parentheses.",
+      "",
+      `Question: ${question}`,
+      "",
+      "Sources:",
+      contextText
+    ].join("\n");
+  }
+  async openLocalQaInputModal() {
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length === 0) {
+      this.notice("No target notes selected. Open selector first.");
+      await this.openSelectionModal();
+      return;
+    }
+    new LocalQAInputModal(
+      this.app,
+      this.settings.qaTopK,
+      async (payload) => {
+        await this.runLocalQa(payload.question, payload.topK);
+      }
+    ).open();
+  }
+  async runLocalQa(question, topK) {
+    var _a;
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length === 0) {
+      this.notice("No target notes selected. Open selector first.");
+      return;
+    }
+    const qaBaseUrl = this.resolveQaBaseUrl();
+    if (!qaBaseUrl) {
+      this.notice("Q&A base URL is empty.");
+      return;
+    }
+    if (!this.settings.qaAllowNonLocalEndpoint && !this.isLocalEndpoint(qaBaseUrl)) {
+      this.notice(
+        "Blocked by security policy: Q&A endpoint must be localhost unless explicitly allowed.",
+        7e3
+      );
+      return;
+    }
+    const qaModel = this.resolveQaModel();
+    if (!qaModel) {
+      this.notice("Q&A model is empty.");
+      return;
+    }
+    if (!isOllamaModelAnalyzable(qaModel)) {
+      this.notice(`Q&A model is not suitable: ${qaModel}`, 6e3);
+      return;
+    }
+    await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+    const embeddingModel = this.settings.semanticOllamaModel.trim();
+    if (!embeddingModel) {
+      this.notice("Embedding model is empty. Refresh embedding detection first.", 6e3);
+      return;
+    }
+    this.setStatus("semantic retrieval for local qa...");
+    const retrievalCandidateK = Math.max(topK * 3, topK);
+    const retrieval = await searchSemanticNotesByQuery(
+      this.app,
+      selectedFiles,
+      this.settings,
+      question,
+      retrievalCandidateK
+    );
+    if (retrieval.errors.length > 0) {
+      this.notice(
+        `Semantic retrieval had ${retrieval.errors.length} issue(s).`,
+        6e3
+      );
+    }
+    if (retrieval.hits.length === 0) {
+      this.notice("No relevant notes were found for this question.");
+      this.setStatus("idle");
+      return;
+    }
+    const rankedHits = this.rerankQaHits(retrieval.hits, question, topK);
+    if (rankedHits.length === 0) {
+      this.notice("No relevant notes were found for this question.");
+      this.setStatus("idle");
+      return;
+    }
+    const maxContextChars = Math.max(2e3, this.settings.qaMaxContextChars);
+    const sourceBlocks = [];
+    let usedChars = 0;
+    for (const hit of rankedHits) {
+      if (usedChars >= maxContextChars) {
+        break;
+      }
+      const entry = this.app.vault.getAbstractFileByPath(hit.path);
+      if (!(entry instanceof import_obsidian4.TFile)) {
+        continue;
+      }
+      const raw = await this.app.vault.cachedRead(entry);
+      const remaining = Math.max(500, maxContextChars - usedChars);
+      const snippet = this.extractRelevantSnippet(raw, question, remaining);
+      if (!snippet) {
+        continue;
+      }
+      sourceBlocks.push({
+        path: hit.path,
+        similarity: hit.similarity,
+        content: snippet
+      });
+      usedChars += snippet.length;
+    }
+    if (sourceBlocks.length === 0) {
+      this.notice("Relevant notes found but no readable content extracted.");
+      this.setStatus("idle");
+      return;
+    }
+    const prompt = this.buildLocalQaPrompt(question, sourceBlocks);
+    this.setStatus("asking local qa model...");
+    const response = await (0, import_obsidian4.requestUrl)({
+      url: `${qaBaseUrl.replace(/\/$/, "")}/api/generate`,
+      method: "POST",
+      contentType: "application/json",
+      body: JSON.stringify({
+        model: qaModel,
+        prompt,
+        stream: false
+      }),
+      throw: false
+    });
+    if (response.status >= 300) {
+      this.notice(`Local Q&A request failed: ${response.status}`, 6e3);
+      this.setStatus("idle");
+      return;
+    }
+    const answer = typeof ((_a = response.json) == null ? void 0 : _a.response) === "string" ? response.json.response.trim() : response.text.trim();
+    if (!answer) {
+      this.notice("Local Q&A returned an empty answer.");
+      this.setStatus("idle");
+      return;
+    }
+    const sourceList = sourceBlocks.map((item) => ({
+      path: item.path,
+      similarity: item.similarity
+    }));
+    new LocalQAResultModal(this.app, {
+      question,
+      answer,
+      model: qaModel,
+      embeddingModel,
+      sources: sourceList
+    }).open();
+    this.notice(
+      `Local Q&A done. Sources=${sourceList.length}, cacheHits=${retrieval.cacheHits}, cacheWrites=${retrieval.cacheWrites}`,
+      6e3
+    );
+    this.setStatus("idle");
   }
   getPropertyCleanupConfig() {
     const removeKeys = new Set(this.parseSimpleList(this.settings.propertyCleanupKeys));
@@ -2188,7 +3268,6 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     );
   }
   async runPropertyCleanup(dryRun) {
-    var _a;
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
       this.notice("No target notes selected. Open selector first.");
@@ -2252,22 +3331,22 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       this.setStatus(
         `${dryRun ? "dry-run cleanup" : "cleaning"} ${index + 1}/${selectedFiles.length}`
       );
-      const cachedFrontmatter = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
-      if (!cachedFrontmatter || Object.keys(cachedFrontmatter).length === 0) {
-        events.push({ filePath: file.path, status: "ok", message: "no-frontmatter" });
-        continue;
-      }
       try {
-        const previewCleaned = cleanupFrontmatterRecord(cachedFrontmatter, {
-          cleanUnknown: this.settings.cleanUnknownFrontmatter,
-          cleanupConfig
-        });
-        const previewRemoved = previewCleaned.removedKeys;
-        if (previewRemoved.length === 0) {
-          events.push({ filePath: file.path, status: "ok", message: "no-change" });
-          continue;
-        }
         if (dryRun) {
+          const snapshot = await this.readFrontmatterSnapshot(file);
+          if (!snapshot || Object.keys(snapshot).length === 0) {
+            events.push({ filePath: file.path, status: "ok", message: "no-frontmatter" });
+            continue;
+          }
+          const previewCleaned = cleanupFrontmatterRecord(snapshot, {
+            cleanUnknown: this.settings.cleanUnknownFrontmatter,
+            cleanupConfig
+          });
+          const previewRemoved = previewCleaned.removedKeys;
+          if (previewRemoved.length === 0) {
+            events.push({ filePath: file.path, status: "ok", message: "no-change" });
+            continue;
+          }
           changedFiles += 1;
           removedKeysTotal += previewRemoved.length;
           events.push({
@@ -2280,7 +3359,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
             `- Remove keys (${previewRemoved.length}): ${previewRemoved.sort((a, b) => a.localeCompare(b)).join(", ")}`
           );
           dryRunReportRows.push(
-            `- Before keys: ${Object.keys(cachedFrontmatter).sort((a, b) => a.localeCompare(b)).join(", ")}`
+            `- Before keys: ${Object.keys(snapshot).sort((a, b) => a.localeCompare(b)).join(", ")}`
           );
           dryRunReportRows.push(
             `- After keys: ${Object.keys(previewCleaned.next).sort((a, b) => a.localeCompare(b)).join(", ")}`
@@ -2306,6 +3385,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
             current[key] = value;
           }
         });
+        if (removedForFile === 0) {
+          events.push({ filePath: file.path, status: "ok", message: "no-change" });
+          continue;
+        }
         changedFiles += 1;
         removedKeysTotal += removedForFile;
         events.push({
@@ -2397,6 +3480,24 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         return;
       }
     }
+    if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
+      await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+      const embeddingModel = this.settings.semanticOllamaModel.trim();
+      if (!embeddingModel) {
+        this.notice(
+          "Embedding model is empty. Refresh embedding detection and select one.",
+          6e3
+        );
+        return;
+      }
+      if (!isOllamaModelEmbeddingCapable(embeddingModel)) {
+        this.notice(
+          `Selected embedding model is marked as (\uBD88\uAC00): ${embeddingModel}. Choose an embedding model first.`,
+          6e3
+        );
+        return;
+      }
+    }
     const decision = await this.askBackupDecision();
     if (!decision.proceed) {
       this.notice("Analysis cancelled.");
@@ -2429,7 +3530,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
           0
         );
         this.notice(
-          `Semantic candidates ready: vectors=${semanticResult.generatedVectors}, edges=${neighborCount}, model=${semanticResult.model}.`,
+          `Semantic candidates ready: vectors=${semanticResult.generatedVectors}, cacheHits=${semanticResult.cacheHits}, cacheWrites=${semanticResult.cacheWrites}, edges=${neighborCount}, model=${semanticResult.model}.`,
           5e3
         );
         if (semanticResult.errors.length > 0) {
