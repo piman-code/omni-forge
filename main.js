@@ -1424,6 +1424,14 @@ var DEFAULT_SETTINGS = {
   qaPreferredResponseLanguage: "korean",
   qaCustomSystemPrompt: "",
   qaRolePreset: "ask",
+  qaPipelinePreset: "orchestrator_safeguard",
+  qaAskModel: "",
+  qaAskVisionModel: "",
+  qaImageGeneratorModel: "",
+  qaCoderModel: "",
+  qaArchitectModel: "",
+  qaOrchestratorModel: "",
+  qaSafeguardModel: "",
   qaOrchestratorEnabled: false,
   qaSafeguardPassEnabled: false,
   qaIncludeSelectionInventory: true,
@@ -2281,7 +2289,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     return LOCAL_QA_VIEW_TYPE;
   }
   getDisplayText() {
-    return "Auto Link Local Chat";
+    return "Auto Link Local Chat / \uB85C\uCEEC \uCC44\uD305";
   }
   getIcon() {
     return "message-square";
@@ -2315,7 +2323,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.threadId = `chat-${formatBackupStamp(now)}`;
     this.threadCreatedAt = now.toISOString();
     this.threadPath = null;
-    this.syncStatus = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "Auto-sync ready" : "Manual save mode";
+    this.syncStatus = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "Auto-sync ready / \uC790\uB3D9 \uB3D9\uAE30\uD654 \uC900\uBE44" : "Manual save mode / \uC218\uB3D9 \uC800\uC7A5 \uBAA8\uB4DC";
     this.refreshThreadMeta();
   }
   refreshThreadMeta() {
@@ -2323,8 +2331,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       return;
     }
     const threadLabel = this.threadPath ? this.threadPath : `${this.threadId}.md (pending)`;
-    this.threadInfoEl.setText(`Thread: ${threadLabel}`);
-    this.syncInfoEl.setText(`Sync: ${this.syncStatus}`);
+    this.threadInfoEl.setText(`Thread / \uC2A4\uB808\uB4DC: ${threadLabel}`);
+    this.syncInfoEl.setText(`Sync / \uB3D9\uAE30\uD654: ${this.syncStatus}`);
   }
   setSyncStatus(next) {
     this.syncStatus = next;
@@ -2336,73 +2344,73 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     contentEl.addClass("auto-linker-chat-view");
     const root = contentEl.createDiv({ cls: "auto-linker-chat-root" });
     const header = root.createDiv({ cls: "auto-linker-chat-header" });
-    header.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
+    header.createEl("h3", { text: "Local AI Chat (Selected Notes) / \uB85C\uCEEC AI \uCC44\uD305 (\uC120\uD0DD \uB178\uD2B8)" });
     this.scopeEl = header.createDiv({ cls: "auto-linker-chat-scope" });
     const metaRow = header.createDiv({ cls: "auto-linker-chat-meta" });
     this.threadInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-thread-info" });
     this.syncInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-sync-info" });
     const actionRow = root.createDiv({ cls: "auto-linker-chat-actions" });
-    const newThreadButton = actionRow.createEl("button", { text: "New thread" });
+    const newThreadButton = actionRow.createEl("button", { text: "New thread / \uC0C8 \uC2A4\uB808\uB4DC" });
     newThreadButton.addClass("auto-linker-chat-btn");
     newThreadButton.onclick = async () => {
       await this.startNewThread();
     };
-    const selectButton = actionRow.createEl("button", { text: "Select notes" });
+    const selectButton = actionRow.createEl("button", { text: "Select notes / \uB178\uD2B8 \uC120\uD0DD" });
     selectButton.addClass("auto-linker-chat-btn");
     selectButton.onclick = async () => {
       await this.plugin.openSelectionForQa();
       await this.refreshScopeLabel();
     };
-    const cleanupPickerButton = actionRow.createEl("button", { text: "Cleanup keys" });
+    const cleanupPickerButton = actionRow.createEl("button", { text: "Cleanup keys / \uC815\uB9AC \uD0A4" });
     cleanupPickerButton.addClass("auto-linker-chat-btn");
     cleanupPickerButton.onclick = async () => {
       await this.plugin.openCleanupKeyPickerForQa();
       await this.refreshScopeLabel();
     };
-    const cleanupApplyButton = actionRow.createEl("button", { text: "Run cleanup" });
+    const cleanupApplyButton = actionRow.createEl("button", { text: "Run cleanup / \uC815\uB9AC \uC2E4\uD589" });
     cleanupApplyButton.addClass("auto-linker-chat-btn");
     cleanupApplyButton.onclick = async () => {
       await this.plugin.runCleanupForQa(false);
       await this.refreshScopeLabel();
     };
-    const cleanupDryRunButton = actionRow.createEl("button", { text: "Cleanup dry-run" });
+    const cleanupDryRunButton = actionRow.createEl("button", { text: "Cleanup dry-run / \uC815\uB9AC \uBBF8\uB9AC\uBCF4\uAE30" });
     cleanupDryRunButton.addClass("auto-linker-chat-btn");
     cleanupDryRunButton.onclick = async () => {
       await this.plugin.runCleanupForQa(true);
       await this.refreshScopeLabel();
     };
-    const refreshButton = actionRow.createEl("button", { text: "Refresh scope" });
+    const refreshButton = actionRow.createEl("button", { text: "Refresh scope / \uBC94\uC704 \uC0C8\uB85C\uACE0\uCE68" });
     refreshButton.addClass("auto-linker-chat-btn");
     refreshButton.onclick = async () => {
       await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
       this.refreshModelOptions();
       await this.refreshScopeLabel();
     };
-    const folderButton = actionRow.createEl("button", { text: "Chat folder" });
+    const folderButton = actionRow.createEl("button", { text: "Chat folder / \uCC44\uD305 \uD3F4\uB354" });
     folderButton.addClass("auto-linker-chat-btn");
     folderButton.onclick = async () => {
       const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto Link Chats";
-      const next = window.prompt("Chat transcript folder (vault-relative)", current);
+      const next = window.prompt("Chat transcript folder (vault-relative) / \uCC44\uD305 \uC800\uC7A5 \uD3F4\uB354", current);
       if (next === null) {
         return;
       }
       try {
         await this.plugin.setChatTranscriptRootPathForQa(next);
-        new import_obsidian4.Notice(`Chat folder set: ${this.plugin.getChatTranscriptRootPathForQa()}`);
+        new import_obsidian4.Notice(`Chat folder set / \uCC44\uD305 \uD3F4\uB354 \uC124\uC815: ${this.plugin.getChatTranscriptRootPathForQa()}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown transcript folder error";
-        new import_obsidian4.Notice(`Invalid chat folder: ${message}`, 7e3);
+        new import_obsidian4.Notice(`Invalid chat folder / \uC720\uD6A8\uD558\uC9C0 \uC54A\uC740 \uCC44\uD305 \uD3F4\uB354: ${message}`, 7e3);
       }
       await this.refreshScopeLabel();
     };
-    const openThreadButton = actionRow.createEl("button", { text: "Open chat note" });
+    const openThreadButton = actionRow.createEl("button", { text: "Open chat note / \uCC44\uD305 \uB178\uD2B8 \uC5F4\uAE30" });
     openThreadButton.addClass("auto-linker-chat-btn");
     openThreadButton.onclick = async () => {
       await this.openThreadNote();
     };
     const controlRow = root.createDiv({ cls: "auto-linker-chat-controls" });
     const modelWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
-    modelWrap.createEl("label", { text: "Model" });
+    modelWrap.createEl("label", { text: "Model / \uBAA8\uB378" });
     this.modelSelect = modelWrap.createEl("select", { cls: "auto-linker-chat-model-select" });
     this.modelSelect.onchange = async () => {
       const next = this.modelSelect.value;
@@ -2410,7 +2418,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       await this.refreshScopeLabel();
     };
     const topKWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
-    topKWrap.createEl("label", { text: "Top sources" });
+    topKWrap.createEl("label", { text: "Top sources / \uC0C1\uC704 \uC18C\uC2A4 \uC218" });
     this.topKInput = topKWrap.createEl("input", {
       type: "number",
       cls: "auto-linker-chat-topk-input"
@@ -2430,18 +2438,18 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.threadEl = root.createDiv({ cls: "auto-linker-chat-thread" });
     this.threadEl.createDiv({
       cls: "auto-linker-chat-empty",
-      text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694."
+      text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694. / Ask a question to start."
     });
     const composer = root.createDiv({ cls: "auto-linker-chat-composer" });
     this.inputEl = composer.createEl("textarea", { cls: "auto-linker-chat-input" });
-    this.inputEl.placeholder = "\uC120\uD0DD\uB41C \uB178\uD2B8/\uD3F4\uB354 \uBC94\uC704\uC5D0\uC11C \uC9C8\uBB38\uD558\uC138\uC694...";
+    this.inputEl.placeholder = "\uC120\uD0DD \uB178\uD2B8/\uD3F4\uB354 \uBC94\uC704\uC5D0\uC11C \uC9C8\uBB38\uD558\uC138\uC694... / Ask from selected notes/folders...";
     const footer = composer.createDiv({ cls: "auto-linker-chat-footer" });
-    this.sendButton = footer.createEl("button", { text: "Send", cls: "mod-cta" });
+    this.sendButton = footer.createEl("button", { text: "Send / \uC804\uC1A1", cls: "mod-cta" });
     this.sendButton.addClass("auto-linker-chat-send");
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
     };
-    this.stopButton = footer.createEl("button", { text: "Stop" });
+    this.stopButton = footer.createEl("button", { text: "Stop / \uC911\uC9C0" });
     this.stopButton.addClass("auto-linker-chat-stop");
     this.stopButton.disabled = true;
     this.stopButton.onclick = () => {
@@ -2462,7 +2470,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const options = this.plugin.getQaModelOptionsForQa();
     this.modelSelect.empty();
     this.modelSelect.createEl("option", {
-      text: `Use main model (${fallbackLabel})`,
+      text: `Use main model / \uBA54\uC778 \uBAA8\uB378 \uC0AC\uC6A9 (${fallbackLabel})`,
       value: "__fallback__"
     });
     for (const model of options) {
@@ -2652,12 +2660,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   async openThreadNote() {
     if (this.messages.length === 0) {
-      new import_obsidian4.Notice("No chat messages yet.");
+      new import_obsidian4.Notice("No chat messages yet. / \uC544\uC9C1 \uCC44\uD305 \uBA54\uC2DC\uC9C0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.");
       return;
     }
     await this.flushThreadSync(true);
     if (!this.threadPath) {
-      new import_obsidian4.Notice("Thread note is not ready yet.");
+      new import_obsidian4.Notice("Thread note is not ready yet. / \uC2A4\uB808\uB4DC \uB178\uD2B8\uAC00 \uC544\uC9C1 \uC900\uBE44\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4.");
       return;
     }
     const target = this.app.vault.getAbstractFileByPath(this.threadPath);
@@ -2665,7 +2673,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       await this.app.workspace.getLeaf(true).openFile(target);
       return;
     }
-    new import_obsidian4.Notice(`Thread note not found: ${this.threadPath}`, 7e3);
+    new import_obsidian4.Notice(`Thread note not found / \uC2A4\uB808\uB4DC \uB178\uD2B8 \uC5C6\uC74C: ${this.threadPath}`, 7e3);
   }
   renderSourceLink(parent, source) {
     const row = parent.createDiv({ cls: "auto-linker-chat-source-row" });
@@ -2697,7 +2705,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     if (this.messages.length === 0) {
       this.threadEl.createDiv({
         cls: "auto-linker-chat-empty",
-        text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694."
+        text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694. / Ask a question to start."
       });
       return;
     }
@@ -2711,7 +2719,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       const head = box.createDiv({ cls: "auto-linker-chat-message-head" });
       head.createEl("strong", {
-        text: message.role === "assistant" ? "Assistant" : message.role === "user" ? "You" : "System"
+        text: message.role === "assistant" ? "Assistant / \uC5B4\uC2DC\uC2A4\uD134\uD2B8" : message.role === "user" ? "You / \uC0AC\uC6A9\uC790" : "System / \uC2DC\uC2A4\uD15C"
       });
       head.createEl("small", {
         text: this.formatTime(message.timestamp),
@@ -2728,7 +2736,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         const src = box.createDiv({ cls: "auto-linker-chat-sources" });
         src.createDiv({
           cls: "auto-linker-chat-sources-title",
-          text: `Sources (${message.sources.length})`
+          text: `Sources / \uCD9C\uCC98 (${message.sources.length})`
         });
         for (const source of message.sources) {
           this.renderSourceLink(src, source);
@@ -2763,10 +2771,11 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
     const model = this.plugin.getQaModelLabelForQa();
     const embedding = this.plugin.getQaEmbeddingModelForQa();
-    const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "auto" : "manual";
-    const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set)";
+    const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "auto / \uC790\uB3D9" : "manual / \uC218\uB3D9";
+    const pipeline = this.plugin.settings.qaPipelinePreset.replace(/_/g, " -> ").replace("legacy -> auto", "legacy_auto");
+    const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set / \uBBF8\uC124\uC815)";
     this.scopeEl.setText(
-      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"} | sync=${syncMode} | chats=${chatFolder}`
+      `Scope / \uBC94\uC704: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set / \uBBF8\uC124\uC815)"} | pipeline=${pipeline} | sync=${syncMode} | chats=${chatFolder}`
     );
   }
   async submitQuestion() {
@@ -2776,7 +2785,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     const question = this.inputEl.value.trim();
     if (!question) {
-      new import_obsidian4.Notice("Question is empty.");
+      new import_obsidian4.Notice("Question is empty. / \uC9C8\uBB38\uC774 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4.");
       return;
     }
     const selectedFiles = this.plugin.getSelectedFilesForQa();
@@ -3039,6 +3048,14 @@ var SETTINGS_NAME_KO_MAP = {
   "Semantic source max chars": "\uC2DC\uB9E8\uD2F1 \uC18C\uC2A4 \uCD5C\uB300 \uBB38\uC790 \uC218",
   "Q&A Ollama base URL": "Q&A Ollama \uAE30\uBCF8 URL",
   "Q&A model": "Q&A \uBAA8\uB378",
+  "Q&A pipeline preset": "Q&A \uD30C\uC774\uD504\uB77C\uC778 \uD504\uB9AC\uC14B",
+  "Ask model (text)": "Ask \uBAA8\uB378(\uD14D\uC2A4\uD2B8)",
+  "Ask model (vision)": "Ask \uBAA8\uB378(\uBE44\uC804)",
+  "Image generator model": "\uC774\uBBF8\uC9C0 \uC0DD\uC131 \uBAA8\uB378",
+  "Coder model": "Coder \uBAA8\uB378",
+  "Architect model": "Architect \uBAA8\uB378",
+  "Orchestrator model": "Orchestrator \uBAA8\uB378",
+  "Safeguard model": "Safeguard \uBAA8\uB378",
   "Prefer Ollama /api/chat (with fallback)": "Ollama /api/chat \uC6B0\uC120(\uD3F4\uBC31 \uD3EC\uD568)",
   "Chat transcript folder path": "\uCC44\uD305 \uAE30\uB85D \uD3F4\uB354 \uACBD\uB85C",
   "Auto-sync chat thread": "\uCC44\uD305 \uC2A4\uB808\uB4DC \uC790\uB3D9 \uB3D9\uAE30\uD654",
@@ -3075,6 +3092,10 @@ var SETTINGS_DESC_KO_MAP = {
   "Trim note text before embedding to keep local runs fast.": "\uB85C\uCEEC \uC2E4\uD589 \uC131\uB2A5\uC744 \uC704\uD574 \uC784\uBCA0\uB529 \uC804 \uB178\uD2B8 \uD14D\uC2A4\uD2B8 \uAE38\uC774\uB97C \uC81C\uD55C\uD569\uB2C8\uB2E4.",
   "Leave empty to use main Ollama base URL.": "\uBE44\uC6CC\uB450\uBA74 \uBA54\uC778 Ollama \uAE30\uBCF8 URL\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Leave empty to use main analysis model.": "\uBE44\uC6CC\uB450\uBA74 \uBA54\uC778 \uBD84\uC11D \uBAA8\uB378\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Select execution pipeline for post-generation passes.": "\uC0DD\uC131 \uD6C4 \uD6C4\uCC98\uB9AC \uD328\uC2A4\uC758 \uC2E4\uD589 \uD30C\uC774\uD504\uB77C\uC778\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4.",
+  "Optional role-specific model. Empty uses Q&A model as fallback.": "\uC5ED\uD560 \uC804\uC6A9 \uBAA8\uB378(\uC120\uD0DD)\uC785\uB2C8\uB2E4. \uBE44\uC6B0\uBA74 Q&A \uBAA8\uB378\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Used when role preset is Ask (vision). Text-only for now, image input support is planned.": "Ask(\uBE44\uC804) \uD504\uB9AC\uC14B\uC5D0\uC11C \uC0AC\uC6A9\uD569\uB2C8\uB2E4. \uD604\uC7AC\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC774\uBA70 \uC774\uBBF8\uC9C0 \uC785\uB825 \uC9C0\uC6D0\uC740 \uCD94\uD6C4 \uD655\uC7A5 \uC608\uC815\uC785\uB2C8\uB2E4.",
+  "Reserved for image-generation workflows. Current chat UI is text-first.": "\uC774\uBBF8\uC9C0 \uC0DD\uC131 \uC6CC\uD06C\uD50C\uB85C\uC6A9 \uC608\uC57D \uBAA8\uB378\uC785\uB2C8\uB2E4. \uD604\uC7AC \uCC44\uD305 UI\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC785\uB2C8\uB2E4.",
   "Use role-based chat first, then fallback to /api/generate when unavailable.": "\uC5ED\uD560 \uAE30\uBC18 /api/chat\uC744 \uC6B0\uC120 \uC0AC\uC6A9\uD558\uACE0, \uBD88\uAC00\uD558\uBA74 /api/generate\uB85C \uD3F4\uBC31\uD569\uB2C8\uB2E4.",
   "Vault-relative path for saving chat transcripts.": "\uCC44\uD305 \uAE30\uB85D \uC800\uC7A5\uC6A9 vault-relative \uACBD\uB85C\uC785\uB2C8\uB2E4.",
   "When enabled, the current chat thread is continuously saved and updated as messages change.": "\uD65C\uC131\uD654\uD558\uBA74 \uD604\uC7AC \uCC44\uD305 \uC2A4\uB808\uB4DC\uB97C \uBA54\uC2DC\uC9C0 \uBCC0\uACBD\uC5D0 \uB9DE\uCDB0 \uACC4\uC18D \uC800\uC7A5/\uB3D9\uAE30\uD654\uD569\uB2C8\uB2E4.",
@@ -3107,6 +3128,18 @@ function toKoreanBilingualLabel(originalText, translationMap) {
   }
   return `${normalized} / ${translated}`;
 }
+function toKoreanBilingualParts(originalText, translationMap) {
+  var _a;
+  const normalized = (_a = originalText == null ? void 0 : originalText.trim()) != null ? _a : "";
+  if (!normalized || normalized.includes(" / ")) {
+    return null;
+  }
+  const translated = translationMap[normalized];
+  if (!translated) {
+    return null;
+  }
+  return { en: normalized, ko: translated };
+}
 var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -3115,6 +3148,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
   display() {
     const { containerEl } = this;
     containerEl.empty();
+    containerEl.addClass("auto-linker-settings-tab");
     containerEl.createEl("h2", { text: "Auto Link Settings / Auto Link \uC124\uC815" });
     containerEl.createEl("p", {
       text: "Language docs / \uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)"
@@ -3488,23 +3522,88 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Role preset / \uC5ED\uD560 \uD504\uB9AC\uC14B").setDesc("Prompt style preset for local Q&A. / \uB85C\uCEEC Q&A \uB2F5\uBCC0 \uC131\uD5A5 \uD504\uB9AC\uC14B").addDropdown(
-      (dropdown) => dropdown.addOption("ask", "Ask (default / \uAE30\uBCF8)").addOption("orchestrator", "Orchestrator / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130").addOption("coder", "Coder / \uCF54\uB354").addOption("debugger", "Debugger / \uB514\uBC84\uAC70").addOption("architect", "Architect / \uC544\uD0A4\uD14D\uD2B8").addOption("safeguard", "Safeguard (security / \uBCF4\uC548)").setValue(this.plugin.settings.qaRolePreset).onChange(async (value) => {
+      (dropdown) => dropdown.addOption("ask", "Ask (default / \uAE30\uBCF8)").addOption("ask_vision", "Ask (vision / \uBE44\uC804)").addOption("image_generator", "Image generator / \uC774\uBBF8\uC9C0 \uC0DD\uC131").addOption("orchestrator", "Orchestrator / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130").addOption("coder", "Coder / \uCF54\uB354").addOption("debugger", "Debugger / \uB514\uBC84\uAC70").addOption("architect", "Architect / \uC544\uD0A4\uD14D\uD2B8").addOption("safeguard", "Safeguard (security / \uBCF4\uC548)").setValue(this.plugin.settings.qaRolePreset).onChange(async (value) => {
         this.plugin.settings.qaRolePreset = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Enable orchestrator pipeline / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130 \uD30C\uC774\uD504\uB77C\uC778").setDesc("Use an orchestration rewrite pass for planning/report/PPT/game-style tasks. / \uACC4\uD68D\uC11C\xB7\uBCF4\uACE0\uC11C\xB7PPT\xB7\uAC8C\uC784 \uACFC\uC81C\uC5D0 \uCD94\uAC00 \uC815\uB9AC \uD328\uC2A4\uB97C \uC801\uC6A9").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.qaOrchestratorEnabled).onChange(async (value) => {
-        this.plugin.settings.qaOrchestratorEnabled = value;
+    new import_obsidian4.Setting(containerEl).setName("Q&A pipeline preset").setDesc("Select execution pipeline for post-generation passes.").addDropdown(
+      (dropdown) => dropdown.addOption(
+        "orchestrator_safeguard",
+        "Orchestrator -> Safeguard (default / \uAE30\uBCF8)"
+      ).addOption(
+        "orchestrator_coder_safeguard",
+        "Orchestrator -> Coder -> Safeguard"
+      ).addOption(
+        "orchestrator_architect_safeguard",
+        "Orchestrator -> Architect -> Safeguard"
+      ).addOption(
+        "orchestrator_architect_coder_safeguard",
+        "Orchestrator -> Architect -> Coder -> Safeguard"
+      ).addOption("legacy_auto", "Legacy auto (\uAE30\uC874 \uC790\uB3D9 \uADDC\uCE59)").setValue(this.plugin.settings.qaPipelinePreset).onChange(async (value) => {
+        this.plugin.settings.qaPipelinePreset = value;
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Ask model (text)").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
+      (text) => text.setPlaceholder("qwen3:14b").setValue(this.plugin.settings.qaAskModel).onChange(async (value) => {
+        this.plugin.settings.qaAskModel = value.trim();
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Enable safeguard verification / \uC138\uC774\uD504\uAC00\uB4DC \uAC80\uC99D").setDesc("Run a final factual/safety consistency pass against sources before returning answer. / \uCD9C\uCC98 \uAE30\uC900 \uC0AC\uC2E4\xB7\uBCF4\uC548 \uC77C\uAD00\uC131 \uCD5C\uC885 \uC810\uAC80").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.qaSafeguardPassEnabled).onChange(async (value) => {
-        this.plugin.settings.qaSafeguardPassEnabled = value;
+    new import_obsidian4.Setting(containerEl).setName("Ask model (vision)").setDesc(
+      "Used when role preset is Ask (vision). Text-only for now, image input support is planned."
+    ).addText(
+      (text) => text.setPlaceholder("llama3.2-vision:11b").setValue(this.plugin.settings.qaAskVisionModel).onChange(async (value) => {
+        this.plugin.settings.qaAskVisionModel = value.trim();
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Image generator model").setDesc("Reserved for image-generation workflows. Current chat UI is text-first.").addText(
+      (text) => text.setPlaceholder("flux.1-dev").setValue(this.plugin.settings.qaImageGeneratorModel).onChange(async (value) => {
+        this.plugin.settings.qaImageGeneratorModel = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Coder model").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
+      (text) => text.setPlaceholder("qwen3-coder:30b").setValue(this.plugin.settings.qaCoderModel).onChange(async (value) => {
+        this.plugin.settings.qaCoderModel = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Architect model").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
+      (text) => text.setPlaceholder("qwen3:32b").setValue(this.plugin.settings.qaArchitectModel).onChange(async (value) => {
+        this.plugin.settings.qaArchitectModel = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Orchestrator model").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
+      (text) => text.setPlaceholder("qwen3:32b").setValue(this.plugin.settings.qaOrchestratorModel).onChange(async (value) => {
+        this.plugin.settings.qaOrchestratorModel = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Safeguard model").setDesc("Optional role-specific model. Empty uses Q&A model as fallback.").addText(
+      (text) => text.setPlaceholder("qwen3:14b").setValue(this.plugin.settings.qaSafeguardModel).onChange(async (value) => {
+        this.plugin.settings.qaSafeguardModel = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    if (this.plugin.settings.qaPipelinePreset === "legacy_auto") {
+      new import_obsidian4.Setting(containerEl).setName("Enable orchestrator pipeline / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130 \uD30C\uC774\uD504\uB77C\uC778").setDesc("Use an orchestration rewrite pass for planning/report/PPT/game-style tasks. / \uACC4\uD68D\uC11C\xB7\uBCF4\uACE0\uC11C\xB7PPT\xB7\uAC8C\uC784 \uACFC\uC81C\uC5D0 \uCD94\uAC00 \uC815\uB9AC \uD328\uC2A4\uB97C \uC801\uC6A9").addToggle(
+        (toggle) => toggle.setValue(this.plugin.settings.qaOrchestratorEnabled).onChange(async (value) => {
+          this.plugin.settings.qaOrchestratorEnabled = value;
+          await this.plugin.saveSettings();
+        })
+      );
+      new import_obsidian4.Setting(containerEl).setName("Enable safeguard verification / \uC138\uC774\uD504\uAC00\uB4DC \uAC80\uC99D").setDesc("Run a final factual/safety consistency pass against sources before returning answer. / \uCD9C\uCC98 \uAE30\uC900 \uC0AC\uC2E4\xB7\uBCF4\uC548 \uC77C\uAD00\uC131 \uCD5C\uC885 \uC810\uAC80").addToggle(
+        (toggle) => toggle.setValue(this.plugin.settings.qaSafeguardPassEnabled).onChange(async (value) => {
+          this.plugin.settings.qaSafeguardPassEnabled = value;
+          await this.plugin.saveSettings();
+        })
+      );
+    }
     new import_obsidian4.Setting(containerEl).setName("Custom system prompt / \uC0AC\uC6A9\uC790 \uC2DC\uC2A4\uD15C \uD504\uB86C\uD504\uD2B8").setDesc("Optional policy/style instructions (e.g., 'Explain with Feynman method in Korean'). / \uC608: \uD55C\uAD6D\uC5B4, \uD30C\uC778\uB9CC\uC2DD \uC124\uBA85").addTextArea(
       (text) => text.setPlaceholder("Optional. Applied after built-in safety/policy prompt.").setValue(this.plugin.settings.qaCustomSystemPrompt).onChange(async (value) => {
         this.plugin.settings.qaCustomSystemPrompt = value;
@@ -3707,16 +3806,34 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
     }
     const nameEls = containerEl.querySelectorAll(".setting-item-name");
     for (const nameEl of Array.from(nameEls)) {
-      const localized = toKoreanBilingualLabel(nameEl.textContent, SETTINGS_NAME_KO_MAP);
+      const localized = toKoreanBilingualParts(nameEl.textContent, SETTINGS_NAME_KO_MAP);
       if (localized) {
-        nameEl.textContent = localized;
+        nameEl.empty();
+        nameEl.addClass("auto-linker-bilingual-field");
+        nameEl.createSpan({
+          text: localized.en,
+          cls: "auto-linker-bilingual-en"
+        });
+        nameEl.createSpan({
+          text: localized.ko,
+          cls: "auto-linker-bilingual-ko"
+        });
       }
     }
     const descEls = containerEl.querySelectorAll(".setting-item-description");
     for (const descEl of Array.from(descEls)) {
-      const localized = toKoreanBilingualLabel(descEl.textContent, SETTINGS_DESC_KO_MAP);
+      const localized = toKoreanBilingualParts(descEl.textContent, SETTINGS_DESC_KO_MAP);
       if (localized) {
-        descEl.textContent = localized;
+        descEl.empty();
+        descEl.addClass("auto-linker-bilingual-field");
+        descEl.createSpan({
+          text: localized.en,
+          cls: "auto-linker-bilingual-en"
+        });
+        descEl.createSpan({
+          text: localized.ko,
+          cls: "auto-linker-bilingual-ko"
+        });
       }
     }
   }
@@ -3892,7 +4009,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return this.settings.qaOllamaModel.trim();
   }
   getQaModelLabelForQa() {
-    return this.resolveQaModel() || "(not set)";
+    return this.resolveQaModelForRole(this.resolveQaPrimaryRole()) || "(not set)";
   }
   getQaEmbeddingModelForQa() {
     return this.settings.semanticOllamaModel.trim();
@@ -4313,8 +4430,32 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaCustomSystemPrompt !== "string") {
       this.settings.qaCustomSystemPrompt = DEFAULT_SETTINGS.qaCustomSystemPrompt;
     }
-    if (this.settings.qaRolePreset !== "ask" && this.settings.qaRolePreset !== "orchestrator" && this.settings.qaRolePreset !== "coder" && this.settings.qaRolePreset !== "debugger" && this.settings.qaRolePreset !== "architect" && this.settings.qaRolePreset !== "safeguard") {
+    if (this.settings.qaRolePreset !== "ask" && this.settings.qaRolePreset !== "ask_vision" && this.settings.qaRolePreset !== "image_generator" && this.settings.qaRolePreset !== "orchestrator" && this.settings.qaRolePreset !== "coder" && this.settings.qaRolePreset !== "debugger" && this.settings.qaRolePreset !== "architect" && this.settings.qaRolePreset !== "safeguard") {
       this.settings.qaRolePreset = DEFAULT_SETTINGS.qaRolePreset;
+    }
+    if (this.settings.qaPipelinePreset !== "orchestrator_safeguard" && this.settings.qaPipelinePreset !== "orchestrator_coder_safeguard" && this.settings.qaPipelinePreset !== "orchestrator_architect_safeguard" && this.settings.qaPipelinePreset !== "orchestrator_architect_coder_safeguard" && this.settings.qaPipelinePreset !== "legacy_auto") {
+      this.settings.qaPipelinePreset = DEFAULT_SETTINGS.qaPipelinePreset;
+    }
+    if (typeof this.settings.qaAskModel !== "string") {
+      this.settings.qaAskModel = DEFAULT_SETTINGS.qaAskModel;
+    }
+    if (typeof this.settings.qaAskVisionModel !== "string") {
+      this.settings.qaAskVisionModel = DEFAULT_SETTINGS.qaAskVisionModel;
+    }
+    if (typeof this.settings.qaImageGeneratorModel !== "string") {
+      this.settings.qaImageGeneratorModel = DEFAULT_SETTINGS.qaImageGeneratorModel;
+    }
+    if (typeof this.settings.qaCoderModel !== "string") {
+      this.settings.qaCoderModel = DEFAULT_SETTINGS.qaCoderModel;
+    }
+    if (typeof this.settings.qaArchitectModel !== "string") {
+      this.settings.qaArchitectModel = DEFAULT_SETTINGS.qaArchitectModel;
+    }
+    if (typeof this.settings.qaOrchestratorModel !== "string") {
+      this.settings.qaOrchestratorModel = DEFAULT_SETTINGS.qaOrchestratorModel;
+    }
+    if (typeof this.settings.qaSafeguardModel !== "string") {
+      this.settings.qaSafeguardModel = DEFAULT_SETTINGS.qaSafeguardModel;
     }
     if (typeof this.settings.qaOrchestratorEnabled !== "boolean") {
       this.settings.qaOrchestratorEnabled = DEFAULT_SETTINGS.qaOrchestratorEnabled;
@@ -4739,9 +4880,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return qa || fallback;
   }
   resolveQaModel() {
-    const qa = this.settings.qaOllamaModel.trim();
-    const fallback = this.settings.ollamaModel.trim();
-    return qa || fallback;
+    return this.resolveQaModelForRole(this.resolveQaPrimaryRole());
   }
   trimTextForContext(source, maxChars) {
     const collapsed = source.replace(/\s+/g, " ").trim();
@@ -5119,7 +5258,37 @@ ${item.content}`
     const normalized = question.toLowerCase();
     return /(계획서|보고서|ppt|슬라이드|발표|수업|교안|학습\s*게임|게임\s*개발|roadmap|plan|report|presentation|slides|lesson|game\s*design|project\s*plan)/i.test(normalized);
   }
-  shouldRunOrchestratorPass(question, intent) {
+  resolveQaPrimaryRole() {
+    return this.settings.qaRolePreset;
+  }
+  getQaRoleModelOverride(role) {
+    switch (role) {
+      case "ask":
+        return this.settings.qaAskModel;
+      case "ask_vision":
+        return this.settings.qaAskVisionModel;
+      case "image_generator":
+        return this.settings.qaImageGeneratorModel;
+      case "coder":
+      case "debugger":
+        return this.settings.qaCoderModel;
+      case "architect":
+        return this.settings.qaArchitectModel;
+      case "orchestrator":
+        return this.settings.qaOrchestratorModel;
+      case "safeguard":
+        return this.settings.qaSafeguardModel;
+      default:
+        return "";
+    }
+  }
+  resolveQaModelForRole(role) {
+    const roleModel = this.getQaRoleModelOverride(role).trim();
+    const qa = this.settings.qaOllamaModel.trim();
+    const fallback = this.settings.ollamaModel.trim();
+    return roleModel || qa || fallback;
+  }
+  shouldRunOrchestratorPassLegacy(question, intent) {
     if (this.settings.qaRolePreset === "orchestrator") {
       return true;
     }
@@ -5128,7 +5297,7 @@ ${item.content}`
     }
     return this.isOrchestrationTask(question, intent);
   }
-  shouldRunSafeguardPass(question, intent) {
+  shouldRunSafeguardPassLegacy(question, intent) {
     if (this.settings.qaRolePreset === "safeguard") {
       return true;
     }
@@ -5141,11 +5310,45 @@ ${item.content}`
     }
     return /(보안|security|개인정보|privacy|위험|risk|규정|compliance|정책|safety)/i.test(normalized);
   }
-  shouldRunRolePresetRefinement() {
-    return this.settings.qaRolePreset === "coder" || this.settings.qaRolePreset === "architect" || this.settings.qaRolePreset === "debugger";
+  shouldRunRolePresetRefinementForRole(role) {
+    return role === "coder" || role === "architect" || role === "debugger";
   }
-  buildRolePresetRefinementInstruction() {
-    switch (this.settings.qaRolePreset) {
+  resolveLegacyAutoPipelineStages(question, intent) {
+    const stages = [];
+    if (this.shouldRunRolePresetRefinementForRole(this.settings.qaRolePreset)) {
+      if (this.settings.qaRolePreset === "architect") {
+        stages.push("architect");
+      } else if (this.settings.qaRolePreset === "debugger") {
+        stages.push("debugger");
+      } else {
+        stages.push("coder");
+      }
+    }
+    if (this.shouldRunOrchestratorPassLegacy(question, intent)) {
+      stages.push("orchestrator");
+    }
+    if (this.shouldRunSafeguardPassLegacy(question, intent)) {
+      stages.push("safeguard");
+    }
+    return [...new Set(stages)];
+  }
+  resolveQaPipelineStages(question, intent) {
+    switch (this.settings.qaPipelinePreset) {
+      case "orchestrator_safeguard":
+        return ["orchestrator", "safeguard"];
+      case "orchestrator_coder_safeguard":
+        return ["orchestrator", "coder", "safeguard"];
+      case "orchestrator_architect_safeguard":
+        return ["orchestrator", "architect", "safeguard"];
+      case "orchestrator_architect_coder_safeguard":
+        return ["orchestrator", "architect", "coder", "safeguard"];
+      case "legacy_auto":
+      default:
+        return this.resolveLegacyAutoPipelineStages(question, intent);
+    }
+  }
+  buildRolePresetRefinementInstruction(role) {
+    switch (role) {
       case "coder":
         return "Refine draft as a Coder: produce implementation-ready steps, concrete code/data structure guidance, and verification checklist.";
       case "architect":
@@ -5156,8 +5359,8 @@ ${item.content}`
         return "Refine draft while preserving factual grounding.";
     }
   }
-  getQaRolePresetInstruction() {
-    switch (this.settings.qaRolePreset) {
+  getQaRolePresetInstruction(role) {
+    switch (role) {
       case "orchestrator":
         return "Role preset: Orchestrator. Break work into phases, dependencies, risks, and clear execution order.";
       case "coder":
@@ -5168,6 +5371,10 @@ ${item.content}`
         return "Role preset: Architect. Emphasize system design trade-offs, interfaces, scalability, and maintainability.";
       case "safeguard":
         return "Role preset: Safeguard. Prioritize security, privacy, and failure-mode analysis before recommendations.";
+      case "ask_vision":
+        return "Role preset: Ask (Vision). Prefer descriptions suitable for image-aware models while staying source-grounded.";
+      case "image_generator":
+        return "Role preset: Image generator. Describe prompts/specs for image generation, but keep claims grounded in sources.";
       case "ask":
       default:
         return "Role preset: Ask. Balanced assistant mode with concise, useful structure.";
@@ -5185,12 +5392,13 @@ ${item.content}`
     }
   }
   buildLocalQaSystemPrompt(intent, preferDetailed) {
+    const role = this.resolveQaPrimaryRole();
     const toneLine = preferDetailed ? "Keep tone natural, direct, and sufficiently detailed." : "Keep tone natural, direct, and concise.";
     return [
       "You are a local-note assistant for Obsidian.",
       "Answer only from the provided sources.",
       this.getQaPreferredLanguageInstruction(),
-      this.getQaRolePresetInstruction(),
+      this.getQaRolePresetInstruction(role),
       toneLine,
       "Output in markdown.",
       "When making claims, cite source paths inline in parentheses.",
@@ -5521,21 +5729,29 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     }
     return answer;
   }
-  async applyOrchestratorPassIfNeeded(params) {
-    const {
-      question,
-      intent,
-      answer,
-      sourceBlocks,
-      qaBaseUrl,
-      qaModel,
-      onEvent,
-      abortSignal
-    } = params;
-    if (!this.shouldRunOrchestratorPass(question, intent)) {
+  resolvePassModelOrWarn(role, onEvent) {
+    const model = this.resolveQaModelForRole(role).trim();
+    if (!model) {
+      this.emitQaEvent(onEvent, "warning", `Skipping ${role} pass: model is empty`);
+      return null;
+    }
+    if (!isOllamaModelAnalyzable(model)) {
+      this.emitQaEvent(
+        onEvent,
+        "warning",
+        `Skipping ${role} pass: model is not suitable (${model})`
+      );
+      return null;
+    }
+    return model;
+  }
+  async applyOrchestratorPass(params) {
+    const { question, answer, sourceBlocks, qaBaseUrl, onEvent, abortSignal } = params;
+    const passModel = this.resolvePassModelOrWarn("orchestrator", onEvent);
+    if (!passModel) {
       return answer;
     }
-    this.emitQaEvent(onEvent, "generation", "Running orchestrator pass");
+    this.emitQaEvent(onEvent, "generation", `Running orchestrator pass (${passModel})`);
     const systemPrompt = [
       "You are an orchestration editor for local-note answers.",
       "Task: convert draft into execution-ready output without inventing facts.",
@@ -5562,7 +5778,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     try {
       const improved = await this.requestLocalQaCompletion({
         qaBaseUrl,
-        qaModel,
+        qaModel: passModel,
         systemPrompt,
         userPrompt,
         history: [],
@@ -5585,18 +5801,18 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       return answer;
     }
   }
-  async applyRolePresetRefinementIfNeeded(params) {
-    const { question, answer, sourceBlocks, qaBaseUrl, qaModel, onEvent, abortSignal } = params;
-    if (!this.shouldRunRolePresetRefinement()) {
+  async applyRolePresetRefinementPass(params) {
+    const { role, question, answer, sourceBlocks, qaBaseUrl, onEvent, abortSignal } = params;
+    const passModel = this.resolvePassModelOrWarn(role, onEvent);
+    if (!passModel) {
       return answer;
     }
-    const roleLabel = this.settings.qaRolePreset;
-    this.emitQaEvent(onEvent, "generation", `Running ${roleLabel} refinement`);
+    this.emitQaEvent(onEvent, "generation", `Running ${role} refinement (${passModel})`);
     const systemPrompt = [
       "You are a role-specialized editor for local-note answers.",
       "Keep output factual and grounded in provided sources.",
       "Do not invent facts. Mark uncertain points as '\uC815\uBCF4 \uBD80\uC871'.",
-      this.buildRolePresetRefinementInstruction(),
+      this.buildRolePresetRefinementInstruction(role),
       "Return markdown only."
     ].join("\n");
     const userPrompt = [
@@ -5611,7 +5827,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     try {
       const rewritten = await this.requestLocalQaCompletion({
         qaBaseUrl,
-        qaModel,
+        qaModel: passModel,
         systemPrompt,
         userPrompt,
         history: [],
@@ -5620,37 +5836,29 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       const split = splitThinkingBlocks(rewritten.answer);
       const normalized = split.answer.trim() || rewritten.answer.trim();
       if (normalized.length > 0) {
-        this.emitQaEvent(onEvent, "generation", `${roleLabel} refinement applied`);
+        this.emitQaEvent(onEvent, "generation", `${role} refinement applied`);
         return normalized;
       }
-      this.emitQaEvent(onEvent, "warning", `${roleLabel} refinement returned empty output`);
+      this.emitQaEvent(onEvent, "warning", `${role} refinement returned empty output`);
       return answer;
     } catch (error) {
       if (this.isAbortError(error)) {
         throw error;
       }
       const message = error instanceof Error ? error.message : "Unknown role refinement error";
-      this.emitQaEvent(onEvent, "warning", `${roleLabel} refinement failed`, {
+      this.emitQaEvent(onEvent, "warning", `${role} refinement failed`, {
         detail: message
       });
       return answer;
     }
   }
-  async applySafeguardPassIfNeeded(params) {
-    const {
-      question,
-      intent,
-      answer,
-      sourceBlocks,
-      qaBaseUrl,
-      qaModel,
-      onEvent,
-      abortSignal
-    } = params;
-    if (!this.shouldRunSafeguardPass(question, intent)) {
+  async applySafeguardPass(params) {
+    const { question, answer, sourceBlocks, qaBaseUrl, onEvent, abortSignal } = params;
+    const passModel = this.resolvePassModelOrWarn("safeguard", onEvent);
+    if (!passModel) {
       return answer;
     }
-    this.emitQaEvent(onEvent, "generation", "Running safeguard verification");
+    this.emitQaEvent(onEvent, "generation", `Running safeguard verification (${passModel})`);
     const systemPrompt = [
       "You are a safeguard verifier for local-note answers.",
       "Validate draft strictly against provided source excerpts.",
@@ -5672,7 +5880,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     try {
       const verified = await this.requestLocalQaCompletion({
         qaBaseUrl,
-        qaModel,
+        qaModel: passModel,
         systemPrompt,
         userPrompt,
         history: [],
@@ -5719,7 +5927,8 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
         "Blocked by security policy: Q&A endpoint must be localhost unless explicitly allowed."
       );
     }
-    const qaModel = this.resolveQaModel();
+    const primaryRole = this.resolveQaPrimaryRole();
+    const qaModel = this.resolveQaModelForRole(primaryRole);
     if (!qaModel) {
       throw new Error("Q&A model is empty.");
     }
@@ -5850,35 +6059,47 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
         qaModel,
         onEvent
       });
-      finalAnswer = await this.applyRolePresetRefinementIfNeeded({
-        question: safeQuestion,
-        answer: finalAnswer,
-        sourceBlocks,
-        qaBaseUrl,
-        qaModel,
-        onEvent,
-        abortSignal
-      });
-      finalAnswer = await this.applyOrchestratorPassIfNeeded({
-        question: safeQuestion,
-        intent,
-        answer: finalAnswer,
-        sourceBlocks,
-        qaBaseUrl,
-        qaModel,
-        onEvent,
-        abortSignal
-      });
-      finalAnswer = await this.applySafeguardPassIfNeeded({
-        question: safeQuestion,
-        intent,
-        answer: finalAnswer,
-        sourceBlocks,
-        qaBaseUrl,
-        qaModel,
-        onEvent,
-        abortSignal
-      });
+      const pipelineStages = this.resolveQaPipelineStages(safeQuestion, intent);
+      if (pipelineStages.length > 0) {
+        this.emitQaEvent(
+          onEvent,
+          "generation",
+          `Pipeline: ${pipelineStages.join(" -> ")}`
+        );
+      }
+      for (const stage of pipelineStages) {
+        if (stage === "orchestrator") {
+          finalAnswer = await this.applyOrchestratorPass({
+            question: safeQuestion,
+            answer: finalAnswer,
+            sourceBlocks,
+            qaBaseUrl,
+            onEvent,
+            abortSignal
+          });
+          continue;
+        }
+        if (stage === "safeguard") {
+          finalAnswer = await this.applySafeguardPass({
+            question: safeQuestion,
+            answer: finalAnswer,
+            sourceBlocks,
+            qaBaseUrl,
+            onEvent,
+            abortSignal
+          });
+          continue;
+        }
+        finalAnswer = await this.applyRolePresetRefinementPass({
+          role: stage,
+          question: safeQuestion,
+          answer: finalAnswer,
+          sourceBlocks,
+          qaBaseUrl,
+          onEvent,
+          abortSignal
+        });
+      }
       const mergedThinking = [completion.thinking.trim(), split.thinking.trim()].filter((item) => item.length > 0).join("\n\n").trim();
       this.emitQaEvent(onEvent, "generation", `Generation completed (${completion.endpoint})`);
       const sourceList = sourceBlocks.map((item) => ({

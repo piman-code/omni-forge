@@ -1,3 +1,47 @@
+.auto-linker-settings-tab .setting-item {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.auto-linker-settings-tab .setting-item-info {
+  min-width: 260px;
+  flex: 1 1 360px;
+}
+
+.auto-linker-settings-tab .setting-item-control {
+  min-width: 260px;
+  flex: 1 1 380px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.auto-linker-settings-tab .setting-item-name,
+.auto-linker-settings-tab .setting-item-description {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.38;
+}
+
+.auto-linker-bilingual-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auto-linker-bilingual-en {
+  display: block;
+}
+
+.auto-linker-bilingual-ko {
+  display: block;
+  font-size: 0.93em;
+  color: var(--text-muted);
+}
+
 .auto-linker-chat-view {
   padding: 10px;
   height: 100%;
@@ -33,7 +77,7 @@
 
 .auto-linker-chat-header h3 {
   margin: 0 0 6px;
-  font-size: 24px;
+  font-size: clamp(19px, 2.2vw, 25px);
   line-height: 1.2;
   letter-spacing: -0.01em;
 }
@@ -446,16 +490,16 @@
 
 .auto-linker-chat-composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   gap: 8px;
-  align-items: end;
+  align-items: stretch;
   border-top: 1px solid var(--background-modifier-border);
   padding-top: 10px;
 }
 
 .auto-linker-chat-input {
   width: 100%;
-  min-height: 98px;
+  min-height: 112px;
   resize: vertical;
   border-radius: 11px;
   border: 1px solid var(--background-modifier-border);
@@ -470,7 +514,8 @@
 
 .auto-linker-chat-footer {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -487,6 +532,17 @@
 }
 
 @media (max-width: 820px) {
+  .auto-linker-settings-tab .setting-item {
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .auto-linker-settings-tab .setting-item-control,
+  .auto-linker-settings-tab .setting-item-info {
+    min-width: 0;
+    width: 100%;
+  }
+
   .auto-linker-chat-root {
     grid-template-rows: auto auto auto 1fr auto;
   }
@@ -494,10 +550,6 @@
   .auto-linker-chat-model-select {
     min-width: 180px;
     max-width: 240px;
-  }
-
-  .auto-linker-chat-composer {
-    grid-template-columns: 1fr;
   }
 
   .auto-linker-chat-footer {

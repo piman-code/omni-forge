@@ -55,6 +55,8 @@ import type {
   OllamaModelOption,
   ProgressErrorItem,
   ProviderId,
+  QaPipelinePreset,
+  QaRolePreset,
   SemanticCandidatePreview,
   SuggestionAnalysisMeta,
 } from "./types";
@@ -104,6 +106,14 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaPreferredResponseLanguage: "korean",
   qaCustomSystemPrompt: "",
   qaRolePreset: "ask",
+  qaPipelinePreset: "orchestrator_safeguard",
+  qaAskModel: "",
+  qaAskVisionModel: "",
+  qaImageGeneratorModel: "",
+  qaCoderModel: "",
+  qaArchitectModel: "",
+  qaOrchestratorModel: "",
+  qaSafeguardModel: "",
   qaOrchestratorEnabled: false,
   qaSafeguardPassEnabled: false,
   qaIncludeSelectionInventory: true,
@@ -1246,6 +1256,12 @@ interface LocalQaProgressEvent {
 
 type LocalQaResponseIntent = "default" | "comparison" | "plan" | "sources_only";
 type LocalQaEndpointKind = "chat" | "generate";
+type LocalQaPipelineStage =
+  | "orchestrator"
+  | "architect"
+  | "coder"
+  | "debugger"
+  | "safeguard";
 
 interface LocalQaCompletionPayload {
   answer: string;
@@ -1494,7 +1510,7 @@ class LocalQAWorkspaceView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Auto Link Local Chat";
+    return "Auto Link Local Chat / 로컬 채팅";
   }
 
   getIcon(): string {
@@ -1532,8 +1548,8 @@ class LocalQAWorkspaceView extends ItemView {
     this.threadCreatedAt = now.toISOString();
     this.threadPath = null;
     this.syncStatus = this.plugin.isQaThreadAutoSyncEnabledForQa()
-      ? "Auto-sync ready"
-      : "Manual save mode";
+      ? "Auto-sync ready / 자동 동기화 준비"
+      : "Manual save mode / 수동 저장 모드";
     this.refreshThreadMeta();
   }
 
@@ -1544,8 +1560,8 @@ class LocalQAWorkspaceView extends ItemView {
     const threadLabel = this.threadPath
       ? this.threadPath
       : `${this.threadId}.md (pending)`;
-    this.threadInfoEl.setText(`Thread: ${threadLabel}`);
-    this.syncInfoEl.setText(`Sync: ${this.syncStatus}`);
+    this.threadInfoEl.setText(`Thread / 스레드: ${threadLabel}`);
+    this.syncInfoEl.setText(`Sync / 동기화: ${this.syncStatus}`);
   }
 
   private setSyncStatus(next: string): void {
@@ -1560,7 +1576,7 @@ class LocalQAWorkspaceView extends ItemView {
 
     const root = contentEl.createDiv({ cls: "auto-linker-chat-root" });
     const header = root.createDiv({ cls: "auto-linker-chat-header" });
-    header.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
+    header.createEl("h3", { text: "Local AI Chat (Selected Notes) / 로컬 AI 채팅 (선택 노트)" });
     this.scopeEl = header.createDiv({ cls: "auto-linker-chat-scope" });
     const metaRow = header.createDiv({ cls: "auto-linker-chat-meta" });
     this.threadInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-thread-info" });
@@ -1568,41 +1584,41 @@ class LocalQAWorkspaceView extends ItemView {
 
     const actionRow = root.createDiv({ cls: "auto-linker-chat-actions" });
 
-    const newThreadButton = actionRow.createEl("button", { text: "New thread" });
+    const newThreadButton = actionRow.createEl("button", { text: "New thread / 새 스레드" });
     newThreadButton.addClass("auto-linker-chat-btn");
     newThreadButton.onclick = async () => {
       await this.startNewThread();
     };
 
-    const selectButton = actionRow.createEl("button", { text: "Select notes" });
+    const selectButton = actionRow.createEl("button", { text: "Select notes / 노트 선택" });
     selectButton.addClass("auto-linker-chat-btn");
     selectButton.onclick = async () => {
       await this.plugin.openSelectionForQa();
       await this.refreshScopeLabel();
     };
 
-    const cleanupPickerButton = actionRow.createEl("button", { text: "Cleanup keys" });
+    const cleanupPickerButton = actionRow.createEl("button", { text: "Cleanup keys / 정리 키" });
     cleanupPickerButton.addClass("auto-linker-chat-btn");
     cleanupPickerButton.onclick = async () => {
       await this.plugin.openCleanupKeyPickerForQa();
       await this.refreshScopeLabel();
     };
 
-    const cleanupApplyButton = actionRow.createEl("button", { text: "Run cleanup" });
+    const cleanupApplyButton = actionRow.createEl("button", { text: "Run cleanup / 정리 실행" });
     cleanupApplyButton.addClass("auto-linker-chat-btn");
     cleanupApplyButton.onclick = async () => {
       await this.plugin.runCleanupForQa(false);
       await this.refreshScopeLabel();
     };
 
-    const cleanupDryRunButton = actionRow.createEl("button", { text: "Cleanup dry-run" });
+    const cleanupDryRunButton = actionRow.createEl("button", { text: "Cleanup dry-run / 정리 미리보기" });
     cleanupDryRunButton.addClass("auto-linker-chat-btn");
     cleanupDryRunButton.onclick = async () => {
       await this.plugin.runCleanupForQa(true);
       await this.refreshScopeLabel();
     };
 
-    const refreshButton = actionRow.createEl("button", { text: "Refresh scope" });
+    const refreshButton = actionRow.createEl("button", { text: "Refresh scope / 범위 새로고침" });
     refreshButton.addClass("auto-linker-chat-btn");
     refreshButton.onclick = async () => {
       await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
@@ -1610,26 +1626,26 @@ class LocalQAWorkspaceView extends ItemView {
       await this.refreshScopeLabel();
     };
 
-    const folderButton = actionRow.createEl("button", { text: "Chat folder" });
+    const folderButton = actionRow.createEl("button", { text: "Chat folder / 채팅 폴더" });
     folderButton.addClass("auto-linker-chat-btn");
     folderButton.onclick = async () => {
       const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto Link Chats";
-      const next = window.prompt("Chat transcript folder (vault-relative)", current);
+      const next = window.prompt("Chat transcript folder (vault-relative) / 채팅 저장 폴더", current);
       if (next === null) {
         return;
       }
       try {
         await this.plugin.setChatTranscriptRootPathForQa(next);
-        new Notice(`Chat folder set: ${this.plugin.getChatTranscriptRootPathForQa()}`);
+        new Notice(`Chat folder set / 채팅 폴더 설정: ${this.plugin.getChatTranscriptRootPathForQa()}`);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Unknown transcript folder error";
-        new Notice(`Invalid chat folder: ${message}`, 7000);
+        new Notice(`Invalid chat folder / 유효하지 않은 채팅 폴더: ${message}`, 7000);
       }
       await this.refreshScopeLabel();
     };
 
-    const openThreadButton = actionRow.createEl("button", { text: "Open chat note" });
+    const openThreadButton = actionRow.createEl("button", { text: "Open chat note / 채팅 노트 열기" });
     openThreadButton.addClass("auto-linker-chat-btn");
     openThreadButton.onclick = async () => {
       await this.openThreadNote();
@@ -1637,7 +1653,7 @@ class LocalQAWorkspaceView extends ItemView {
 
     const controlRow = root.createDiv({ cls: "auto-linker-chat-controls" });
     const modelWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
-    modelWrap.createEl("label", { text: "Model" });
+    modelWrap.createEl("label", { text: "Model / 모델" });
     this.modelSelect = modelWrap.createEl("select", { cls: "auto-linker-chat-model-select" });
     this.modelSelect.onchange = async () => {
       const next = this.modelSelect.value;
@@ -1646,7 +1662,7 @@ class LocalQAWorkspaceView extends ItemView {
     };
 
     const topKWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
-    topKWrap.createEl("label", { text: "Top sources" });
+    topKWrap.createEl("label", { text: "Top sources / 상위 소스 수" });
     this.topKInput = topKWrap.createEl("input", {
       type: "number",
       cls: "auto-linker-chat-topk-input",
@@ -1667,21 +1683,21 @@ class LocalQAWorkspaceView extends ItemView {
     this.threadEl = root.createDiv({ cls: "auto-linker-chat-thread" });
     this.threadEl.createDiv({
       cls: "auto-linker-chat-empty",
-      text: "질문을 입력해 대화를 시작하세요.",
+      text: "질문을 입력해 대화를 시작하세요. / Ask a question to start.",
     });
 
     const composer = root.createDiv({ cls: "auto-linker-chat-composer" });
     this.inputEl = composer.createEl("textarea", { cls: "auto-linker-chat-input" });
-    this.inputEl.placeholder = "선택된 노트/폴더 범위에서 질문하세요...";
+    this.inputEl.placeholder = "선택 노트/폴더 범위에서 질문하세요... / Ask from selected notes/folders...";
 
     const footer = composer.createDiv({ cls: "auto-linker-chat-footer" });
 
-    this.sendButton = footer.createEl("button", { text: "Send", cls: "mod-cta" });
+    this.sendButton = footer.createEl("button", { text: "Send / 전송", cls: "mod-cta" });
     this.sendButton.addClass("auto-linker-chat-send");
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
     };
-    this.stopButton = footer.createEl("button", { text: "Stop" });
+    this.stopButton = footer.createEl("button", { text: "Stop / 중지" });
     this.stopButton.addClass("auto-linker-chat-stop");
     this.stopButton.disabled = true;
     this.stopButton.onclick = () => {
@@ -1705,7 +1721,7 @@ class LocalQAWorkspaceView extends ItemView {
 
     this.modelSelect.empty();
     this.modelSelect.createEl("option", {
-      text: `Use main model (${fallbackLabel})`,
+      text: `Use main model / 메인 모델 사용 (${fallbackLabel})`,
       value: "__fallback__",
     });
     for (const model of options) {
@@ -1927,12 +1943,12 @@ class LocalQAWorkspaceView extends ItemView {
 
   private async openThreadNote(): Promise<void> {
     if (this.messages.length === 0) {
-      new Notice("No chat messages yet.");
+      new Notice("No chat messages yet. / 아직 채팅 메시지가 없습니다.");
       return;
     }
     await this.flushThreadSync(true);
     if (!this.threadPath) {
-      new Notice("Thread note is not ready yet.");
+      new Notice("Thread note is not ready yet. / 스레드 노트가 아직 준비되지 않았습니다.");
       return;
     }
     const target = this.app.vault.getAbstractFileByPath(this.threadPath);
@@ -1940,7 +1956,7 @@ class LocalQAWorkspaceView extends ItemView {
       await this.app.workspace.getLeaf(true).openFile(target);
       return;
     }
-    new Notice(`Thread note not found: ${this.threadPath}`, 7000);
+    new Notice(`Thread note not found / 스레드 노트 없음: ${this.threadPath}`, 7000);
   }
 
   private renderSourceLink(parent: HTMLElement, source: LocalQASourceItem): void {
@@ -1974,7 +1990,7 @@ class LocalQAWorkspaceView extends ItemView {
     if (this.messages.length === 0) {
       this.threadEl.createDiv({
         cls: "auto-linker-chat-empty",
-        text: "질문을 입력해 대화를 시작하세요.",
+        text: "질문을 입력해 대화를 시작하세요. / Ask a question to start.",
       });
       return;
     }
@@ -1992,10 +2008,10 @@ class LocalQAWorkspaceView extends ItemView {
       head.createEl("strong", {
         text:
           message.role === "assistant"
-            ? "Assistant"
+            ? "Assistant / 어시스턴트"
             : message.role === "user"
-              ? "You"
-              : "System",
+              ? "You / 사용자"
+              : "System / 시스템",
       });
       head.createEl("small", {
         text: this.formatTime(message.timestamp),
@@ -2014,7 +2030,7 @@ class LocalQAWorkspaceView extends ItemView {
         const src = box.createDiv({ cls: "auto-linker-chat-sources" });
         src.createDiv({
           cls: "auto-linker-chat-sources-title",
-          text: `Sources (${message.sources.length})`,
+          text: `Sources / 출처 (${message.sources.length})`,
         });
         for (const source of message.sources) {
           this.renderSourceLink(src, source);
@@ -2060,10 +2076,15 @@ class LocalQAWorkspaceView extends ItemView {
     const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
     const model = this.plugin.getQaModelLabelForQa();
     const embedding = this.plugin.getQaEmbeddingModelForQa();
-    const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "auto" : "manual";
-    const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set)";
+    const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa()
+      ? "auto / 자동"
+      : "manual / 수동";
+    const pipeline = this.plugin.settings.qaPipelinePreset
+      .replace(/_/g, " -> ")
+      .replace("legacy -> auto", "legacy_auto");
+    const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set / 미설정)";
     this.scopeEl.setText(
-      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"} | sync=${syncMode} | chats=${chatFolder}`,
+      `Scope / 범위: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set / 미설정)"} | pipeline=${pipeline} | sync=${syncMode} | chats=${chatFolder}`,
     );
   }
 
@@ -2073,7 +2094,7 @@ class LocalQAWorkspaceView extends ItemView {
     }
     const question = this.inputEl.value.trim();
     if (!question) {
-      new Notice("Question is empty.");
+      new Notice("Question is empty. / 질문이 비어 있습니다.");
       return;
     }
 
@@ -2361,6 +2382,14 @@ const SETTINGS_NAME_KO_MAP: Readonly<Record<string, string>> = {
   "Semantic source max chars": "시맨틱 소스 최대 문자 수",
   "Q&A Ollama base URL": "Q&A Ollama 기본 URL",
   "Q&A model": "Q&A 모델",
+  "Q&A pipeline preset": "Q&A 파이프라인 프리셋",
+  "Ask model (text)": "Ask 모델(텍스트)",
+  "Ask model (vision)": "Ask 모델(비전)",
+  "Image generator model": "이미지 생성 모델",
+  "Coder model": "Coder 모델",
+  "Architect model": "Architect 모델",
+  "Orchestrator model": "Orchestrator 모델",
+  "Safeguard model": "Safeguard 모델",
   "Prefer Ollama /api/chat (with fallback)": "Ollama /api/chat 우선(폴백 포함)",
   "Chat transcript folder path": "채팅 기록 폴더 경로",
   "Auto-sync chat thread": "채팅 스레드 자동 동기화",
@@ -2398,6 +2427,10 @@ const SETTINGS_DESC_KO_MAP: Readonly<Record<string, string>> = {
   "Trim note text before embedding to keep local runs fast.": "로컬 실행 성능을 위해 임베딩 전 노트 텍스트 길이를 제한합니다.",
   "Leave empty to use main Ollama base URL.": "비워두면 메인 Ollama 기본 URL을 사용합니다.",
   "Leave empty to use main analysis model.": "비워두면 메인 분석 모델을 사용합니다.",
+  "Select execution pipeline for post-generation passes.": "생성 후 후처리 패스의 실행 파이프라인을 선택합니다.",
+  "Optional role-specific model. Empty uses Q&A model as fallback.": "역할 전용 모델(선택)입니다. 비우면 Q&A 모델을 사용합니다.",
+  "Used when role preset is Ask (vision). Text-only for now, image input support is planned.": "Ask(비전) 프리셋에서 사용합니다. 현재는 텍스트 중심이며 이미지 입력 지원은 추후 확장 예정입니다.",
+  "Reserved for image-generation workflows. Current chat UI is text-first.": "이미지 생성 워크플로용 예약 모델입니다. 현재 채팅 UI는 텍스트 중심입니다.",
   "Use role-based chat first, then fallback to /api/generate when unavailable.": "역할 기반 /api/chat을 우선 사용하고, 불가하면 /api/generate로 폴백합니다.",
   "Vault-relative path for saving chat transcripts.": "채팅 기록 저장용 vault-relative 경로입니다.",
   "When enabled, the current chat thread is continuously saved and updated as messages change.": "활성화하면 현재 채팅 스레드를 메시지 변경에 맞춰 계속 저장/동기화합니다.",
@@ -2434,6 +2467,21 @@ function toKoreanBilingualLabel(
   return `${normalized} / ${translated}`;
 }
 
+function toKoreanBilingualParts(
+  originalText: string | null | undefined,
+  translationMap: Readonly<Record<string, string>>,
+): { en: string; ko: string } | null {
+  const normalized = originalText?.trim() ?? "";
+  if (!normalized || normalized.includes(" / ")) {
+    return null;
+  }
+  const translated = translationMap[normalized];
+  if (!translated) {
+    return null;
+  }
+  return { en: normalized, ko: translated };
+}
+
 class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private readonly plugin: KnowledgeWeaverPlugin;
 
@@ -2445,6 +2493,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    containerEl.addClass("auto-linker-settings-tab");
     containerEl.createEl("h2", { text: "Auto Link Settings / Auto Link 설정" });
 
     containerEl.createEl("p", {
@@ -3122,6 +3171,8 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .addDropdown((dropdown) =>
         dropdown
           .addOption("ask", "Ask (default / 기본)")
+          .addOption("ask_vision", "Ask (vision / 비전)")
+          .addOption("image_generator", "Image generator / 이미지 생성")
           .addOption("orchestrator", "Orchestrator / 오케스트레이터")
           .addOption("coder", "Coder / 코더")
           .addOption("debugger", "Debugger / 디버거")
@@ -3129,40 +3180,159 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .addOption("safeguard", "Safeguard (security / 보안)")
           .setValue(this.plugin.settings.qaRolePreset)
           .onChange(async (value) => {
-            this.plugin.settings.qaRolePreset = value as
-              | "ask"
-              | "orchestrator"
-              | "coder"
-              | "debugger"
-              | "architect"
-              | "safeguard";
+            this.plugin.settings.qaRolePreset = value as QaRolePreset;
             await this.plugin.saveSettings();
           }),
       );
 
     new Setting(containerEl)
-      .setName("Enable orchestrator pipeline / 오케스트레이터 파이프라인")
-      .setDesc("Use an orchestration rewrite pass for planning/report/PPT/game-style tasks. / 계획서·보고서·PPT·게임 과제에 추가 정리 패스를 적용")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.qaOrchestratorEnabled)
+      .setName("Q&A pipeline preset")
+      .setDesc("Select execution pipeline for post-generation passes.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption(
+            "orchestrator_safeguard",
+            "Orchestrator -> Safeguard (default / 기본)",
+          )
+          .addOption(
+            "orchestrator_coder_safeguard",
+            "Orchestrator -> Coder -> Safeguard",
+          )
+          .addOption(
+            "orchestrator_architect_safeguard",
+            "Orchestrator -> Architect -> Safeguard",
+          )
+          .addOption(
+            "orchestrator_architect_coder_safeguard",
+            "Orchestrator -> Architect -> Coder -> Safeguard",
+          )
+          .addOption("legacy_auto", "Legacy auto (기존 자동 규칙)")
+          .setValue(this.plugin.settings.qaPipelinePreset)
           .onChange(async (value) => {
-            this.plugin.settings.qaOrchestratorEnabled = value;
+            this.plugin.settings.qaPipelinePreset = value as QaPipelinePreset;
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Ask model (text)")
+      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
+      .addText((text) =>
+        text
+          .setPlaceholder("qwen3:14b")
+          .setValue(this.plugin.settings.qaAskModel)
+          .onChange(async (value) => {
+            this.plugin.settings.qaAskModel = value.trim();
             await this.plugin.saveSettings();
           }),
       );
 
     new Setting(containerEl)
-      .setName("Enable safeguard verification / 세이프가드 검증")
-      .setDesc("Run a final factual/safety consistency pass against sources before returning answer. / 출처 기준 사실·보안 일관성 최종 점검")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.qaSafeguardPassEnabled)
+      .setName("Ask model (vision)")
+      .setDesc(
+        "Used when role preset is Ask (vision). Text-only for now, image input support is planned.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("llama3.2-vision:11b")
+          .setValue(this.plugin.settings.qaAskVisionModel)
           .onChange(async (value) => {
-            this.plugin.settings.qaSafeguardPassEnabled = value;
+            this.plugin.settings.qaAskVisionModel = value.trim();
             await this.plugin.saveSettings();
           }),
       );
+
+    new Setting(containerEl)
+      .setName("Image generator model")
+      .setDesc("Reserved for image-generation workflows. Current chat UI is text-first.")
+      .addText((text) =>
+        text
+          .setPlaceholder("flux.1-dev")
+          .setValue(this.plugin.settings.qaImageGeneratorModel)
+          .onChange(async (value) => {
+            this.plugin.settings.qaImageGeneratorModel = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Coder model")
+      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
+      .addText((text) =>
+        text
+          .setPlaceholder("qwen3-coder:30b")
+          .setValue(this.plugin.settings.qaCoderModel)
+          .onChange(async (value) => {
+            this.plugin.settings.qaCoderModel = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Architect model")
+      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
+      .addText((text) =>
+        text
+          .setPlaceholder("qwen3:32b")
+          .setValue(this.plugin.settings.qaArchitectModel)
+          .onChange(async (value) => {
+            this.plugin.settings.qaArchitectModel = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Orchestrator model")
+      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
+      .addText((text) =>
+        text
+          .setPlaceholder("qwen3:32b")
+          .setValue(this.plugin.settings.qaOrchestratorModel)
+          .onChange(async (value) => {
+            this.plugin.settings.qaOrchestratorModel = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Safeguard model")
+      .setDesc("Optional role-specific model. Empty uses Q&A model as fallback.")
+      .addText((text) =>
+        text
+          .setPlaceholder("qwen3:14b")
+          .setValue(this.plugin.settings.qaSafeguardModel)
+          .onChange(async (value) => {
+            this.plugin.settings.qaSafeguardModel = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    if (this.plugin.settings.qaPipelinePreset === "legacy_auto") {
+      new Setting(containerEl)
+        .setName("Enable orchestrator pipeline / 오케스트레이터 파이프라인")
+        .setDesc("Use an orchestration rewrite pass for planning/report/PPT/game-style tasks. / 계획서·보고서·PPT·게임 과제에 추가 정리 패스를 적용")
+        .addToggle((toggle) =>
+          toggle
+            .setValue(this.plugin.settings.qaOrchestratorEnabled)
+            .onChange(async (value) => {
+              this.plugin.settings.qaOrchestratorEnabled = value;
+              await this.plugin.saveSettings();
+            }),
+        );
+
+      new Setting(containerEl)
+        .setName("Enable safeguard verification / 세이프가드 검증")
+        .setDesc("Run a final factual/safety consistency pass against sources before returning answer. / 출처 기준 사실·보안 일관성 최종 점검")
+        .addToggle((toggle) =>
+          toggle
+            .setValue(this.plugin.settings.qaSafeguardPassEnabled)
+            .onChange(async (value) => {
+              this.plugin.settings.qaSafeguardPassEnabled = value;
+              await this.plugin.saveSettings();
+            }),
+        );
+    }
 
     new Setting(containerEl)
       .setName("Custom system prompt / 사용자 시스템 프롬프트")
@@ -3541,17 +3711,35 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
 
     const nameEls = containerEl.querySelectorAll<HTMLElement>(".setting-item-name");
     for (const nameEl of Array.from(nameEls)) {
-      const localized = toKoreanBilingualLabel(nameEl.textContent, SETTINGS_NAME_KO_MAP);
+      const localized = toKoreanBilingualParts(nameEl.textContent, SETTINGS_NAME_KO_MAP);
       if (localized) {
-        nameEl.textContent = localized;
+        nameEl.empty();
+        nameEl.addClass("auto-linker-bilingual-field");
+        nameEl.createSpan({
+          text: localized.en,
+          cls: "auto-linker-bilingual-en",
+        });
+        nameEl.createSpan({
+          text: localized.ko,
+          cls: "auto-linker-bilingual-ko",
+        });
       }
     }
 
     const descEls = containerEl.querySelectorAll<HTMLElement>(".setting-item-description");
     for (const descEl of Array.from(descEls)) {
-      const localized = toKoreanBilingualLabel(descEl.textContent, SETTINGS_DESC_KO_MAP);
+      const localized = toKoreanBilingualParts(descEl.textContent, SETTINGS_DESC_KO_MAP);
       if (localized) {
-        descEl.textContent = localized;
+        descEl.empty();
+        descEl.addClass("auto-linker-bilingual-field");
+        descEl.createSpan({
+          text: localized.en,
+          cls: "auto-linker-bilingual-en",
+        });
+        descEl.createSpan({
+          text: localized.ko,
+          cls: "auto-linker-bilingual-ko",
+        });
       }
     }
   }
@@ -3790,7 +3978,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   }
 
   getQaModelLabelForQa(): string {
-    return this.resolveQaModel() || "(not set)";
+    return this.resolveQaModelForRole(this.resolveQaPrimaryRole()) || "(not set)";
   }
 
   getQaEmbeddingModelForQa(): string {
@@ -4303,6 +4491,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
     if (
       this.settings.qaRolePreset !== "ask" &&
+      this.settings.qaRolePreset !== "ask_vision" &&
+      this.settings.qaRolePreset !== "image_generator" &&
       this.settings.qaRolePreset !== "orchestrator" &&
       this.settings.qaRolePreset !== "coder" &&
       this.settings.qaRolePreset !== "debugger" &&
@@ -4310,6 +4500,36 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       this.settings.qaRolePreset !== "safeguard"
     ) {
       this.settings.qaRolePreset = DEFAULT_SETTINGS.qaRolePreset;
+    }
+    if (
+      this.settings.qaPipelinePreset !== "orchestrator_safeguard" &&
+      this.settings.qaPipelinePreset !== "orchestrator_coder_safeguard" &&
+      this.settings.qaPipelinePreset !== "orchestrator_architect_safeguard" &&
+      this.settings.qaPipelinePreset !== "orchestrator_architect_coder_safeguard" &&
+      this.settings.qaPipelinePreset !== "legacy_auto"
+    ) {
+      this.settings.qaPipelinePreset = DEFAULT_SETTINGS.qaPipelinePreset;
+    }
+    if (typeof this.settings.qaAskModel !== "string") {
+      this.settings.qaAskModel = DEFAULT_SETTINGS.qaAskModel;
+    }
+    if (typeof this.settings.qaAskVisionModel !== "string") {
+      this.settings.qaAskVisionModel = DEFAULT_SETTINGS.qaAskVisionModel;
+    }
+    if (typeof this.settings.qaImageGeneratorModel !== "string") {
+      this.settings.qaImageGeneratorModel = DEFAULT_SETTINGS.qaImageGeneratorModel;
+    }
+    if (typeof this.settings.qaCoderModel !== "string") {
+      this.settings.qaCoderModel = DEFAULT_SETTINGS.qaCoderModel;
+    }
+    if (typeof this.settings.qaArchitectModel !== "string") {
+      this.settings.qaArchitectModel = DEFAULT_SETTINGS.qaArchitectModel;
+    }
+    if (typeof this.settings.qaOrchestratorModel !== "string") {
+      this.settings.qaOrchestratorModel = DEFAULT_SETTINGS.qaOrchestratorModel;
+    }
+    if (typeof this.settings.qaSafeguardModel !== "string") {
+      this.settings.qaSafeguardModel = DEFAULT_SETTINGS.qaSafeguardModel;
     }
     if (typeof this.settings.qaOrchestratorEnabled !== "boolean") {
       this.settings.qaOrchestratorEnabled = DEFAULT_SETTINGS.qaOrchestratorEnabled;
@@ -4842,9 +5062,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   }
 
   private resolveQaModel(): string {
-    const qa = this.settings.qaOllamaModel.trim();
-    const fallback = this.settings.ollamaModel.trim();
-    return qa || fallback;
+    return this.resolveQaModelForRole(this.resolveQaPrimaryRole());
   }
 
   private trimTextForContext(source: string, maxChars: number): string {
@@ -5323,7 +5541,40 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       .test(normalized);
   }
 
-  private shouldRunOrchestratorPass(
+  private resolveQaPrimaryRole(): QaRolePreset {
+    return this.settings.qaRolePreset;
+  }
+
+  private getQaRoleModelOverride(role: QaRolePreset): string {
+    switch (role) {
+      case "ask":
+        return this.settings.qaAskModel;
+      case "ask_vision":
+        return this.settings.qaAskVisionModel;
+      case "image_generator":
+        return this.settings.qaImageGeneratorModel;
+      case "coder":
+      case "debugger":
+        return this.settings.qaCoderModel;
+      case "architect":
+        return this.settings.qaArchitectModel;
+      case "orchestrator":
+        return this.settings.qaOrchestratorModel;
+      case "safeguard":
+        return this.settings.qaSafeguardModel;
+      default:
+        return "";
+    }
+  }
+
+  private resolveQaModelForRole(role: QaRolePreset): string {
+    const roleModel = this.getQaRoleModelOverride(role).trim();
+    const qa = this.settings.qaOllamaModel.trim();
+    const fallback = this.settings.ollamaModel.trim();
+    return roleModel || qa || fallback;
+  }
+
+  private shouldRunOrchestratorPassLegacy(
     question: string,
     intent: LocalQaResponseIntent,
   ): boolean {
@@ -5336,7 +5587,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return this.isOrchestrationTask(question, intent);
   }
 
-  private shouldRunSafeguardPass(
+  private shouldRunSafeguardPassLegacy(
     question: string,
     intent: LocalQaResponseIntent,
   ): boolean {
@@ -5354,16 +5605,54 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       .test(normalized);
   }
 
-  private shouldRunRolePresetRefinement(): boolean {
-    return (
-      this.settings.qaRolePreset === "coder" ||
-      this.settings.qaRolePreset === "architect" ||
-      this.settings.qaRolePreset === "debugger"
-    );
+  private shouldRunRolePresetRefinementForRole(role: QaRolePreset): boolean {
+    return role === "coder" || role === "architect" || role === "debugger";
   }
 
-  private buildRolePresetRefinementInstruction(): string {
-    switch (this.settings.qaRolePreset) {
+  private resolveLegacyAutoPipelineStages(
+    question: string,
+    intent: LocalQaResponseIntent,
+  ): LocalQaPipelineStage[] {
+    const stages: LocalQaPipelineStage[] = [];
+    if (this.shouldRunRolePresetRefinementForRole(this.settings.qaRolePreset)) {
+      if (this.settings.qaRolePreset === "architect") {
+        stages.push("architect");
+      } else if (this.settings.qaRolePreset === "debugger") {
+        stages.push("debugger");
+      } else {
+        stages.push("coder");
+      }
+    }
+    if (this.shouldRunOrchestratorPassLegacy(question, intent)) {
+      stages.push("orchestrator");
+    }
+    if (this.shouldRunSafeguardPassLegacy(question, intent)) {
+      stages.push("safeguard");
+    }
+    return [...new Set(stages)];
+  }
+
+  private resolveQaPipelineStages(
+    question: string,
+    intent: LocalQaResponseIntent,
+  ): LocalQaPipelineStage[] {
+    switch (this.settings.qaPipelinePreset) {
+      case "orchestrator_safeguard":
+        return ["orchestrator", "safeguard"];
+      case "orchestrator_coder_safeguard":
+        return ["orchestrator", "coder", "safeguard"];
+      case "orchestrator_architect_safeguard":
+        return ["orchestrator", "architect", "safeguard"];
+      case "orchestrator_architect_coder_safeguard":
+        return ["orchestrator", "architect", "coder", "safeguard"];
+      case "legacy_auto":
+      default:
+        return this.resolveLegacyAutoPipelineStages(question, intent);
+    }
+  }
+
+  private buildRolePresetRefinementInstruction(role: QaRolePreset): string {
+    switch (role) {
       case "coder":
         return "Refine draft as a Coder: produce implementation-ready steps, concrete code/data structure guidance, and verification checklist.";
       case "architect":
@@ -5375,8 +5664,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
   }
 
-  private getQaRolePresetInstruction(): string {
-    switch (this.settings.qaRolePreset) {
+  private getQaRolePresetInstruction(role: QaRolePreset): string {
+    switch (role) {
       case "orchestrator":
         return "Role preset: Orchestrator. Break work into phases, dependencies, risks, and clear execution order.";
       case "coder":
@@ -5387,6 +5676,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         return "Role preset: Architect. Emphasize system design trade-offs, interfaces, scalability, and maintainability.";
       case "safeguard":
         return "Role preset: Safeguard. Prioritize security, privacy, and failure-mode analysis before recommendations.";
+      case "ask_vision":
+        return "Role preset: Ask (Vision). Prefer descriptions suitable for image-aware models while staying source-grounded.";
+      case "image_generator":
+        return "Role preset: Image generator. Describe prompts/specs for image generation, but keep claims grounded in sources.";
       case "ask":
       default:
         return "Role preset: Ask. Balanced assistant mode with concise, useful structure.";
@@ -5409,6 +5702,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     intent: LocalQaResponseIntent,
     preferDetailed: boolean,
   ): string {
+    const role = this.resolveQaPrimaryRole();
     const toneLine = preferDetailed
       ? "Keep tone natural, direct, and sufficiently detailed."
       : "Keep tone natural, direct, and concise.";
@@ -5416,7 +5710,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       "You are a local-note assistant for Obsidian.",
       "Answer only from the provided sources.",
       this.getQaPreferredLanguageInstruction(),
-      this.getQaRolePresetInstruction(),
+      this.getQaRolePresetInstruction(role),
       toneLine,
       "Output in markdown.",
       "When making claims, cite source paths inline in parentheses.",
@@ -5853,31 +6147,41 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return answer;
   }
 
-  private async applyOrchestratorPassIfNeeded(params: {
+  private resolvePassModelOrWarn(
+    role: QaRolePreset,
+    onEvent?: (event: LocalQaProgressEvent) => void,
+  ): string | null {
+    const model = this.resolveQaModelForRole(role).trim();
+    if (!model) {
+      this.emitQaEvent(onEvent, "warning", `Skipping ${role} pass: model is empty`);
+      return null;
+    }
+    if (!isOllamaModelAnalyzable(model)) {
+      this.emitQaEvent(
+        onEvent,
+        "warning",
+        `Skipping ${role} pass: model is not suitable (${model})`,
+      );
+      return null;
+    }
+    return model;
+  }
+
+  private async applyOrchestratorPass(params: {
     question: string;
-    intent: LocalQaResponseIntent;
     answer: string;
     sourceBlocks: Array<{ path: string; similarity: number; content: string }>;
     qaBaseUrl: string;
-    qaModel: string;
     onEvent?: (event: LocalQaProgressEvent) => void;
     abortSignal?: AbortSignal;
   }): Promise<string> {
-    const {
-      question,
-      intent,
-      answer,
-      sourceBlocks,
-      qaBaseUrl,
-      qaModel,
-      onEvent,
-      abortSignal,
-    } = params;
-    if (!this.shouldRunOrchestratorPass(question, intent)) {
+    const { question, answer, sourceBlocks, qaBaseUrl, onEvent, abortSignal } = params;
+    const passModel = this.resolvePassModelOrWarn("orchestrator", onEvent);
+    if (!passModel) {
       return answer;
     }
 
-    this.emitQaEvent(onEvent, "generation", "Running orchestrator pass");
+    this.emitQaEvent(onEvent, "generation", `Running orchestrator pass (${passModel})`);
     const systemPrompt = [
       "You are an orchestration editor for local-note answers.",
       "Task: convert draft into execution-ready output without inventing facts.",
@@ -5905,7 +6209,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     try {
       const improved = await this.requestLocalQaCompletion({
         qaBaseUrl,
-        qaModel,
+        qaModel: passModel,
         systemPrompt,
         userPrompt,
         history: [],
@@ -5929,27 +6233,27 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
   }
 
-  private async applyRolePresetRefinementIfNeeded(params: {
+  private async applyRolePresetRefinementPass(params: {
+    role: "coder" | "architect" | "debugger";
     question: string;
     answer: string;
     sourceBlocks: Array<{ path: string; similarity: number; content: string }>;
     qaBaseUrl: string;
-    qaModel: string;
     onEvent?: (event: LocalQaProgressEvent) => void;
     abortSignal?: AbortSignal;
   }): Promise<string> {
-    const { question, answer, sourceBlocks, qaBaseUrl, qaModel, onEvent, abortSignal } = params;
-    if (!this.shouldRunRolePresetRefinement()) {
+    const { role, question, answer, sourceBlocks, qaBaseUrl, onEvent, abortSignal } = params;
+    const passModel = this.resolvePassModelOrWarn(role, onEvent);
+    if (!passModel) {
       return answer;
     }
 
-    const roleLabel = this.settings.qaRolePreset;
-    this.emitQaEvent(onEvent, "generation", `Running ${roleLabel} refinement`);
+    this.emitQaEvent(onEvent, "generation", `Running ${role} refinement (${passModel})`);
     const systemPrompt = [
       "You are a role-specialized editor for local-note answers.",
       "Keep output factual and grounded in provided sources.",
       "Do not invent facts. Mark uncertain points as '정보 부족'.",
-      this.buildRolePresetRefinementInstruction(),
+      this.buildRolePresetRefinementInstruction(role),
       "Return markdown only.",
     ].join("\n");
     const userPrompt = [
@@ -5965,7 +6269,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     try {
       const rewritten = await this.requestLocalQaCompletion({
         qaBaseUrl,
-        qaModel,
+        qaModel: passModel,
         systemPrompt,
         userPrompt,
         history: [],
@@ -5974,48 +6278,38 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       const split = splitThinkingBlocks(rewritten.answer);
       const normalized = split.answer.trim() || rewritten.answer.trim();
       if (normalized.length > 0) {
-        this.emitQaEvent(onEvent, "generation", `${roleLabel} refinement applied`);
+        this.emitQaEvent(onEvent, "generation", `${role} refinement applied`);
         return normalized;
       }
-      this.emitQaEvent(onEvent, "warning", `${roleLabel} refinement returned empty output`);
+      this.emitQaEvent(onEvent, "warning", `${role} refinement returned empty output`);
       return answer;
     } catch (error) {
       if (this.isAbortError(error)) {
         throw error;
       }
       const message = error instanceof Error ? error.message : "Unknown role refinement error";
-      this.emitQaEvent(onEvent, "warning", `${roleLabel} refinement failed`, {
+      this.emitQaEvent(onEvent, "warning", `${role} refinement failed`, {
         detail: message,
       });
       return answer;
     }
   }
 
-  private async applySafeguardPassIfNeeded(params: {
+  private async applySafeguardPass(params: {
     question: string;
-    intent: LocalQaResponseIntent;
     answer: string;
     sourceBlocks: Array<{ path: string; similarity: number; content: string }>;
     qaBaseUrl: string;
-    qaModel: string;
     onEvent?: (event: LocalQaProgressEvent) => void;
     abortSignal?: AbortSignal;
   }): Promise<string> {
-    const {
-      question,
-      intent,
-      answer,
-      sourceBlocks,
-      qaBaseUrl,
-      qaModel,
-      onEvent,
-      abortSignal,
-    } = params;
-    if (!this.shouldRunSafeguardPass(question, intent)) {
+    const { question, answer, sourceBlocks, qaBaseUrl, onEvent, abortSignal } = params;
+    const passModel = this.resolvePassModelOrWarn("safeguard", onEvent);
+    if (!passModel) {
       return answer;
     }
 
-    this.emitQaEvent(onEvent, "generation", "Running safeguard verification");
+    this.emitQaEvent(onEvent, "generation", `Running safeguard verification (${passModel})`);
     const systemPrompt = [
       "You are a safeguard verifier for local-note answers.",
       "Validate draft strictly against provided source excerpts.",
@@ -6038,7 +6332,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     try {
       const verified = await this.requestLocalQaCompletion({
         qaBaseUrl,
-        qaModel,
+        qaModel: passModel,
         systemPrompt,
         userPrompt,
         history: [],
@@ -6100,7 +6394,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       );
     }
 
-    const qaModel = this.resolveQaModel();
+    const primaryRole = this.resolveQaPrimaryRole();
+    const qaModel = this.resolveQaModelForRole(primaryRole);
     if (!qaModel) {
       throw new Error("Q&A model is empty.");
     }
@@ -6256,35 +6551,47 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         onEvent,
       });
 
-      finalAnswer = await this.applyRolePresetRefinementIfNeeded({
-        question: safeQuestion,
-        answer: finalAnswer,
-        sourceBlocks,
-        qaBaseUrl,
-        qaModel,
-        onEvent,
-        abortSignal,
-      });
-      finalAnswer = await this.applyOrchestratorPassIfNeeded({
-        question: safeQuestion,
-        intent,
-        answer: finalAnswer,
-        sourceBlocks,
-        qaBaseUrl,
-        qaModel,
-        onEvent,
-        abortSignal,
-      });
-      finalAnswer = await this.applySafeguardPassIfNeeded({
-        question: safeQuestion,
-        intent,
-        answer: finalAnswer,
-        sourceBlocks,
-        qaBaseUrl,
-        qaModel,
-        onEvent,
-        abortSignal,
-      });
+      const pipelineStages = this.resolveQaPipelineStages(safeQuestion, intent);
+      if (pipelineStages.length > 0) {
+        this.emitQaEvent(
+          onEvent,
+          "generation",
+          `Pipeline: ${pipelineStages.join(" -> ")}`,
+        );
+      }
+      for (const stage of pipelineStages) {
+        if (stage === "orchestrator") {
+          finalAnswer = await this.applyOrchestratorPass({
+            question: safeQuestion,
+            answer: finalAnswer,
+            sourceBlocks,
+            qaBaseUrl,
+            onEvent,
+            abortSignal,
+          });
+          continue;
+        }
+        if (stage === "safeguard") {
+          finalAnswer = await this.applySafeguardPass({
+            question: safeQuestion,
+            answer: finalAnswer,
+            sourceBlocks,
+            qaBaseUrl,
+            onEvent,
+            abortSignal,
+          });
+          continue;
+        }
+        finalAnswer = await this.applyRolePresetRefinementPass({
+          role: stage,
+          question: safeQuestion,
+          answer: finalAnswer,
+          sourceBlocks,
+          qaBaseUrl,
+          onEvent,
+          abortSignal,
+        });
+      }
 
       const mergedThinking = [completion.thinking.trim(), split.thinking.trim()]
         .filter((item) => item.length > 0)

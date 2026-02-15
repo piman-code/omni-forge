@@ -106,6 +106,23 @@ export interface ProgressErrorItem {
   message: string;
 }
 
+export type QaRolePreset =
+  | "ask"
+  | "ask_vision"
+  | "image_generator"
+  | "orchestrator"
+  | "coder"
+  | "debugger"
+  | "architect"
+  | "safeguard";
+
+export type QaPipelinePreset =
+  | "orchestrator_safeguard"
+  | "orchestrator_coder_safeguard"
+  | "orchestrator_architect_safeguard"
+  | "orchestrator_architect_coder_safeguard"
+  | "legacy_auto";
+
 export interface KnowledgeWeaverSettings {
   provider: ProviderId;
   ollamaBaseUrl: string;
@@ -150,13 +167,15 @@ export interface KnowledgeWeaverSettings {
   qaMinAnswerChars: number;
   qaPreferredResponseLanguage: "auto" | "korean" | "english";
   qaCustomSystemPrompt: string;
-  qaRolePreset:
-    | "ask"
-    | "orchestrator"
-    | "coder"
-    | "debugger"
-    | "architect"
-    | "safeguard";
+  qaRolePreset: QaRolePreset;
+  qaPipelinePreset: QaPipelinePreset;
+  qaAskModel: string;
+  qaAskVisionModel: string;
+  qaImageGeneratorModel: string;
+  qaCoderModel: string;
+  qaArchitectModel: string;
+  qaOrchestratorModel: string;
+  qaSafeguardModel: string;
   qaOrchestratorEnabled: boolean;
   qaSafeguardPassEnabled: boolean;
   qaIncludeSelectionInventory: boolean;

@@ -2,6 +2,36 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.16] - 2026-02-15
+
+### Added
+
+- Added role-specific local model settings for Local Q&A:
+  - `Ask model (text)`
+  - `Ask model (vision)`
+  - `Image generator model`
+  - `Coder model`
+  - `Architect model`
+  - `Orchestrator model`
+  - `Safeguard model`
+- Added Q&A pipeline preset selector:
+  - `Orchestrator -> Safeguard` (default)
+  - `Orchestrator -> Coder -> Safeguard`
+  - `Orchestrator -> Architect -> Safeguard`
+  - `Orchestrator -> Architect -> Coder -> Safeguard`
+  - `Legacy auto` (previous behavior)
+
+### Changed
+
+- Local Q&A pipeline execution now applies stage-specific models when configured.
+- Settings bilingual rendering now uses stacked EN/KO lines with improved wrapping to avoid clipped/misaligned text.
+- Local chat panel labels/buttons/placeholders were expanded with EN/KO bilingual text.
+- Chat composer layout was adjusted so the input area uses full width and no longer appears narrow/shifted.
+
+### Security
+
+- Re-ran full release security and integrity checks while keeping local-endpoint-first policy unchanged.
+
 ## [0.2.15] - 2026-02-15
 
 ### Added
