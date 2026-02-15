@@ -68,7 +68,40 @@ function toSingleString(value: unknown): string | undefined {
 }
 
 export function normalizeTag(rawTag: string): string {
-  return rawTag.trim().replace(/^#+/, "").replace(/\s+/g, "-");
+  const normalized = rawTag
+    .trim()
+    .replace(/^#+/, "")
+    .replace(/\s+/g, "-")
+    .replace(/[`"'\\]+/g, "");
+
+  if (!normalized) {
+    return "";
+  }
+
+  const lower = normalized.toLowerCase();
+  const looksLikePath =
+    normalized.startsWith("/") ||
+    normalized.startsWith("./") ||
+    normalized.startsWith("../") ||
+    /^[A-Za-z]:[\\/]/.test(normalized) ||
+    /^\/(usr|bin|sbin|etc|opt|var|tmp|home|users)\//i.test(lower) ||
+    lower.startsWith("usr/bin/") ||
+    lower.includes("/usr/bin/env");
+  const looksLikeCode =
+    normalized.startsWith("!") ||
+    normalized.startsWith("#!") ||
+    normalized.includes("://") ||
+    /[{}()[\];|<>$]/.test(normalized);
+
+  if (looksLikePath || looksLikeCode || normalized.length > 64) {
+    return "";
+  }
+
+  if (!/[0-9A-Za-z가-힣]/.test(normalized)) {
+    return "";
+  }
+
+  return normalized;
 }
 
 export function normalizeTags(tags: string[]): string[] {

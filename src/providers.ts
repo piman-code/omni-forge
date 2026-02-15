@@ -122,6 +122,7 @@ function buildPrompt(request: AnalyzeRequest): string {
     "Rules:",
     "- linked MUST only contain values from the candidate list exactly.",
     "- Keep tags concise. No leading #.",
+    "- Tags must be conceptual topics only (no shell commands, file paths, shebangs, URLs, or code snippets).",
     "- topic should be one short phrase.",
     "- index should be one category label.",
     `- max tags: ${request.maxTags}`,

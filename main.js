@@ -59,7 +59,20 @@ function toSingleString(value) {
   return normalized.length > 0 ? normalized : void 0;
 }
 function normalizeTag(rawTag) {
-  return rawTag.trim().replace(/^#+/, "").replace(/\s+/g, "-");
+  const normalized = rawTag.trim().replace(/^#+/, "").replace(/\s+/g, "-").replace(/[`"'\\]+/g, "");
+  if (!normalized) {
+    return "";
+  }
+  const lower = normalized.toLowerCase();
+  const looksLikePath = normalized.startsWith("/") || normalized.startsWith("./") || normalized.startsWith("../") || /^[A-Za-z]:[\\/]/.test(normalized) || /^\/(usr|bin|sbin|etc|opt|var|tmp|home|users)\//i.test(lower) || lower.startsWith("usr/bin/") || lower.includes("/usr/bin/env");
+  const looksLikeCode = normalized.startsWith("!") || normalized.startsWith("#!") || normalized.includes("://") || /[{}()[\];|<>$]/.test(normalized);
+  if (looksLikePath || looksLikeCode || normalized.length > 64) {
+    return "";
+  }
+  if (!/[0-9A-Za-z가-힣]/.test(normalized)) {
+    return "";
+  }
+  return normalized;
 }
 function normalizeTags(tags) {
   const deduped = /* @__PURE__ */ new Set();
@@ -305,6 +318,7 @@ function buildPrompt(request) {
     "Rules:",
     "- linked MUST only contain values from the candidate list exactly.",
     "- Keep tags concise. No leading #.",
+    "- Tags must be conceptual topics only (no shell commands, file paths, shebangs, URLs, or code snippets).",
     "- topic should be one short phrase.",
     "- index should be one category label.",
     `- max tags: ${request.maxTags}`,
@@ -1287,6 +1301,9 @@ var DEFAULT_SETTINGS = {
   generateMoc: true,
   mocPath: "MOC/Selected Knowledge MOC.md"
 };
+var ANALYSIS_CACHE_PATH = "Auto-Linker Cache/analysis-proposal-cache.json";
+var ANALYSIS_CACHE_VERSION = 1;
+var ANALYSIS_CACHE_MAX_ENTRIES = 4e3;
 function stringifyValue(value) {
   if (value === void 0 || value === null) {
     return "(empty)";
@@ -1344,6 +1361,28 @@ function parsePositiveInt(value, fallback) {
     return fallback;
   }
   return parsed;
+}
+function cloneMetadataProposal(proposal) {
+  return {
+    tags: Array.isArray(proposal.tags) ? [...proposal.tags] : [],
+    topic: proposal.topic,
+    linked: Array.isArray(proposal.linked) ? [...proposal.linked] : [],
+    index: proposal.index,
+    reasons: proposal.reasons ? {
+      tags: proposal.reasons.tags,
+      topic: proposal.reasons.topic,
+      linked: proposal.reasons.linked,
+      index: proposal.reasons.index
+    } : {}
+  };
+}
+function cloneSuggestionMeta(meta) {
+  return {
+    provider: meta.provider,
+    model: meta.model,
+    elapsedMs: meta.elapsedMs,
+    usedFallback: meta.usedFallback
+  };
 }
 var SelectionModal = class extends import_obsidian4.Modal {
   constructor(app, allFiles, allFolders, initialFiles, initialFolders, includeSubfolders, pathWidthPercent, onSubmit) {
@@ -1934,87 +1973,135 @@ var SuggestionPreviewModal = class extends import_obsidian4.Modal {
     }
   }
 };
-var LocalQAInputModal = class extends import_obsidian4.Modal {
-  constructor(app, defaultTopK, onSubmit) {
+var LocalQAChatModal = class extends import_obsidian4.Modal {
+  constructor(app, plugin, defaultTopK) {
     super(app);
+    this.running = false;
+    this.history = [];
+    this.plugin = plugin;
     this.defaultTopK = defaultTopK;
-    this.onSubmit = onSubmit;
   }
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Ask local AI from selected notes" });
-    const questionLabel = contentEl.createEl("label", { text: "Question" });
-    questionLabel.style.display = "block";
-    questionLabel.style.marginBottom = "6px";
-    const questionInput = contentEl.createEl("textarea");
-    questionInput.style.width = "100%";
-    questionInput.style.minHeight = "120px";
-    questionInput.placeholder = "What do you want to find from selected notes?";
-    const topKWrapper = contentEl.createDiv();
-    topKWrapper.style.marginTop = "10px";
-    topKWrapper.createEl("label", { text: "Top sources (1-15)" });
-    const topKInput = topKWrapper.createEl("input", { type: "number" });
-    topKInput.min = "1";
-    topKInput.max = "15";
-    topKInput.value = String(this.defaultTopK);
+    contentEl.createEl("h2", { text: "Local Q&A (selected notes)" });
+    const hint = contentEl.createEl("p", {
+      text: "Natural conversation style. Answers use selected notes only."
+    });
+    hint.style.marginTop = "0";
+    const topKRow = contentEl.createDiv();
+    topKRow.style.display = "flex";
+    topKRow.style.gap = "8px";
+    topKRow.style.alignItems = "center";
+    topKRow.style.marginBottom = "8px";
+    topKRow.createEl("label", { text: "Top sources" });
+    this.topKInput = topKRow.createEl("input", { type: "number" });
+    this.topKInput.min = "1";
+    this.topKInput.max = "15";
+    this.topKInput.value = String(this.defaultTopK);
+    this.threadEl = contentEl.createDiv();
+    this.threadEl.style.maxHeight = "46vh";
+    this.threadEl.style.overflow = "auto";
+    this.threadEl.style.border = "1px solid var(--background-modifier-border)";
+    this.threadEl.style.borderRadius = "8px";
+    this.threadEl.style.padding = "10px";
+    this.threadEl.style.marginBottom = "8px";
+    this.threadEl.createEl("div", { text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD558\uBA74 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uBCF4\uC5EC\uC90D\uB2C8\uB2E4." });
+    this.inputEl = contentEl.createEl("textarea");
+    this.inputEl.style.width = "100%";
+    this.inputEl.style.minHeight = "90px";
+    this.inputEl.placeholder = "\uC120\uD0DD\uD55C \uB178\uD2B8\uB97C \uAE30\uC900\uC73C\uB85C \uBB3C\uC5B4\uBCF4\uC138\uC694...";
     const footer = contentEl.createDiv();
     footer.style.display = "flex";
     footer.style.justifyContent = "flex-end";
     footer.style.gap = "8px";
-    footer.style.marginTop = "12px";
-    const cancelButton = footer.createEl("button", { text: "Cancel" });
-    cancelButton.onclick = () => this.close();
-    const askButton = footer.createEl("button", { text: "Ask", cls: "mod-cta" });
-    askButton.onclick = async () => {
-      const question = questionInput.value.trim();
-      if (!question) {
-        new import_obsidian4.Notice("Question is empty.");
-        return;
-      }
-      const parsedTopK = Number.parseInt(topKInput.value, 10);
-      const topK = Number.isFinite(parsedTopK) && parsedTopK >= 1 ? Math.min(15, parsedTopK) : this.defaultTopK;
-      await this.onSubmit({ question, topK });
-      this.close();
+    footer.style.marginTop = "8px";
+    const closeButton = footer.createEl("button", { text: "Close" });
+    closeButton.onclick = () => this.close();
+    this.sendButton = footer.createEl("button", { text: "Send", cls: "mod-cta" });
+    this.sendButton.onclick = async () => {
+      await this.submitQuestion();
     };
+    this.inputEl.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        await this.submitQuestion();
+      }
+    });
   }
-};
-var LocalQAResultModal = class extends import_obsidian4.Modal {
-  constructor(app, payload) {
-    super(app);
-    this.payload = payload;
+  appendUserMessage(text) {
+    const box = this.threadEl.createDiv();
+    box.style.marginBottom = "10px";
+    box.createEl("strong", { text: "You" });
+    const body = box.createDiv();
+    body.style.whiteSpace = "pre-wrap";
+    body.setText(text);
+    this.threadEl.scrollTop = this.threadEl.scrollHeight;
   }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("h2", { text: "Local AI answer from selected notes" });
-    const meta = contentEl.createDiv();
-    meta.style.border = "1px solid var(--background-modifier-border)";
-    meta.style.borderRadius = "8px";
-    meta.style.padding = "8px";
-    meta.style.marginBottom = "8px";
-    meta.createEl("div", { text: `Model: ${this.payload.model}` });
-    meta.createEl("div", { text: `Embedding model: ${this.payload.embeddingModel}` });
-    meta.createEl("div", { text: `Question: ${this.payload.question}` });
-    const answerBlock = contentEl.createDiv();
-    answerBlock.style.border = "1px solid var(--background-modifier-border)";
-    answerBlock.style.borderRadius = "8px";
-    answerBlock.style.padding = "10px";
-    answerBlock.style.whiteSpace = "pre-wrap";
-    answerBlock.style.maxHeight = "46vh";
-    answerBlock.style.overflow = "auto";
-    answerBlock.setText(this.payload.answer || "(empty answer)");
-    const sourcesBlock = contentEl.createDiv();
-    sourcesBlock.style.marginTop = "10px";
-    sourcesBlock.createEl("strong", { text: "Sources" });
-    if (this.payload.sources.length === 0) {
-      sourcesBlock.createEl("div", { text: "No sources." });
-    } else {
-      for (const source of this.payload.sources) {
-        sourcesBlock.createEl("div", {
+  appendAssistantMessage(payload) {
+    const box = this.threadEl.createDiv();
+    box.style.marginBottom = "12px";
+    box.createEl("strong", { text: "Assistant" });
+    const body = box.createDiv();
+    body.style.whiteSpace = "pre-wrap";
+    body.setText(payload.answer || "(empty answer)");
+    const meta = box.createEl("small", {
+      text: `model=${payload.model}, embedding=${payload.embeddingModel}, cacheHits=${payload.retrievalCacheHits}, cacheWrites=${payload.retrievalCacheWrites}`
+    });
+    meta.style.display = "block";
+    meta.style.marginTop = "4px";
+    if (payload.sources.length > 0) {
+      const src = box.createDiv();
+      src.style.marginTop = "6px";
+      src.createEl("strong", { text: "Sources" });
+      for (const source of payload.sources) {
+        src.createEl("div", {
           text: `- ${source.path} (${formatSimilarity(source.similarity)})`
         });
       }
+    }
+    this.threadEl.scrollTop = this.threadEl.scrollHeight;
+  }
+  appendSystemMessage(text) {
+    const row = this.threadEl.createDiv();
+    row.style.marginBottom = "8px";
+    const small = row.createEl("small", { text });
+    small.style.opacity = "0.85";
+    this.threadEl.scrollTop = this.threadEl.scrollHeight;
+  }
+  async submitQuestion() {
+    if (this.running) {
+      return;
+    }
+    const question = this.inputEl.value.trim();
+    if (!question) {
+      new import_obsidian4.Notice("Question is empty.");
+      return;
+    }
+    const parsedTopK = Number.parseInt(this.topKInput.value, 10);
+    const topK = Number.isFinite(parsedTopK) && parsedTopK >= 1 ? Math.min(15, parsedTopK) : this.defaultTopK;
+    this.inputEl.value = "";
+    this.appendUserMessage(question);
+    this.running = true;
+    this.sendButton.disabled = true;
+    this.appendSystemMessage("Searching selected notes...");
+    try {
+      const result = await this.plugin.askLocalQa(question, topK, this.history);
+      this.appendAssistantMessage(result);
+      const nextHistory = [
+        ...this.history,
+        { role: "user", text: question },
+        { role: "assistant", text: result.answer }
+      ];
+      this.history = nextHistory.slice(-12);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown local QA error";
+      this.appendSystemMessage(`Error: ${message}`);
+      new import_obsidian4.Notice(`Local Q&A failed: ${message}`, 6e3);
+    } finally {
+      this.running = false;
+      this.sendButton.disabled = false;
+      this.inputEl.focus();
     }
   }
 };
@@ -2479,6 +2566,8 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.embeddingDetectionCache = null;
     this.embeddingDetectionOptions = [];
     this.embeddingDetectionSummary = "Embedding model detection has not run yet. Click refresh to detect installed Ollama models.";
+    this.analysisCache = null;
+    this.analysisCacheDirty = false;
   }
   async onload() {
     await this.loadSettings();
@@ -2550,8 +2639,8 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     });
     this.addCommand({
       id: "ask-local-ai-from-selected-notes",
-      name: "Auto-Linker: Ask local AI from selected notes",
-      callback: async () => this.openLocalQaInputModal()
+      name: "Ask local AI from selected notes",
+      callback: async () => this.openLocalQaChatModal()
     });
     this.addSettingTab(new KnowledgeWeaverSettingTab(this.app, this));
     await this.refreshOllamaDetection({ notify: false, autoApply: true });
@@ -2777,6 +2866,149 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   parseSimpleList(raw) {
     return raw.split(/[\n,;]+/).map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);
   }
+  readRawFrontmatterTags(frontmatter) {
+    const value = frontmatter.tags;
+    if (Array.isArray(value)) {
+      return value.map((item) => typeof item === "string" ? item.trim() : "").filter((item) => item.length > 0);
+    }
+    if (typeof value === "string") {
+      return value.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
+    }
+    return [];
+  }
+  getProviderCacheSignature() {
+    const modelLabel = getProviderModelLabel(this.settings);
+    switch (this.settings.provider) {
+      case "ollama":
+        return `ollama::${this.settings.ollamaBaseUrl.trim()}::${modelLabel}`;
+      case "lmstudio":
+        return `lmstudio::${this.settings.lmStudioBaseUrl.trim()}::${modelLabel}`;
+      case "openai":
+        return `openai::${this.settings.openAIBaseUrl.trim()}::${modelLabel}`;
+      case "anthropic":
+        return `anthropic::${modelLabel}`;
+      case "gemini":
+        return `gemini::${modelLabel}`;
+      default:
+        return `${this.settings.provider}::${modelLabel}`;
+    }
+  }
+  hashString(input) {
+    let hash = 2166136261;
+    for (let i = 0; i < input.length; i += 1) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+  buildAnalysisCacheKey(providerSignature, filePath) {
+    return `${providerSignature}::${filePath}`;
+  }
+  buildAnalysisRequestFingerprint(providerSignature, request) {
+    const payload = JSON.stringify({
+      providerSignature,
+      sourcePath: request.sourcePath,
+      sourceText: request.sourceText,
+      candidateLinkPaths: request.candidateLinkPaths,
+      maxTags: request.maxTags,
+      maxLinked: request.maxLinked,
+      analyzeTags: request.analyzeTags,
+      analyzeTopic: request.analyzeTopic,
+      analyzeLinked: request.analyzeLinked,
+      analyzeIndex: request.analyzeIndex,
+      includeReasons: request.includeReasons
+    });
+    return this.hashString(payload);
+  }
+  async loadAnalysisCache() {
+    if (this.analysisCache) {
+      return this.analysisCache;
+    }
+    const path = (0, import_obsidian4.normalizePath)(ANALYSIS_CACHE_PATH);
+    const exists = await this.app.vault.adapter.exists(path);
+    if (!exists) {
+      this.analysisCache = {
+        version: ANALYSIS_CACHE_VERSION,
+        entries: {}
+      };
+      this.analysisCacheDirty = false;
+      return this.analysisCache;
+    }
+    try {
+      const raw = await this.app.vault.adapter.read(path);
+      const parsed = JSON.parse(raw);
+      const version = typeof parsed.version === "number" ? parsed.version : ANALYSIS_CACHE_VERSION;
+      const entries = parsed.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+      if (version !== ANALYSIS_CACHE_VERSION) {
+        this.analysisCache = {
+          version: ANALYSIS_CACHE_VERSION,
+          entries: {}
+        };
+      } else {
+        this.analysisCache = {
+          version,
+          entries
+        };
+      }
+      this.analysisCacheDirty = false;
+      return this.analysisCache;
+    } catch (e) {
+      this.analysisCache = {
+        version: ANALYSIS_CACHE_VERSION,
+        entries: {}
+      };
+      this.analysisCacheDirty = false;
+      return this.analysisCache;
+    }
+  }
+  pruneAnalysisCache(cache) {
+    const entries = Object.entries(cache.entries);
+    if (entries.length <= ANALYSIS_CACHE_MAX_ENTRIES) {
+      return;
+    }
+    entries.sort((a, b) => {
+      var _a, _b, _c, _d;
+      const aTime = Date.parse((_b = (_a = a[1]) == null ? void 0 : _a.updatedAt) != null ? _b : "") || 0;
+      const bTime = Date.parse((_d = (_c = b[1]) == null ? void 0 : _c.updatedAt) != null ? _d : "") || 0;
+      return aTime - bTime || a[0].localeCompare(b[0]);
+    });
+    const overflow = entries.length - ANALYSIS_CACHE_MAX_ENTRIES;
+    for (let i = 0; i < overflow; i += 1) {
+      delete cache.entries[entries[i][0]];
+    }
+  }
+  async flushAnalysisCache() {
+    if (!this.analysisCache || !this.analysisCacheDirty) {
+      return;
+    }
+    this.pruneAnalysisCache(this.analysisCache);
+    const path = (0, import_obsidian4.normalizePath)(ANALYSIS_CACHE_PATH);
+    await this.ensureParentFolder(path);
+    await this.app.vault.adapter.write(path, JSON.stringify(this.analysisCache));
+    this.analysisCacheDirty = false;
+  }
+  getCachedAnalysisOutcome(cache, cacheKey, fingerprint) {
+    const entry = cache.entries[cacheKey];
+    if (!entry || entry.fingerprint !== fingerprint) {
+      return null;
+    }
+    return {
+      proposal: cloneMetadataProposal(entry.proposal),
+      meta: {
+        ...cloneSuggestionMeta(entry.meta),
+        elapsedMs: 0
+      }
+    };
+  }
+  storeAnalysisOutcome(cache, cacheKey, fingerprint, outcome) {
+    cache.entries[cacheKey] = {
+      fingerprint,
+      proposal: cloneMetadataProposal(outcome.proposal),
+      meta: cloneSuggestionMeta(outcome.meta),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.analysisCacheDirty = true;
+  }
   parseFrontmatterFromContent(content) {
     const lines = content.split("\n");
     if (lines.length < 3 || lines[0].trim() !== "---") {
@@ -2965,7 +3197,10 @@ ${line}` : line;
     }
     return output;
   }
-  buildLocalQaPrompt(question, sourceBlocks) {
+  buildLocalQaPrompt(question, sourceBlocks, history) {
+    const historyText = history.length > 0 ? history.slice(-6).map(
+      (turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.text}`
+    ).join("\n") : "(none)";
     const contextText = sourceBlocks.map(
       (item, index) => `Source ${index + 1}
 Path: ${item.path}
@@ -2983,6 +3218,10 @@ ${item.content}`
       "If useful, add short insight synthesis (patterns, contradictions, implications).",
       "If evidence is insufficient, clearly say what is missing.",
       "When making claims, cite source paths inline in parentheses.",
+      "Respect previous turns when they remain consistent with the provided sources.",
+      "",
+      "Conversation so far:",
+      historyText,
       "",
       `Question: ${question}`,
       "",
@@ -2990,150 +3229,130 @@ ${item.content}`
       contextText
     ].join("\n");
   }
-  async openLocalQaInputModal() {
+  async openLocalQaChatModal() {
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
       this.notice("No target notes selected. Open selector first.");
       await this.openSelectionModal();
       return;
     }
-    new LocalQAInputModal(
-      this.app,
-      this.settings.qaTopK,
-      async (payload) => {
-        await this.runLocalQa(payload.question, payload.topK);
-      }
-    ).open();
+    new LocalQAChatModal(this.app, this, this.settings.qaTopK).open();
   }
-  async runLocalQa(question, topK) {
+  async askLocalQa(question, topK, history = []) {
     var _a;
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
-      this.notice("No target notes selected. Open selector first.");
-      return;
+      throw new Error("No target notes selected. Open selector first.");
     }
+    const safeQuestion = question.trim();
+    if (!safeQuestion) {
+      throw new Error("Question is empty.");
+    }
+    const safeTopK = Math.max(1, Math.min(15, topK));
     const qaBaseUrl = this.resolveQaBaseUrl();
     if (!qaBaseUrl) {
-      this.notice("Q&A base URL is empty.");
-      return;
+      throw new Error("Q&A base URL is empty.");
     }
     if (!this.settings.qaAllowNonLocalEndpoint && !this.isLocalEndpoint(qaBaseUrl)) {
-      this.notice(
-        "Blocked by security policy: Q&A endpoint must be localhost unless explicitly allowed.",
-        7e3
+      throw new Error(
+        "Blocked by security policy: Q&A endpoint must be localhost unless explicitly allowed."
       );
-      return;
     }
     const qaModel = this.resolveQaModel();
     if (!qaModel) {
-      this.notice("Q&A model is empty.");
-      return;
+      throw new Error("Q&A model is empty.");
     }
     if (!isOllamaModelAnalyzable(qaModel)) {
-      this.notice(`Q&A model is not suitable: ${qaModel}`, 6e3);
-      return;
+      throw new Error(`Q&A model is not suitable: ${qaModel}`);
     }
-    await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
-    const embeddingModel = this.settings.semanticOllamaModel.trim();
-    if (!embeddingModel) {
-      this.notice("Embedding model is empty. Refresh embedding detection first.", 6e3);
-      return;
-    }
-    this.setStatus("semantic retrieval for local qa...");
-    const retrievalCandidateK = Math.max(topK * 3, topK);
-    const retrieval = await searchSemanticNotesByQuery(
-      this.app,
-      selectedFiles,
-      this.settings,
-      question,
-      retrievalCandidateK
-    );
-    if (retrieval.errors.length > 0) {
-      this.notice(
-        `Semantic retrieval had ${retrieval.errors.length} issue(s).`,
-        6e3
+    try {
+      await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+      const embeddingModel = this.settings.semanticOllamaModel.trim();
+      if (!embeddingModel) {
+        throw new Error("Embedding model is empty. Refresh embedding detection first.");
+      }
+      this.setStatus("semantic retrieval for local qa...");
+      const retrievalCandidateK = Math.max(safeTopK * 3, safeTopK);
+      const retrieval = await searchSemanticNotesByQuery(
+        this.app,
+        selectedFiles,
+        this.settings,
+        safeQuestion,
+        retrievalCandidateK
       );
-    }
-    if (retrieval.hits.length === 0) {
-      this.notice("No relevant notes were found for this question.");
-      this.setStatus("idle");
-      return;
-    }
-    const rankedHits = this.rerankQaHits(retrieval.hits, question, topK);
-    if (rankedHits.length === 0) {
-      this.notice("No relevant notes were found for this question.");
-      this.setStatus("idle");
-      return;
-    }
-    const maxContextChars = Math.max(2e3, this.settings.qaMaxContextChars);
-    const sourceBlocks = [];
-    let usedChars = 0;
-    for (const hit of rankedHits) {
-      if (usedChars >= maxContextChars) {
-        break;
+      if (retrieval.errors.length > 0) {
+        this.notice(`Semantic retrieval had ${retrieval.errors.length} issue(s).`, 6e3);
       }
-      const entry = this.app.vault.getAbstractFileByPath(hit.path);
-      if (!(entry instanceof import_obsidian4.TFile)) {
-        continue;
+      if (retrieval.hits.length === 0) {
+        throw new Error("No relevant notes were found for this question.");
       }
-      const raw = await this.app.vault.cachedRead(entry);
-      const remaining = Math.max(500, maxContextChars - usedChars);
-      const snippet = this.extractRelevantSnippet(raw, question, remaining);
-      if (!snippet) {
-        continue;
+      const rankedHits = this.rerankQaHits(retrieval.hits, safeQuestion, safeTopK);
+      if (rankedHits.length === 0) {
+        throw new Error("No relevant notes were found for this question.");
       }
-      sourceBlocks.push({
-        path: hit.path,
-        similarity: hit.similarity,
-        content: snippet
+      const maxContextChars = Math.max(2e3, this.settings.qaMaxContextChars);
+      const sourceBlocks = [];
+      let usedChars = 0;
+      for (const hit of rankedHits) {
+        if (usedChars >= maxContextChars) {
+          break;
+        }
+        const entry = this.app.vault.getAbstractFileByPath(hit.path);
+        if (!(entry instanceof import_obsidian4.TFile)) {
+          continue;
+        }
+        const raw = await this.app.vault.cachedRead(entry);
+        const remaining = Math.max(500, maxContextChars - usedChars);
+        const snippet = this.extractRelevantSnippet(raw, safeQuestion, remaining);
+        if (!snippet) {
+          continue;
+        }
+        sourceBlocks.push({
+          path: hit.path,
+          similarity: hit.similarity,
+          content: snippet
+        });
+        usedChars += snippet.length;
+      }
+      if (sourceBlocks.length === 0) {
+        throw new Error("Relevant notes found but no readable content extracted.");
+      }
+      const prompt = this.buildLocalQaPrompt(safeQuestion, sourceBlocks, history);
+      this.setStatus("asking local qa model...");
+      const response = await (0, import_obsidian4.requestUrl)({
+        url: `${qaBaseUrl.replace(/\/$/, "")}/api/generate`,
+        method: "POST",
+        contentType: "application/json",
+        body: JSON.stringify({
+          model: qaModel,
+          prompt,
+          stream: false
+        }),
+        throw: false
       });
-      usedChars += snippet.length;
-    }
-    if (sourceBlocks.length === 0) {
-      this.notice("Relevant notes found but no readable content extracted.");
-      this.setStatus("idle");
-      return;
-    }
-    const prompt = this.buildLocalQaPrompt(question, sourceBlocks);
-    this.setStatus("asking local qa model...");
-    const response = await (0, import_obsidian4.requestUrl)({
-      url: `${qaBaseUrl.replace(/\/$/, "")}/api/generate`,
-      method: "POST",
-      contentType: "application/json",
-      body: JSON.stringify({
+      if (response.status >= 300) {
+        throw new Error(`Local Q&A request failed: ${response.status}`);
+      }
+      const answer = typeof ((_a = response.json) == null ? void 0 : _a.response) === "string" ? response.json.response.trim() : response.text.trim();
+      if (!answer) {
+        throw new Error("Local Q&A returned an empty answer.");
+      }
+      const sourceList = sourceBlocks.map((item) => ({
+        path: item.path,
+        similarity: item.similarity
+      }));
+      return {
+        question: safeQuestion,
+        answer,
         model: qaModel,
-        prompt,
-        stream: false
-      }),
-      throw: false
-    });
-    if (response.status >= 300) {
-      this.notice(`Local Q&A request failed: ${response.status}`, 6e3);
+        embeddingModel,
+        sources: sourceList,
+        retrievalCacheHits: retrieval.cacheHits,
+        retrievalCacheWrites: retrieval.cacheWrites
+      };
+    } finally {
       this.setStatus("idle");
-      return;
     }
-    const answer = typeof ((_a = response.json) == null ? void 0 : _a.response) === "string" ? response.json.response.trim() : response.text.trim();
-    if (!answer) {
-      this.notice("Local Q&A returned an empty answer.");
-      this.setStatus("idle");
-      return;
-    }
-    const sourceList = sourceBlocks.map((item) => ({
-      path: item.path,
-      similarity: item.similarity
-    }));
-    new LocalQAResultModal(this.app, {
-      question,
-      answer,
-      model: qaModel,
-      embeddingModel,
-      sources: sourceList
-    }).open();
-    this.notice(
-      `Local Q&A done. Sources=${sourceList.length}, cacheHits=${retrieval.cacheHits}, cacheWrites=${retrieval.cacheWrites}`,
-      6e3
-    );
-    this.setStatus("idle");
   }
   getPropertyCleanupConfig() {
     const removeKeys = new Set(this.parseSimpleList(this.settings.propertyCleanupKeys));
@@ -3546,12 +3765,16 @@ ${item.content}`
     }
     const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
     progressModal.open();
+    const analysisCache = await this.loadAnalysisCache();
+    const providerCacheSignature = this.getProviderCacheSignature();
     const selectedPathSet = new Set(selectedFiles.map((file) => file.path));
     const suggestions = [];
     const errors = [];
     const events = [];
     const runStartedAt = Date.now();
     let usedFallbackCount = 0;
+    let analysisCacheHits = 0;
+    let analysisCacheWrites = 0;
     let cancelled = false;
     for (let index = 0; index < selectedFiles.length; index += 1) {
       if (progressModal.isCancelled()) {
@@ -3586,11 +3809,35 @@ ${item.content}`
           analyzeIndex: this.settings.analyzeIndex,
           includeReasons: this.settings.includeReasons
         };
-        const outcome = await analyzeWithFallback(this.settings, request);
+        const cacheKey = this.buildAnalysisCacheKey(providerCacheSignature, file.path);
+        const requestFingerprint = this.buildAnalysisRequestFingerprint(
+          providerCacheSignature,
+          request
+        );
+        const cachedOutcome = this.getCachedAnalysisOutcome(
+          analysisCache,
+          cacheKey,
+          requestFingerprint
+        );
+        let outcome;
+        if (cachedOutcome) {
+          outcome = cachedOutcome;
+          analysisCacheHits += 1;
+        } else {
+          outcome = await analyzeWithFallback(this.settings, request);
+          this.storeAnalysisOutcome(
+            analysisCache,
+            cacheKey,
+            requestFingerprint,
+            outcome
+          );
+          analysisCacheWrites += 1;
+        }
         if (outcome.meta.usedFallback) {
           usedFallbackCount += 1;
         }
         const currentFrontmatter = (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : {};
+        const rawExistingTags = this.readRawFrontmatterTags(currentFrontmatter);
         const existingBase = normalizeManagedFrontmatter(
           extractManagedFrontmatter(currentFrontmatter)
         );
@@ -3599,6 +3846,12 @@ ${item.content}`
           topic: existingBase.topic,
           linked: normalizeLinked(this.app, file.path, existingBase.linked),
           index: existingBase.index
+        };
+        const existingForComparison = {
+          tags: rawExistingTags,
+          topic: existingValidated.topic,
+          linked: existingValidated.linked,
+          index: existingValidated.index
         };
         const proposed = {
           tags: existingValidated.tags,
@@ -3634,7 +3887,7 @@ ${item.content}`
           }
         }
         const normalizedProposed = normalizeManagedFrontmatter(proposed);
-        if (!managedFrontmatterChanged(existingValidated, normalizedProposed)) {
+        if (!managedFrontmatterChanged(existingForComparison, normalizedProposed)) {
           continue;
         }
         const semanticCandidates = ((_g = semanticNeighbors.get(file.path)) != null ? _g : []).map((item) => ({
@@ -3643,7 +3896,7 @@ ${item.content}`
         }));
         suggestions.push({
           file,
-          existing: existingValidated,
+          existing: existingForComparison,
           proposed: normalizedProposed,
           reasons: (_h = outcome.proposal.reasons) != null ? _h : {},
           analysis: outcome.meta,
@@ -3658,6 +3911,14 @@ ${item.content}`
         const message = error instanceof Error ? error.message : "Unknown analysis error";
         errors.push({ filePath: file.path, message });
         events.push({ filePath: file.path, status: "error", message });
+      }
+    }
+    if (analysisCacheWrites > 0) {
+      try {
+        await this.flushAnalysisCache();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown analysis cache write error";
+        this.notice(`Analysis cache write failed: ${message}`, 6e3);
       }
     }
     progressModal.setFinished(
@@ -3677,17 +3938,21 @@ ${item.content}`
     this.setStatus(`analysis done (${summary.changedFiles}/${summary.totalFiles} changed)`);
     if (suggestions.length === 0) {
       this.notice(
-        `No metadata changes. Provider=${summary.provider}, Model=${summary.model}, Errors=${summary.errorCount}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
+        `No metadata changes. Provider=${summary.provider}, Model=${summary.model}, Errors=${summary.errorCount}, Elapsed=${formatDurationMs(summary.elapsedMs)}, CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}.`,
         5e3
       );
       return;
     }
     if (cancelled) {
       this.notice(
-        `Analysis stopped. Showing partial suggestions (${suggestions.length} file(s)).`,
+        `Analysis stopped. Showing partial suggestions (${suggestions.length} file(s)). CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}.`,
         5e3
       );
     }
+    this.notice(
+      `Analysis complete: ${summary.changedFiles}/${summary.totalFiles} changed. CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
+      5e3
+    );
     if (this.settings.suggestionMode) {
       new SuggestionPreviewModal(
         this.app,
