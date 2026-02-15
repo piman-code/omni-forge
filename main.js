@@ -749,7 +749,6 @@ async function analyzeWithFallback(settings, request) {
 // src/semantic.ts
 var import_obsidian3 = require("obsidian");
 var EMBEDDING_BATCH_SIZE = 8;
-var EMBEDDING_CACHE_PATH = "Auto-Linker Cache/semantic-embedding-cache.json";
 var EMBEDDING_CACHE_VERSION = 1;
 var EMBEDDING_MODEL_REGEX = /(embed|embedding|nomic-embed|mxbai|bge|e5|gte|arctic-embed|jina-emb)/i;
 var NON_EMBEDDING_MODEL_REGEX = /(whisper|tts|speech|transcribe|stt|rerank)/i;
@@ -967,6 +966,11 @@ function fingerprintText(text) {
 function buildCacheKey(baseUrl, model, filePath) {
   return `${baseUrl}::${model}::${filePath}`;
 }
+function getEmbeddingCachePath(app) {
+  return (0, import_obsidian3.normalizePath)(
+    `${app.vault.configDir}/plugins/auto-linker/semantic-embedding-cache.json`
+  );
+}
 async function ensureParentFolder(app, path) {
   const normalized = (0, import_obsidian3.normalizePath)(path);
   const chunks = normalized.split("/");
@@ -985,7 +989,7 @@ async function ensureParentFolder(app, path) {
   }
 }
 async function readEmbeddingCache(app) {
-  const path = (0, import_obsidian3.normalizePath)(EMBEDDING_CACHE_PATH);
+  const path = getEmbeddingCachePath(app);
   const exists = await app.vault.adapter.exists(path);
   if (!exists) {
     return { version: EMBEDDING_CACHE_VERSION, entries: {} };
@@ -1004,7 +1008,7 @@ async function readEmbeddingCache(app) {
   }
 }
 async function writeEmbeddingCache(app, cache) {
-  const path = (0, import_obsidian3.normalizePath)(EMBEDDING_CACHE_PATH);
+  const path = getEmbeddingCachePath(app);
   await ensureParentFolder(app, path);
   await app.vault.adapter.write(path, JSON.stringify(cache));
 }
@@ -1048,14 +1052,6 @@ function resolveEmbeddingConfig(settings) {
   return { baseUrl, model };
 }
 async function buildFileVectorIndex(app, files, config, maxChars) {
-  const corpus = [];
-  for (const file of files) {
-    const content = await app.vault.cachedRead(file);
-    corpus.push({
-      file,
-      text: normalizeSourceText(content, maxChars)
-    });
-  }
   const vectorsByPath = /* @__PURE__ */ new Map();
   const errors = [];
   const cache = await readEmbeddingCache(app);
@@ -1063,18 +1059,32 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
   let cacheWrites = 0;
   let cacheDirty = false;
   const missing = [];
-  for (const item of corpus) {
-    const fingerprint = fingerprintText(item.text);
-    const cacheKey = buildCacheKey(config.baseUrl, config.model, item.file.path);
+  for (const file of files) {
+    const cacheKey = buildCacheKey(config.baseUrl, config.model, file.path);
     const hit = cache.entries[cacheKey];
-    if (hit && hit.fingerprint === fingerprint && Array.isArray(hit.vector) && hit.vector.length > 0) {
-      vectorsByPath.set(item.file.path, hit.vector);
+    if (hit && typeof hit.mtime === "number" && typeof hit.size === "number" && hit.mtime === file.stat.mtime && hit.size === file.stat.size && Array.isArray(hit.vector) && hit.vector.length > 0) {
+      vectorsByPath.set(file.path, hit.vector);
       cacheHits += 1;
       continue;
     }
+    const content = await app.vault.cachedRead(file);
+    const text = normalizeSourceText(content, maxChars);
+    const fingerprint = fingerprintText(text);
+    if (hit && hit.fingerprint === fingerprint && Array.isArray(hit.vector) && hit.vector.length > 0) {
+      vectorsByPath.set(file.path, hit.vector);
+      cache.entries[cacheKey] = {
+        ...hit,
+        mtime: file.stat.mtime,
+        size: file.stat.size,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      cacheHits += 1;
+      cacheDirty = true;
+      continue;
+    }
     missing.push({
-      file: item.file,
-      text: item.text,
+      file,
+      text,
       cacheKey,
       fingerprint
     });
@@ -1099,6 +1109,8 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
         cache.entries[entry.cacheKey] = {
           fingerprint: entry.fingerprint,
           vector,
+          mtime: entry.file.stat.mtime,
+          size: entry.file.stat.size,
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         };
         cacheWrites += 1;
@@ -1301,9 +1313,12 @@ var DEFAULT_SETTINGS = {
   generateMoc: true,
   mocPath: "MOC/Selected Knowledge MOC.md"
 };
-var ANALYSIS_CACHE_PATH = "Auto-Linker Cache/analysis-proposal-cache.json";
+var LOCAL_QA_VIEW_TYPE = "auto-linker-local-qa-view";
+var ANALYSIS_CACHE_FILE = "analysis-proposal-cache.json";
 var ANALYSIS_CACHE_VERSION = 1;
 var ANALYSIS_CACHE_MAX_ENTRIES = 4e3;
+var LOCAL_QA_TRANSCRIPT_FOLDER = "Auto-Linker Chats";
+var ANALYSIS_HARD_MAX_CANDIDATES = 120;
 function stringifyValue(value) {
   if (value === void 0 || value === null) {
     return "(empty)";
@@ -1780,6 +1795,55 @@ var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian4.Moda
     });
   }
 };
+var CapacityGuardModal = class _CapacityGuardModal extends import_obsidian4.Modal {
+  constructor(app, selectedCount, recommendedMax, modelName, semanticEnabled, onResolve) {
+    super(app);
+    this.selectedCount = selectedCount;
+    this.recommendedMax = recommendedMax;
+    this.modelName = modelName;
+    this.semanticEnabled = semanticEnabled;
+    this.onResolve = onResolve;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Large selection warning" });
+    contentEl.createEl("p", {
+      text: `Selected ${this.selectedCount} notes. Recommended max for this setup is about ${this.recommendedMax}.`
+    });
+    contentEl.createEl("p", {
+      text: `Model: ${this.modelName || "(not set)"} | semantic linking: ${this.semanticEnabled ? "on" : "off"}`
+    });
+    contentEl.createEl("p", {
+      text: "Too many candidates can lower linked quality and slow local analysis. Continue anyway?"
+    });
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+    const cancelButton = footer.createEl("button", { text: "Cancel" });
+    cancelButton.onclick = () => this.resolve({ proceed: false });
+    const proceedButton = footer.createEl("button", { text: "Continue", cls: "mod-cta" });
+    proceedButton.onclick = () => this.resolve({ proceed: true });
+  }
+  resolve(decision) {
+    this.onResolve(decision);
+    this.close();
+  }
+  static ask(app, selectedCount, recommendedMax, modelName, semanticEnabled) {
+    return new Promise((resolve) => {
+      new _CapacityGuardModal(
+        app,
+        selectedCount,
+        recommendedMax,
+        modelName,
+        semanticEnabled,
+        resolve
+      ).open();
+    });
+  }
+};
 var RunProgressModal = class extends import_obsidian4.Modal {
   constructor(app, titleText) {
     super(app);
@@ -1973,22 +2037,63 @@ var SuggestionPreviewModal = class extends import_obsidian4.Modal {
     }
   }
 };
-var LocalQAChatModal = class extends import_obsidian4.Modal {
-  constructor(app, plugin, defaultTopK) {
-    super(app);
+var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
     this.running = false;
-    this.history = [];
+    this.messages = [];
     this.plugin = plugin;
-    this.defaultTopK = defaultTopK;
   }
-  onOpen() {
+  getViewType() {
+    return LOCAL_QA_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "Auto-Linker Local Chat";
+  }
+  getIcon() {
+    return "message-square";
+  }
+  async onOpen() {
+    this.render();
+    await this.refreshScopeLabel();
+  }
+  async onClose() {
+  }
+  render() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Local Q&A (selected notes)" });
-    const hint = contentEl.createEl("p", {
-      text: "Natural conversation style. Answers use selected notes only."
-    });
-    hint.style.marginTop = "0";
+    contentEl.createEl("h3", { text: "Local AI Chat (Selected Notes)" });
+    this.scopeEl = contentEl.createEl("div");
+    this.scopeEl.style.marginBottom = "8px";
+    this.scopeEl.style.fontSize = "12px";
+    this.scopeEl.style.opacity = "0.9";
+    const actionRow = contentEl.createDiv();
+    actionRow.style.display = "flex";
+    actionRow.style.gap = "8px";
+    actionRow.style.marginBottom = "8px";
+    const selectButton = actionRow.createEl("button", { text: "Select notes" });
+    selectButton.onclick = async () => {
+      await this.plugin.openSelectionForQa();
+      await this.refreshScopeLabel();
+    };
+    const refreshButton = actionRow.createEl("button", { text: "Refresh scope" });
+    refreshButton.onclick = async () => {
+      await this.refreshScopeLabel();
+    };
+    const saveButton = actionRow.createEl("button", { text: "Save chat to note" });
+    saveButton.onclick = async () => {
+      if (this.messages.length === 0) {
+        new import_obsidian4.Notice("No chat messages to save.");
+        return;
+      }
+      try {
+        const path = await this.plugin.saveLocalQaTranscript(this.messages);
+        new import_obsidian4.Notice(`Chat saved: ${path}`, 6e3);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown transcript save error";
+        new import_obsidian4.Notice(`Failed to save chat: ${message}`, 7e3);
+      }
+    };
     const topKRow = contentEl.createDiv();
     topKRow.style.display = "flex";
     topKRow.style.gap = "8px";
@@ -1998,26 +2103,24 @@ var LocalQAChatModal = class extends import_obsidian4.Modal {
     this.topKInput = topKRow.createEl("input", { type: "number" });
     this.topKInput.min = "1";
     this.topKInput.max = "15";
-    this.topKInput.value = String(this.defaultTopK);
+    this.topKInput.value = String(this.plugin.settings.qaTopK);
     this.threadEl = contentEl.createDiv();
-    this.threadEl.style.maxHeight = "46vh";
+    this.threadEl.style.minHeight = "320px";
+    this.threadEl.style.maxHeight = "58vh";
     this.threadEl.style.overflow = "auto";
     this.threadEl.style.border = "1px solid var(--background-modifier-border)";
     this.threadEl.style.borderRadius = "8px";
     this.threadEl.style.padding = "10px";
     this.threadEl.style.marginBottom = "8px";
-    this.threadEl.createEl("div", { text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD558\uBA74 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uBCF4\uC5EC\uC90D\uB2C8\uB2E4." });
+    this.threadEl.createEl("div", { text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694." });
     this.inputEl = contentEl.createEl("textarea");
     this.inputEl.style.width = "100%";
-    this.inputEl.style.minHeight = "90px";
-    this.inputEl.placeholder = "\uC120\uD0DD\uD55C \uB178\uD2B8\uB97C \uAE30\uC900\uC73C\uB85C \uBB3C\uC5B4\uBCF4\uC138\uC694...";
+    this.inputEl.style.minHeight = "88px";
+    this.inputEl.placeholder = "\uC120\uD0DD\uB41C \uB178\uD2B8/\uD3F4\uB354 \uBC94\uC704\uC5D0\uC11C \uC9C8\uBB38\uD558\uC138\uC694...";
     const footer = contentEl.createDiv();
     footer.style.display = "flex";
     footer.style.justifyContent = "flex-end";
-    footer.style.gap = "8px";
     footer.style.marginTop = "8px";
-    const closeButton = footer.createEl("button", { text: "Close" });
-    closeButton.onclick = () => this.close();
     this.sendButton = footer.createEl("button", { text: "Send", cls: "mod-cta" });
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
@@ -2029,45 +2132,79 @@ var LocalQAChatModal = class extends import_obsidian4.Modal {
       }
     });
   }
-  appendUserMessage(text) {
-    const box = this.threadEl.createDiv();
-    box.style.marginBottom = "10px";
-    box.createEl("strong", { text: "You" });
-    const body = box.createDiv();
-    body.style.whiteSpace = "pre-wrap";
-    body.setText(text);
-    this.threadEl.scrollTop = this.threadEl.scrollHeight;
+  formatTime(iso) {
+    const date = new Date(iso);
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mm = String(date.getMinutes()).padStart(2, "0");
+    const ss = String(date.getSeconds()).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
   }
-  appendAssistantMessage(payload) {
-    const box = this.threadEl.createDiv();
-    box.style.marginBottom = "12px";
-    box.createEl("strong", { text: "Assistant" });
-    const body = box.createDiv();
-    body.style.whiteSpace = "pre-wrap";
-    body.setText(payload.answer || "(empty answer)");
-    const meta = box.createEl("small", {
-      text: `model=${payload.model}, embedding=${payload.embeddingModel}, cacheHits=${payload.retrievalCacheHits}, cacheWrites=${payload.retrievalCacheWrites}`
-    });
-    meta.style.display = "block";
-    meta.style.marginTop = "4px";
-    if (payload.sources.length > 0) {
-      const src = box.createDiv();
-      src.style.marginTop = "6px";
-      src.createEl("strong", { text: "Sources" });
-      for (const source of payload.sources) {
-        src.createEl("div", {
-          text: `- ${source.path} (${formatSimilarity(source.similarity)})`
-        });
+  renderMessages() {
+    this.threadEl.empty();
+    if (this.messages.length === 0) {
+      this.threadEl.createEl("div", { text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694." });
+      return;
+    }
+    for (const message of this.messages) {
+      const box = this.threadEl.createDiv();
+      box.style.marginBottom = "12px";
+      box.style.padding = "8px";
+      box.style.borderRadius = "8px";
+      box.style.background = message.role === "user" ? "var(--background-secondary)" : message.role === "assistant" ? "var(--background-primary-alt)" : "var(--background-modifier-hover)";
+      const title = box.createEl("strong", {
+        text: message.role === "assistant" ? "Assistant" : message.role === "user" ? "You" : "System"
+      });
+      const time = box.createEl("small", { text: ` ${this.formatTime(message.timestamp)}` });
+      time.style.opacity = "0.8";
+      title.appendChild(time);
+      const body = box.createDiv();
+      body.style.whiteSpace = "pre-wrap";
+      body.style.marginTop = "4px";
+      body.setText(message.text);
+      if (message.role === "assistant" && message.sources && message.sources.length > 0) {
+        const src = box.createDiv();
+        src.style.marginTop = "6px";
+        src.createEl("small", { text: "Sources" });
+        for (const source of message.sources) {
+          src.createEl("div", {
+            text: `- ${source.path} (${formatSimilarity(source.similarity)})`
+          });
+        }
       }
     }
     this.threadEl.scrollTop = this.threadEl.scrollHeight;
   }
-  appendSystemMessage(text) {
-    const row = this.threadEl.createDiv();
-    row.style.marginBottom = "8px";
-    const small = row.createEl("small", { text });
-    small.style.opacity = "0.85";
-    this.threadEl.scrollTop = this.threadEl.scrollHeight;
+  pushMessage(message) {
+    this.messages.push(message);
+    if (this.messages.length > 120) {
+      this.messages = this.messages.slice(-120);
+    }
+    this.renderMessages();
+  }
+  clearPendingSystemMessage() {
+    for (let i = this.messages.length - 1; i >= 0; i -= 1) {
+      const item = this.messages[i];
+      if (item.role === "system" && item.text.includes("\uC0DD\uC131 \uC911")) {
+        this.messages.splice(i, 1);
+        break;
+      }
+    }
+  }
+  buildHistoryTurns() {
+    const turns = this.messages.filter((item) => item.role === "user" || item.role === "assistant").map((item) => ({
+      role: item.role === "assistant" ? "assistant" : "user",
+      text: item.text
+    }));
+    return turns.slice(-12);
+  }
+  async refreshScopeLabel() {
+    const fileCount = this.plugin.getSelectedFilesForQa().length;
+    const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
+    const model = this.plugin.getQaModelLabelForQa();
+    const embedding = this.plugin.getQaEmbeddingModelForQa();
+    this.scopeEl.setText(
+      `Scope: files=${fileCount}, folders=${folderCount} | QA=${model} | embedding=${embedding || "(not set)"}`
+    );
   }
   async submitQuestion() {
     if (this.running) {
@@ -2078,26 +2215,90 @@ var LocalQAChatModal = class extends import_obsidian4.Modal {
       new import_obsidian4.Notice("Question is empty.");
       return;
     }
+    const selectedFiles = this.plugin.getSelectedFilesForQa();
+    if (selectedFiles.length === 0) {
+      this.pushMessage({
+        role: "system",
+        text: "\uC120\uD0DD\uB41C \uB178\uD2B8\uAC00 \uC5C6\uC5B4 \uC120\uD0DD \uCC3D\uC744 \uC5FD\uB2C8\uB2E4.",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      await this.plugin.openSelectionForQa();
+      await this.refreshScopeLabel();
+      return;
+    }
     const parsedTopK = Number.parseInt(this.topKInput.value, 10);
-    const topK = Number.isFinite(parsedTopK) && parsedTopK >= 1 ? Math.min(15, parsedTopK) : this.defaultTopK;
+    const topK = Number.isFinite(parsedTopK) && parsedTopK >= 1 ? Math.min(15, parsedTopK) : this.plugin.settings.qaTopK;
     this.inputEl.value = "";
-    this.appendUserMessage(question);
+    this.pushMessage({
+      role: "user",
+      text: question,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
     this.running = true;
     this.sendButton.disabled = true;
-    this.appendSystemMessage("Searching selected notes...");
+    this.pushMessage({
+      role: "system",
+      text: "\uAC80\uC0C9 \uBC0F \uB2F5\uBCC0 \uC0DD\uC131 \uC911...",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    const draftMessage = {
+      role: "assistant",
+      text: "",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.messages.push(draftMessage);
+    const draftIndex = this.messages.length - 1;
+    this.renderMessages();
     try {
-      const result = await this.plugin.askLocalQa(question, topK, this.history);
-      this.appendAssistantMessage(result);
-      const nextHistory = [
-        ...this.history,
-        { role: "user", text: question },
-        { role: "assistant", text: result.answer }
-      ];
-      this.history = nextHistory.slice(-12);
+      const result = await this.plugin.askLocalQa(
+        question,
+        topK,
+        this.buildHistoryTurns(),
+        (token) => {
+          this.clearPendingSystemMessage();
+          const draft2 = this.messages[draftIndex];
+          if (draft2 && draft2.role === "assistant") {
+            draft2.text += token;
+            this.renderMessages();
+          }
+        }
+      );
+      this.clearPendingSystemMessage();
+      const draft = this.messages[draftIndex];
+      if (draft && draft.role === "assistant") {
+        draft.text = result.answer;
+        draft.timestamp = (/* @__PURE__ */ new Date()).toISOString();
+        draft.sources = result.sources;
+        draft.model = result.model;
+        draft.embeddingModel = result.embeddingModel;
+        draft.retrievalCacheHits = result.retrievalCacheHits;
+        draft.retrievalCacheWrites = result.retrievalCacheWrites;
+        this.renderMessages();
+      } else {
+        this.pushMessage({
+          role: "assistant",
+          text: result.answer,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          sources: result.sources,
+          model: result.model,
+          embeddingModel: result.embeddingModel,
+          retrievalCacheHits: result.retrievalCacheHits,
+          retrievalCacheWrites: result.retrievalCacheWrites
+        });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown local QA error";
-      this.appendSystemMessage(`Error: ${message}`);
-      new import_obsidian4.Notice(`Local Q&A failed: ${message}`, 6e3);
+      this.clearPendingSystemMessage();
+      const draft = this.messages[draftIndex];
+      if (draft && draft.role === "assistant" && !draft.text.trim()) {
+        this.messages.splice(draftIndex, 1);
+      }
+      this.pushMessage({
+        role: "system",
+        text: `\uC624\uB958: ${message}`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      new import_obsidian4.Notice(`Local Q&A failed: ${message}`, 7e3);
     } finally {
       this.running = false;
       this.sendButton.disabled = false;
@@ -2573,6 +2774,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     await this.loadSettings();
     this.statusBarEl = this.addStatusBarItem();
     this.setStatus("idle");
+    this.registerView(
+      LOCAL_QA_VIEW_TYPE,
+      (leaf) => new LocalQAWorkspaceView(leaf, this)
+    );
+    await this.cleanupLegacyCacheArtifacts();
     this.addCommand({
       id: "select-target-notes",
       name: "Auto-Linker: Select target notes/folders",
@@ -2640,13 +2846,14 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.addCommand({
       id: "ask-local-ai-from-selected-notes",
       name: "Ask local AI from selected notes",
-      callback: async () => this.openLocalQaChatModal()
+      callback: async () => this.openLocalQaWorkspaceView()
     });
     this.addSettingTab(new KnowledgeWeaverSettingTab(this.app, this));
     await this.refreshOllamaDetection({ notify: false, autoApply: true });
     await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
   }
   onunload() {
+    this.app.workspace.getLeavesOfType(LOCAL_QA_VIEW_TYPE).forEach((leaf) => leaf.detach());
     this.setStatus("idle");
   }
   getOllamaDetectionSummary() {
@@ -2660,6 +2867,110 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   getEmbeddingModelOptions() {
     return this.embeddingDetectionOptions;
+  }
+  async openLocalQaWorkspaceView() {
+    let leaf = this.app.workspace.getLeavesOfType(LOCAL_QA_VIEW_TYPE)[0];
+    if (!leaf) {
+      const rightLeaf = this.app.workspace.getRightLeaf(false);
+      if (!rightLeaf) {
+        this.notice("Could not open right-side chat pane.");
+        return;
+      }
+      leaf = rightLeaf;
+      await leaf.setViewState({
+        type: LOCAL_QA_VIEW_TYPE,
+        active: true
+      });
+    }
+    this.app.workspace.revealLeaf(leaf);
+  }
+  getSelectedFilesForQa() {
+    return this.getSelectedFiles();
+  }
+  getSelectedFolderPathsForQa() {
+    return [...this.settings.targetFolderPaths];
+  }
+  getQaModelLabelForQa() {
+    return this.resolveQaModel() || "(not set)";
+  }
+  getQaEmbeddingModelForQa() {
+    return this.settings.semanticOllamaModel.trim();
+  }
+  async openSelectionForQa() {
+    await this.openSelectionModal();
+  }
+  escapeYamlValue(value) {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+  async saveLocalQaTranscript(messages) {
+    const timestamp = /* @__PURE__ */ new Date();
+    const stamp = formatBackupStamp(timestamp);
+    const folder = (0, import_obsidian4.normalizePath)(LOCAL_QA_TRANSCRIPT_FOLDER);
+    let outputPath = (0, import_obsidian4.normalizePath)(`${folder}/chat-${stamp}.md`);
+    let suffix = 1;
+    while (await this.app.vault.adapter.exists(outputPath)) {
+      outputPath = (0, import_obsidian4.normalizePath)(`${folder}/chat-${stamp}-${suffix}.md`);
+      suffix += 1;
+    }
+    const qaModel = this.getQaModelLabelForQa();
+    const embeddingModel = this.getQaEmbeddingModelForQa();
+    const selectedFiles = this.getSelectedFilesForQa().map((file) => file.path).sort((a, b) => a.localeCompare(b));
+    const selectedFolders = this.getSelectedFolderPathsForQa().sort(
+      (a, b) => a.localeCompare(b)
+    );
+    const turns = messages.filter(
+      (item) => item.role === "user" || item.role === "assistant"
+    );
+    const lines = [];
+    lines.push("---");
+    lines.push('type: "auto-linker-chat"');
+    lines.push(`created: "${timestamp.toISOString()}"`);
+    lines.push(`provider: "${this.escapeYamlValue(this.settings.provider)}"`);
+    lines.push(`qa_model: "${this.escapeYamlValue(qaModel)}"`);
+    lines.push(`embedding_model: "${this.escapeYamlValue(embeddingModel || "(not set)")}"`);
+    lines.push(`turn_count: ${turns.length}`);
+    lines.push("scope_files:");
+    if (selectedFiles.length === 0) {
+      lines.push('  - "(none)"');
+    } else {
+      for (const path of selectedFiles) {
+        lines.push(`  - "${this.escapeYamlValue(path)}"`);
+      }
+    }
+    lines.push("scope_folders:");
+    if (selectedFolders.length === 0) {
+      lines.push('  - "(none)"');
+    } else {
+      for (const path of selectedFolders) {
+        lines.push(`  - "${this.escapeYamlValue(path)}"`);
+      }
+    }
+    lines.push("---");
+    lines.push("");
+    lines.push("# Local AI Chat Transcript");
+    lines.push("");
+    for (const message of messages) {
+      if (message.role === "system") {
+        lines.push(`> [System ${message.timestamp}] ${message.text}`);
+        lines.push("");
+        continue;
+      }
+      const label = message.role === "assistant" ? "Assistant" : "User";
+      lines.push(`## ${label} (${message.timestamp})`);
+      lines.push(message.text);
+      if (message.role === "assistant" && message.sources && message.sources.length > 0) {
+        lines.push("");
+        lines.push("Sources:");
+        for (const source of message.sources) {
+          lines.push(`- ${source.path} (${formatSimilarity(source.similarity)})`);
+        }
+      }
+      lines.push("");
+    }
+    await this.ensureParentFolder(outputPath);
+    await this.app.vault.adapter.write(outputPath, `${lines.join("\n").trim()}
+`);
+    return outputPath;
   }
   async applyRecommendedOllamaModel(notify) {
     var _a;
@@ -2876,6 +3187,77 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     return [];
   }
+  parseModelSizeB(modelName) {
+    const lower = modelName.toLowerCase();
+    const explicit = lower.match(/(\d+(?:\.\d+)?)\s*b\b/);
+    if (explicit) {
+      const size = Number.parseFloat(explicit[1]);
+      if (Number.isFinite(size) && size > 0) {
+        return size;
+      }
+    }
+    const tag = lower.match(/:(\d+(?:\.\d+)?)(?:b|g)?$/);
+    if (tag) {
+      const size = Number.parseFloat(tag[1]);
+      if (Number.isFinite(size) && size > 0) {
+        return size;
+      }
+    }
+    return null;
+  }
+  estimateRecommendedSelectionMax(modelName) {
+    const sizeB = this.parseModelSizeB(modelName);
+    let maxByModel = 120;
+    if (sizeB !== null) {
+      if (sizeB < 2) {
+        maxByModel = 40;
+      } else if (sizeB < 5) {
+        maxByModel = 70;
+      } else if (sizeB < 9) {
+        maxByModel = 120;
+      } else if (sizeB < 15) {
+        maxByModel = 180;
+      } else if (sizeB < 30) {
+        maxByModel = 260;
+      } else {
+        maxByModel = 360;
+      }
+    }
+    if (!this.settings.semanticLinkingEnabled || !this.settings.analyzeLinked) {
+      maxByModel = Math.max(30, Math.floor(maxByModel * 0.7));
+    }
+    return maxByModel;
+  }
+  getAnalysisCachePath() {
+    return (0, import_obsidian4.normalizePath)(
+      `${this.app.vault.configDir}/plugins/auto-linker/${ANALYSIS_CACHE_FILE}`
+    );
+  }
+  async cleanupLegacyCacheArtifacts() {
+    const legacyFiles = [
+      (0, import_obsidian4.normalizePath)("Auto-Linker Cache/analysis-proposal-cache.json"),
+      (0, import_obsidian4.normalizePath)("Auto-Linker Cache/semantic-embedding-cache.json")
+    ];
+    for (const path of legacyFiles) {
+      try {
+        if (await this.app.vault.adapter.exists(path)) {
+          await this.app.vault.adapter.remove(path);
+        }
+      } catch (e) {
+      }
+    }
+    const legacyFolder = (0, import_obsidian4.normalizePath)("Auto-Linker Cache");
+    try {
+      if (!await this.app.vault.adapter.exists(legacyFolder)) {
+        return;
+      }
+      const listing = await this.app.vault.adapter.list(legacyFolder);
+      if (listing.files.length === 0 && listing.folders.length === 0) {
+        await this.app.vault.adapter.rmdir(legacyFolder, false);
+      }
+    } catch (e) {
+    }
+  }
   getProviderCacheSignature() {
     const modelLabel = getProviderModelLabel(this.settings);
     switch (this.settings.provider) {
@@ -2904,11 +3286,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   buildAnalysisCacheKey(providerSignature, filePath) {
     return `${providerSignature}::${filePath}`;
   }
-  buildAnalysisRequestFingerprint(providerSignature, request) {
+  buildAnalysisRequestSignature(providerSignature, request) {
     const payload = JSON.stringify({
       providerSignature,
       sourcePath: request.sourcePath,
-      sourceText: request.sourceText,
       candidateLinkPaths: request.candidateLinkPaths,
       maxTags: request.maxTags,
       maxLinked: request.maxLinked,
@@ -2924,7 +3305,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (this.analysisCache) {
       return this.analysisCache;
     }
-    const path = (0, import_obsidian4.normalizePath)(ANALYSIS_CACHE_PATH);
+    const path = this.getAnalysisCachePath();
     const exists = await this.app.vault.adapter.exists(path);
     if (!exists) {
       this.analysisCache = {
@@ -2982,14 +3363,14 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       return;
     }
     this.pruneAnalysisCache(this.analysisCache);
-    const path = (0, import_obsidian4.normalizePath)(ANALYSIS_CACHE_PATH);
+    const path = this.getAnalysisCachePath();
     await this.ensureParentFolder(path);
     await this.app.vault.adapter.write(path, JSON.stringify(this.analysisCache));
     this.analysisCacheDirty = false;
   }
-  getCachedAnalysisOutcome(cache, cacheKey, fingerprint) {
+  getCachedAnalysisOutcome(cache, cacheKey, requestSignature, file) {
     const entry = cache.entries[cacheKey];
-    if (!entry || entry.fingerprint !== fingerprint) {
+    if (!entry || entry.requestSignature !== requestSignature || entry.mtime !== file.stat.mtime || entry.size !== file.stat.size) {
       return null;
     }
     return {
@@ -3000,9 +3381,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       }
     };
   }
-  storeAnalysisOutcome(cache, cacheKey, fingerprint, outcome) {
+  storeAnalysisOutcome(cache, cacheKey, requestSignature, file, outcome) {
     cache.entries[cacheKey] = {
-      fingerprint,
+      requestSignature,
+      mtime: file.stat.mtime,
+      size: file.stat.size,
       proposal: cloneMetadataProposal(outcome.proposal),
       meta: cloneSuggestionMeta(outcome.meta),
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -3230,15 +3613,9 @@ ${item.content}`
     ].join("\n");
   }
   async openLocalQaChatModal() {
-    const selectedFiles = this.getSelectedFiles();
-    if (selectedFiles.length === 0) {
-      this.notice("No target notes selected. Open selector first.");
-      await this.openSelectionModal();
-      return;
-    }
-    new LocalQAChatModal(this.app, this, this.settings.qaTopK).open();
+    await this.openLocalQaWorkspaceView();
   }
-  async askLocalQa(question, topK, history = []) {
+  async askLocalQa(question, topK, history = [], onToken) {
     var _a;
     const selectedFiles = this.getSelectedFiles();
     if (selectedFiles.length === 0) {
@@ -3319,21 +3696,77 @@ ${item.content}`
       }
       const prompt = this.buildLocalQaPrompt(safeQuestion, sourceBlocks, history);
       this.setStatus("asking local qa model...");
-      const response = await (0, import_obsidian4.requestUrl)({
-        url: `${qaBaseUrl.replace(/\/$/, "")}/api/generate`,
-        method: "POST",
-        contentType: "application/json",
-        body: JSON.stringify({
-          model: qaModel,
-          prompt,
-          stream: false
-        }),
-        throw: false
-      });
-      if (response.status >= 300) {
-        throw new Error(`Local Q&A request failed: ${response.status}`);
+      let answer = "";
+      if (onToken) {
+        const streamResponse = await fetch(`${qaBaseUrl.replace(/\/$/, "")}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: qaModel,
+            prompt,
+            stream: true
+          })
+        });
+        if (!streamResponse.ok || !streamResponse.body) {
+          throw new Error(`Local Q&A request failed: ${streamResponse.status}`);
+        }
+        const reader = streamResponse.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          let lineBreakIndex = buffer.indexOf("\n");
+          while (lineBreakIndex >= 0) {
+            const line = buffer.slice(0, lineBreakIndex).trim();
+            buffer = buffer.slice(lineBreakIndex + 1);
+            if (line) {
+              try {
+                const parsed = JSON.parse(line);
+                const token = typeof parsed.response === "string" ? parsed.response : "";
+                if (token) {
+                  answer += token;
+                  onToken(token);
+                }
+              } catch (e) {
+              }
+            }
+            lineBreakIndex = buffer.indexOf("\n");
+          }
+        }
+        const tail = buffer.trim();
+        if (tail) {
+          try {
+            const parsed = JSON.parse(tail);
+            const token = typeof parsed.response === "string" ? parsed.response : "";
+            if (token) {
+              answer += token;
+              onToken(token);
+            }
+          } catch (e) {
+          }
+        }
+      } else {
+        const response = await (0, import_obsidian4.requestUrl)({
+          url: `${qaBaseUrl.replace(/\/$/, "")}/api/generate`,
+          method: "POST",
+          contentType: "application/json",
+          body: JSON.stringify({
+            model: qaModel,
+            prompt,
+            stream: false
+          }),
+          throw: false
+        });
+        if (response.status >= 300) {
+          throw new Error(`Local Q&A request failed: ${response.status}`);
+        }
+        answer = typeof ((_a = response.json) == null ? void 0 : _a.response) === "string" ? response.json.response.trim() : response.text.trim();
       }
-      const answer = typeof ((_a = response.json) == null ? void 0 : _a.response) === "string" ? response.json.response.trim() : response.text.trim();
+      answer = answer.trim();
       if (!answer) {
         throw new Error("Local Q&A returned an empty answer.");
       }
@@ -3367,18 +3800,52 @@ ${item.content}`
       keepKeys
     };
   }
+  extractPathTerms(path) {
+    return path.toLowerCase().replace(/\.md$/i, "").split(/[^a-z0-9가-힣]+/).map((token) => token.trim()).filter((token) => token.length >= 2);
+  }
+  scoreCandidatePath(sourcePath, candidatePath) {
+    const sourceParts = sourcePath.toLowerCase().split("/");
+    const targetParts = candidatePath.toLowerCase().split("/");
+    let sharedPrefix = 0;
+    for (let i = 0; i < Math.min(sourceParts.length, targetParts.length); i += 1) {
+      if (sourceParts[i] !== targetParts[i]) {
+        break;
+      }
+      sharedPrefix += 1;
+    }
+    const sourceTerms = new Set(this.extractPathTerms(sourcePath));
+    const targetTerms = this.extractPathTerms(candidatePath);
+    let overlap = 0;
+    for (const token of targetTerms) {
+      if (sourceTerms.has(token)) {
+        overlap += 1;
+      }
+    }
+    return sharedPrefix * 2 + overlap;
+  }
   getCandidateLinkPathsForFile(filePath, selectedFiles, semanticNeighbors) {
     var _a;
     const fallback = selectedFiles.filter((candidate) => candidate.path !== filePath).map((candidate) => candidate.path);
+    const candidateLimit = Math.max(
+      this.settings.maxLinked * 6,
+      this.settings.semanticTopK,
+      ANALYSIS_HARD_MAX_CANDIDATES
+    );
+    const rankedFallback = [...fallback].sort((a, b) => {
+      const scoreDiff = this.scoreCandidatePath(filePath, b) - this.scoreCandidatePath(filePath, a);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+      return a.localeCompare(b);
+    });
     if (!semanticNeighbors || !this.settings.semanticLinkingEnabled) {
-      return fallback;
+      return rankedFallback.slice(0, candidateLimit);
     }
     const semantic = ((_a = semanticNeighbors.get(filePath)) != null ? _a : []).map((item) => item.path);
     if (semantic.length === 0) {
-      return fallback;
+      return rankedFallback.slice(0, candidateLimit);
     }
-    const candidateLimit = Math.max(this.settings.maxLinked * 3, this.settings.semanticTopK);
-    return mergeUniqueStrings(semantic, fallback).slice(0, candidateLimit);
+    return mergeUniqueStrings(semantic, rankedFallback).slice(0, candidateLimit);
   }
   parseExcludedPatterns() {
     return this.settings.excludedFolderPatterns.split(/[\n,;]+/).map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);
@@ -3717,6 +4184,27 @@ ${item.content}`
         return;
       }
     }
+    const capacityModelLabel = getProviderModelLabel(this.settings);
+    const recommendedMax = this.estimateRecommendedSelectionMax(capacityModelLabel);
+    if (selectedFiles.length >= Math.floor(recommendedMax * 0.85)) {
+      this.notice(
+        `Selected ${selectedFiles.length}. Recommended max for current model is about ${recommendedMax}.`,
+        5e3
+      );
+    }
+    if (selectedFiles.length > recommendedMax) {
+      const capacityDecision = await CapacityGuardModal.ask(
+        this.app,
+        selectedFiles.length,
+        recommendedMax,
+        capacityModelLabel,
+        this.settings.semanticLinkingEnabled && this.settings.analyzeLinked
+      );
+      if (!capacityDecision.proceed) {
+        this.notice("Analysis cancelled due to large selection size.");
+        return;
+      }
+    }
     const decision = await this.askBackupDecision();
     if (!decision.proceed) {
       this.notice("Analysis cancelled.");
@@ -3793,14 +4281,14 @@ ${item.content}`
       });
       this.setStatus(`analyzing ${index + 1}/${selectedFiles.length}`);
       try {
-        const request = {
+        const candidateLinkPaths = this.getCandidateLinkPathsForFile(
+          file.path,
+          selectedFiles,
+          semanticNeighbors
+        );
+        const signatureInput = {
           sourcePath: file.path,
-          sourceText: await this.app.vault.cachedRead(file),
-          candidateLinkPaths: this.getCandidateLinkPathsForFile(
-            file.path,
-            selectedFiles,
-            semanticNeighbors
-          ),
+          candidateLinkPaths,
           maxTags: this.settings.maxTags,
           maxLinked: this.settings.maxLinked,
           analyzeTags: this.settings.analyzeTags,
@@ -3810,25 +4298,31 @@ ${item.content}`
           includeReasons: this.settings.includeReasons
         };
         const cacheKey = this.buildAnalysisCacheKey(providerCacheSignature, file.path);
-        const requestFingerprint = this.buildAnalysisRequestFingerprint(
+        const requestSignature = this.buildAnalysisRequestSignature(
           providerCacheSignature,
-          request
+          signatureInput
         );
         const cachedOutcome = this.getCachedAnalysisOutcome(
           analysisCache,
           cacheKey,
-          requestFingerprint
+          requestSignature,
+          file
         );
         let outcome;
         if (cachedOutcome) {
           outcome = cachedOutcome;
           analysisCacheHits += 1;
         } else {
+          const request = {
+            ...signatureInput,
+            sourceText: await this.app.vault.cachedRead(file)
+          };
           outcome = await analyzeWithFallback(this.settings, request);
           this.storeAnalysisOutcome(
             analysisCache,
             cacheKey,
-            requestFingerprint,
+            requestSignature,
+            file,
             outcome
           );
           analysisCacheWrites += 1;

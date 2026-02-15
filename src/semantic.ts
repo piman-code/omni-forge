@@ -2,7 +2,6 @@ import { App, TFile, normalizePath, requestUrl } from "obsidian";
 import type { KnowledgeWeaverSettings } from "./types";
 
 const EMBEDDING_BATCH_SIZE = 8;
-const EMBEDDING_CACHE_PATH = "Auto-Linker Cache/semantic-embedding-cache.json";
 const EMBEDDING_CACHE_VERSION = 1;
 const EMBEDDING_MODEL_REGEX =
   /(embed|embedding|nomic-embed|mxbai|bge|e5|gte|arctic-embed|jina-emb)/i;
@@ -40,6 +39,8 @@ export interface SemanticQueryResult {
 interface EmbeddingCacheEntry {
   fingerprint: string;
   vector: number[];
+  mtime?: number;
+  size?: number;
   updatedAt: string;
 }
 
@@ -338,6 +339,12 @@ function buildCacheKey(baseUrl: string, model: string, filePath: string): string
   return `${baseUrl}::${model}::${filePath}`;
 }
 
+function getEmbeddingCachePath(app: App): string {
+  return normalizePath(
+    `${app.vault.configDir}/plugins/auto-linker/semantic-embedding-cache.json`,
+  );
+}
+
 async function ensureParentFolder(app: App, path: string): Promise<void> {
   const normalized = normalizePath(path);
   const chunks = normalized.split("/");
@@ -358,7 +365,7 @@ async function ensureParentFolder(app: App, path: string): Promise<void> {
 }
 
 async function readEmbeddingCache(app: App): Promise<EmbeddingCacheData> {
-  const path = normalizePath(EMBEDDING_CACHE_PATH);
+  const path = getEmbeddingCachePath(app);
   const exists = await app.vault.adapter.exists(path);
   if (!exists) {
     return { version: EMBEDDING_CACHE_VERSION, entries: {} };
@@ -385,7 +392,7 @@ async function readEmbeddingCache(app: App): Promise<EmbeddingCacheData> {
 }
 
 async function writeEmbeddingCache(app: App, cache: EmbeddingCacheData): Promise<void> {
-  const path = normalizePath(EMBEDDING_CACHE_PATH);
+  const path = getEmbeddingCachePath(app);
   await ensureParentFolder(app, path);
   await app.vault.adapter.write(path, JSON.stringify(cache));
 }
@@ -447,15 +454,6 @@ async function buildFileVectorIndex(
   config: EmbeddingConfig,
   maxChars: number,
 ): Promise<FileVectorBuildResult> {
-  const corpus: Array<{ file: TFile; text: string }> = [];
-  for (const file of files) {
-    const content = await app.vault.cachedRead(file);
-    corpus.push({
-      file,
-      text: normalizeSourceText(content, maxChars),
-    });
-  }
-
   const vectorsByPath = new Map<string, number[]>();
   const errors: string[] = [];
   const cache = await readEmbeddingCache(app);
@@ -469,24 +467,47 @@ async function buildFileVectorIndex(
     fingerprint: string;
   }> = [];
 
-  for (const item of corpus) {
-    const fingerprint = fingerprintText(item.text);
-    const cacheKey = buildCacheKey(config.baseUrl, config.model, item.file.path);
+  for (const file of files) {
+    const cacheKey = buildCacheKey(config.baseUrl, config.model, file.path);
     const hit = cache.entries[cacheKey];
+    if (
+      hit &&
+      typeof hit.mtime === "number" &&
+      typeof hit.size === "number" &&
+      hit.mtime === file.stat.mtime &&
+      hit.size === file.stat.size &&
+      Array.isArray(hit.vector) &&
+      hit.vector.length > 0
+    ) {
+      vectorsByPath.set(file.path, hit.vector);
+      cacheHits += 1;
+      continue;
+    }
+
+    const content = await app.vault.cachedRead(file);
+    const text = normalizeSourceText(content, maxChars);
+    const fingerprint = fingerprintText(text);
     if (
       hit &&
       hit.fingerprint === fingerprint &&
       Array.isArray(hit.vector) &&
       hit.vector.length > 0
     ) {
-      vectorsByPath.set(item.file.path, hit.vector);
+      vectorsByPath.set(file.path, hit.vector);
+      cache.entries[cacheKey] = {
+        ...hit,
+        mtime: file.stat.mtime,
+        size: file.stat.size,
+        updatedAt: new Date().toISOString(),
+      };
       cacheHits += 1;
+      cacheDirty = true;
       continue;
     }
 
     missing.push({
-      file: item.file,
-      text: item.text,
+      file,
+      text,
       cacheKey,
       fingerprint,
     });
@@ -515,6 +536,8 @@ async function buildFileVectorIndex(
         cache.entries[entry.cacheKey] = {
           fingerprint: entry.fingerprint,
           vector,
+          mtime: entry.file.stat.mtime,
+          size: entry.file.stat.size,
           updatedAt: new Date().toISOString(),
         };
         cacheWrites += 1;
