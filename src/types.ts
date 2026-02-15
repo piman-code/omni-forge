@@ -131,6 +131,7 @@ export interface KnowledgeWeaverSettings {
   analyzeIndex: boolean;
   maxTags: number;
   maxLinked: number;
+  analysisOnlyChangedNotes: boolean;
   semanticLinkingEnabled: boolean;
   semanticOllamaBaseUrl: string;
   semanticOllamaModel: string;
@@ -146,6 +147,8 @@ export interface KnowledgeWeaverSettings {
   qaPreferChatApi: boolean;
   qaStructureGuardEnabled: boolean;
   qaThreadAutoSyncEnabled: boolean;
+  watchNewNotesEnabled: boolean;
+  watchNewNotesFolders: string;
   chatTranscriptRootPath: string;
   cleanupReportRootPath: string;
   propertyCleanupEnabled: boolean;

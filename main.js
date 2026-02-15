@@ -1404,6 +1404,7 @@ var DEFAULT_SETTINGS = {
   analyzeIndex: true,
   maxTags: 8,
   maxLinked: 8,
+  analysisOnlyChangedNotes: false,
   semanticLinkingEnabled: false,
   semanticOllamaBaseUrl: "http://127.0.0.1:11434",
   semanticOllamaModel: "",
@@ -1419,8 +1420,10 @@ var DEFAULT_SETTINGS = {
   qaPreferChatApi: true,
   qaStructureGuardEnabled: true,
   qaThreadAutoSyncEnabled: true,
-  chatTranscriptRootPath: "Auto-Linker Chats",
-  cleanupReportRootPath: "Auto-Linker Reports",
+  watchNewNotesEnabled: false,
+  watchNewNotesFolders: "",
+  chatTranscriptRootPath: "Auto Link Chats",
+  cleanupReportRootPath: "Auto Link Reports",
   propertyCleanupEnabled: false,
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
@@ -1430,9 +1433,9 @@ var DEFAULT_SETTINGS = {
   includeSubfoldersInFolderSelection: true,
   selectionPathWidthPercent: 72,
   backupBeforeApply: true,
-  backupRootPath: "Auto-Linker Backups",
+  backupRootPath: "Auto Link Backups",
   backupRetentionCount: 10,
-  excludedFolderPatterns: ".obsidian,Auto-Linker Backups",
+  excludedFolderPatterns: ".obsidian,Auto Link Backups",
   showProgressNotices: true,
   generateMoc: true,
   mocPath: "MOC/Selected Knowledge MOC.md"
@@ -2000,6 +2003,59 @@ var CapacityGuardModal = class _CapacityGuardModal extends import_obsidian4.Moda
     });
   }
 };
+var NewNoteWatchModal = class _NewNoteWatchModal extends import_obsidian4.Modal {
+  constructor(app, filePath, watchedFolder, onResolve) {
+    super(app);
+    this.resolved = false;
+    this.filePath = filePath;
+    this.watchedFolder = watchedFolder;
+    this.onResolve = onResolve;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "New note detected in watched folder" });
+    contentEl.createEl("p", { text: `Folder: ${this.watchedFolder}` });
+    contentEl.createEl("p", { text: `File: ${this.filePath}` });
+    contentEl.createEl("p", {
+      text: "Add this note to target selection and run analysis now?"
+    });
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+    const ignoreButton = footer.createEl("button", { text: "Ignore" });
+    ignoreButton.onclick = () => this.resolve({ action: "ignore" });
+    const addOnlyButton = footer.createEl("button", { text: "Add to selection" });
+    addOnlyButton.onclick = () => this.resolve({ action: "add_only" });
+    const analyzeNowButton = footer.createEl("button", {
+      text: "Add and analyze now",
+      cls: "mod-cta"
+    });
+    analyzeNowButton.onclick = () => this.resolve({ action: "analyze_now" });
+  }
+  onClose() {
+    if (!this.resolved) {
+      this.onResolve({ action: "ignore" });
+      this.resolved = true;
+    }
+    this.contentEl.empty();
+  }
+  resolve(decision) {
+    if (this.resolved) {
+      return;
+    }
+    this.resolved = true;
+    this.onResolve(decision);
+    this.close();
+  }
+  static ask(app, filePath, watchedFolder) {
+    return new Promise((resolve) => {
+      new _NewNoteWatchModal(app, filePath, watchedFolder, resolve).open();
+    });
+  }
+};
 var RunProgressModal = class extends import_obsidian4.Modal {
   constructor(app, titleText) {
     super(app);
@@ -2213,7 +2269,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     return LOCAL_QA_VIEW_TYPE;
   }
   getDisplayText() {
-    return "Auto-Linker Local Chat";
+    return "Auto Link Local Chat";
   }
   getIcon() {
     return "message-square";
@@ -2310,7 +2366,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const folderButton = actionRow.createEl("button", { text: "Chat folder" });
     folderButton.addClass("auto-linker-chat-btn");
     folderButton.onclick = async () => {
-      const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto-Linker Chats";
+      const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto Link Chats";
       const next = window.prompt("Chat transcript folder (vault-relative)", current);
       if (next === null) {
         return;
@@ -2914,7 +2970,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Auto-Linker Settings" });
+    containerEl.createEl("h2", { text: "Auto Link Settings" });
     containerEl.createEl("p", {
       text: "Language docs: README.md (index) | README_KO.md (Korean quick access)"
     });
@@ -3108,6 +3164,14 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Analyze changed notes only").setDesc(
+      "Skip unchanged notes when cache metadata matches. Turn off to include cached notes in every run."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.analysisOnlyChangedNotes).onChange(async (value) => {
+        this.plugin.settings.analysisOnlyChangedNotes = value;
+        await this.plugin.saveSettings();
+      })
+    );
     containerEl.createEl("h3", { text: "Semantic linking (Ollama embeddings)" });
     new import_obsidian4.Setting(containerEl).setName("Enable semantic candidate ranking").setDesc(
       "Use local Ollama embeddings to rank likely related notes before AI linked suggestion."
@@ -3258,7 +3322,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Chat transcript folder path").setDesc("Vault-relative path for saving chat transcripts.").addText(
-      (text) => text.setPlaceholder("Auto-Linker Chats").setValue(this.plugin.settings.chatTranscriptRootPath).onChange(async (value) => {
+      (text) => text.setPlaceholder("Auto Link Chats").setValue(this.plugin.settings.chatTranscriptRootPath).onChange(async (value) => {
         this.plugin.settings.chatTranscriptRootPath = value.trim();
         await this.plugin.saveSettings();
       })
@@ -3320,7 +3384,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       "Use command palette: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'."
     );
     new import_obsidian4.Setting(containerEl).setName("Cleanup dry-run report folder").setDesc("Vault-relative folder for cleanup dry-run report files.").addText(
-      (text) => text.setPlaceholder("Auto-Linker Reports").setValue(this.plugin.settings.cleanupReportRootPath).onChange(async (value) => {
+      (text) => text.setPlaceholder("Auto Link Reports").setValue(this.plugin.settings.cleanupReportRootPath).onChange(async (value) => {
         this.plugin.settings.cleanupReportRootPath = value.trim();
         await this.plugin.saveSettings();
       })
@@ -3338,6 +3402,20 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Watch folders for new notes").setDesc(
+      "When a new markdown file appears in watched folders, prompt to add/analyze it."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.watchNewNotesEnabled).onChange(async (value) => {
+        this.plugin.settings.watchNewNotesEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Watched folders").setDesc("Comma/newline separated vault-relative folder paths. Example: Inbox,Clippings").addTextArea(
+      (text) => text.setPlaceholder("Inbox,Clippings").setValue(this.plugin.settings.watchNewNotesFolders).onChange(async (value) => {
+        this.plugin.settings.watchNewNotesFolders = value;
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Selection path width percent").setDesc("Controls path width in Select target notes/folders modal (45-100).").addText(
       (text) => text.setPlaceholder("72").setValue(String(this.plugin.settings.selectionPathWidthPercent)).onChange(async (value) => {
         const parsed = Number.parseInt(value, 10);
@@ -3348,7 +3426,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Excluded folder patterns").setDesc("Comma-separated substrings. Matched folders are ignored during selection/analysis.").addText(
-      (text) => text.setPlaceholder(".obsidian,Auto-Linker Backups").setValue(this.plugin.settings.excludedFolderPatterns).onChange(async (value) => {
+      (text) => text.setPlaceholder(".obsidian,Auto Link Backups").setValue(this.plugin.settings.excludedFolderPatterns).onChange(async (value) => {
         this.plugin.settings.excludedFolderPatterns = value;
         await this.plugin.saveSettings();
       })
@@ -3360,7 +3438,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Backup root path").setDesc("Vault-relative folder path used for versioned backups.").addText(
-      (text) => text.setPlaceholder("Auto-Linker Backups").setValue(this.plugin.settings.backupRootPath).onChange(async (value) => {
+      (text) => text.setPlaceholder("Auto Link Backups").setValue(this.plugin.settings.backupRootPath).onChange(async (value) => {
         try {
           await this.plugin.setBackupRootPathForQa(value);
         } catch (error) {
@@ -3411,6 +3489,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.embeddingDetectionSummary = "Embedding model detection has not run yet. Click refresh to detect installed Ollama models.";
     this.analysisCache = null;
     this.analysisCacheDirty = false;
+    this.pendingNewNoteWatchPrompts = /* @__PURE__ */ new Set();
   }
   async onload() {
     await this.loadSettings();
@@ -3421,9 +3500,17 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       (leaf) => new LocalQAWorkspaceView(leaf, this)
     );
     await this.cleanupLegacyCacheArtifacts();
-    this.addRibbonIcon("message-square", "Open Auto-Linker Local Chat", () => {
+    this.addRibbonIcon("message-square", "Open Auto Link Local Chat", () => {
       void this.openLocalQaWorkspaceView();
     });
+    this.registerEvent(
+      this.app.vault.on("create", (entry) => {
+        if (!(entry instanceof import_obsidian4.TFile) || entry.extension !== "md") {
+          return;
+        }
+        void this.handleWatchedNewFile(entry);
+      })
+    );
     this.addCommand({
       id: "select-target-notes",
       name: "Select target notes/folders",
@@ -3594,12 +3681,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return normalized;
   }
   async setChatTranscriptRootPathForQa(path) {
-    const next = this.resolveSafeFolderPath(path, "Auto-Linker Chats", "Chat transcript");
+    const next = this.resolveSafeFolderPath(path, "Auto Link Chats", "Chat transcript");
     this.settings.chatTranscriptRootPath = next;
     await this.saveSettings();
   }
   async setBackupRootPathForQa(path) {
-    const next = this.resolveSafeFolderPath(path, "Auto-Linker Backups", "Backup root");
+    const next = this.resolveSafeFolderPath(path, "Auto Link Backups", "Backup root");
     this.settings.backupRootPath = next;
     await this.saveSettings();
   }
@@ -3649,7 +3736,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   async allocateLocalQaThreadPath(threadId) {
     const folder = this.resolveSafeFolderPath(
       this.settings.chatTranscriptRootPath,
-      "Auto-Linker Chats",
+      "Auto Link Chats",
       "Chat transcript"
     );
     let outputPath = (0, import_obsidian4.normalizePath)(`${folder}/${threadId}.md`);
@@ -3915,6 +4002,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (!Number.isFinite(this.settings.semanticMaxChars)) {
       this.settings.semanticMaxChars = DEFAULT_SETTINGS.semanticMaxChars;
     }
+    if (typeof this.settings.analysisOnlyChangedNotes !== "boolean") {
+      this.settings.analysisOnlyChangedNotes = DEFAULT_SETTINGS.analysisOnlyChangedNotes;
+    }
     if (!Number.isFinite(this.settings.qaTopK)) {
       this.settings.qaTopK = DEFAULT_SETTINGS.qaTopK;
     }
@@ -3947,6 +4037,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
       this.settings.qaThreadAutoSyncEnabled = DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
+    }
+    if (typeof this.settings.watchNewNotesEnabled !== "boolean") {
+      this.settings.watchNewNotesEnabled = DEFAULT_SETTINGS.watchNewNotesEnabled;
+    }
+    if (typeof this.settings.watchNewNotesFolders !== "string") {
+      this.settings.watchNewNotesFolders = DEFAULT_SETTINGS.watchNewNotesFolders;
     }
     if (typeof this.settings.chatTranscriptRootPath !== "string") {
       this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;
@@ -3983,7 +4079,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   setStatus(text) {
     var _a;
-    (_a = this.statusBarEl) == null ? void 0 : _a.setText(`Auto-Linker: ${text}`);
+    (_a = this.statusBarEl) == null ? void 0 : _a.setText(`Auto Link: ${text}`);
   }
   notice(text, timeout = 3500) {
     if (!this.settings.showProgressNotices) {
@@ -4118,6 +4214,43 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     });
     return this.hashString(payload);
   }
+  buildAnalysisSettingsSignature(providerSignature) {
+    const payload = JSON.stringify({
+      providerSignature,
+      maxTags: this.settings.maxTags,
+      maxLinked: this.settings.maxLinked,
+      analyzeTags: this.settings.analyzeTags,
+      analyzeTopic: this.settings.analyzeTopic,
+      analyzeLinked: this.settings.analyzeLinked,
+      analyzeIndex: this.settings.analyzeIndex,
+      includeReasons: this.settings.includeReasons,
+      semanticLinkingEnabled: this.settings.semanticLinkingEnabled,
+      semanticTopK: this.settings.semanticTopK,
+      semanticMinSimilarity: this.settings.semanticMinSimilarity,
+      semanticMaxChars: this.settings.semanticMaxChars
+    });
+    return this.hashString(payload);
+  }
+  buildSelectionSignature(selectedFiles) {
+    const payload = JSON.stringify(selectedFiles.map((file) => file.path));
+    return this.hashString(payload);
+  }
+  canSkipByChangedOnlyMode(cache, cacheKey, file, settingsSignature, selectionSignature) {
+    const entry = cache.entries[cacheKey];
+    if (!entry) {
+      return false;
+    }
+    if (entry.mtime !== file.stat.mtime || entry.size !== file.stat.size) {
+      return false;
+    }
+    if (entry.settingsSignature !== settingsSignature) {
+      return false;
+    }
+    if (entry.selectionSignature !== selectionSignature) {
+      return false;
+    }
+    return true;
+  }
   async loadAnalysisCache() {
     if (this.analysisCache) {
       return this.analysisCache;
@@ -4185,10 +4318,16 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     await this.app.vault.adapter.write(path, JSON.stringify(this.analysisCache));
     this.analysisCacheDirty = false;
   }
-  getCachedAnalysisOutcome(cache, cacheKey, requestSignature, file) {
+  getCachedAnalysisOutcome(cache, cacheKey, requestSignature, file, settingsSignature, selectionSignature) {
     const entry = cache.entries[cacheKey];
     if (!entry || entry.requestSignature !== requestSignature || entry.mtime !== file.stat.mtime || entry.size !== file.stat.size) {
       return null;
+    }
+    if (entry.settingsSignature !== settingsSignature || entry.selectionSignature !== selectionSignature) {
+      entry.settingsSignature = settingsSignature;
+      entry.selectionSignature = selectionSignature;
+      entry.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+      this.analysisCacheDirty = true;
     }
     return {
       proposal: cloneMetadataProposal(entry.proposal),
@@ -4198,9 +4337,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       }
     };
   }
-  storeAnalysisOutcome(cache, cacheKey, requestSignature, file, outcome) {
+  storeAnalysisOutcome(cache, cacheKey, requestSignature, settingsSignature, selectionSignature, file, outcome) {
     cache.entries[cacheKey] = {
       requestSignature,
+      settingsSignature,
+      selectionSignature,
       mtime: file.stat.mtime,
       size: file.stat.size,
       proposal: cloneMetadataProposal(outcome.proposal),
@@ -5157,6 +5298,123 @@ ${item.content}`
     }
     return mergeUniqueStrings(semantic, rankedFallback).slice(0, candidateLimit);
   }
+  normalizeFolderPrefix(path) {
+    const normalized = (0, import_obsidian4.normalizePath)(path.trim());
+    return normalized.endsWith("/") ? normalized : `${normalized}/`;
+  }
+  isPathInsideFolder(filePath, folderPath) {
+    const fileNormalized = (0, import_obsidian4.normalizePath)(filePath);
+    const folderNormalized = (0, import_obsidian4.normalizePath)(folderPath);
+    if (!fileNormalized || !folderNormalized) {
+      return false;
+    }
+    if (fileNormalized === folderNormalized) {
+      return true;
+    }
+    return fileNormalized.startsWith(this.normalizeFolderPrefix(folderNormalized));
+  }
+  parseWatchedFolders() {
+    return this.settings.watchNewNotesFolders.split(/[\n,;]+/).map((item) => (0, import_obsidian4.normalizePath)(item.trim())).filter((item) => item.length > 0).filter((item) => this.isSafeVaultRelativePath(item)).sort((a, b) => a.localeCompare(b));
+  }
+  resolveMatchedWatchedFolder(filePath) {
+    const watchedFolders = this.parseWatchedFolders();
+    for (const folder of watchedFolders) {
+      if (this.isPathInsideFolder(filePath, folder)) {
+        return folder;
+      }
+    }
+    return null;
+  }
+  isManagedOutputPath(path) {
+    try {
+      const chatRoot = this.resolveSafeFolderPath(
+        this.settings.chatTranscriptRootPath,
+        "Auto Link Chats",
+        "Chat transcript"
+      );
+      if (this.isPathInsideFolder(path, chatRoot)) {
+        return true;
+      }
+    } catch (e) {
+    }
+    try {
+      const reportRoot = this.resolveSafeFolderPath(
+        this.settings.cleanupReportRootPath,
+        "Auto Link Reports",
+        "Cleanup dry-run report"
+      );
+      if (this.isPathInsideFolder(path, reportRoot)) {
+        return true;
+      }
+    } catch (e) {
+    }
+    try {
+      const backupRoot = this.resolveSafeFolderPath(
+        this.settings.backupRootPath,
+        "Auto Link Backups",
+        "Backup root"
+      );
+      if (this.isPathInsideFolder(path, backupRoot)) {
+        return true;
+      }
+    } catch (e) {
+    }
+    return false;
+  }
+  async addFileToSelection(filePath) {
+    const normalized = (0, import_obsidian4.normalizePath)(filePath);
+    if (!normalized || this.isPathExcluded(normalized)) {
+      return "already";
+    }
+    const alreadySelected = this.getSelectedFiles().some((file) => file.path === normalized);
+    if (alreadySelected || this.settings.targetFilePaths.includes(normalized)) {
+      return "already";
+    }
+    this.settings.targetFilePaths = [...this.settings.targetFilePaths, normalized].sort(
+      (a, b) => a.localeCompare(b)
+    );
+    await this.saveSettings();
+    return "added";
+  }
+  async handleWatchedNewFile(file) {
+    if (!this.settings.watchNewNotesEnabled) {
+      return;
+    }
+    if (this.isPathExcluded(file.path) || this.isManagedOutputPath(file.path)) {
+      return;
+    }
+    const matchedFolder = this.resolveMatchedWatchedFolder(file.path);
+    if (!matchedFolder) {
+      return;
+    }
+    if (this.pendingNewNoteWatchPrompts.has(file.path)) {
+      return;
+    }
+    this.pendingNewNoteWatchPrompts.add(file.path);
+    try {
+      const decision = await NewNoteWatchModal.ask(this.app, file.path, matchedFolder);
+      if (decision.action === "ignore") {
+        return;
+      }
+      const addResult = await this.addFileToSelection(file.path);
+      if (decision.action === "add_only") {
+        if (addResult === "added") {
+          this.notice(`Added to selection: ${file.path}`, 5e3);
+        } else {
+          this.notice(`Already included in selection: ${file.path}`, 4e3);
+        }
+        return;
+      }
+      if (addResult === "added") {
+        this.notice(`Added and analyzing: ${file.path}`, 5e3);
+      } else {
+        this.notice(`Analyzing with current selection: ${file.path}`, 5e3);
+      }
+      await this.runAnalysis();
+    } finally {
+      this.pendingNewNoteWatchPrompts.delete(file.path);
+    }
+  }
   parseExcludedPatterns() {
     return this.settings.excludedFolderPatterns.split(/[\n,;]+/).map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);
   }
@@ -5411,7 +5669,7 @@ ${item.content}`
       const removePrefixes = cleanupConfig ? cleanupConfig.removePrefixes.join(", ") || "(none)" : "(none)";
       const keepKeys = cleanupConfig ? [...cleanupConfig.keepKeys].sort((a, b) => a.localeCompare(b)).join(", ") : "(none)";
       const lines = [];
-      lines.push("# Auto-Linker Cleanup Dry-Run Report");
+      lines.push("# Auto Link Cleanup Dry-Run Report");
       lines.push("");
       lines.push(`Generated: ${(/* @__PURE__ */ new Date()).toISOString()}`);
       lines.push(`Selected files: ${selectedFiles.length}`);
@@ -5430,7 +5688,7 @@ ${item.content}`
       try {
         const reportFolder = this.resolveSafeFolderPath(
           this.settings.cleanupReportRootPath,
-          "Auto-Linker Reports",
+          "Auto Link Reports",
           "Cleanup dry-run report"
         );
         reportPath = (0, import_obsidian4.normalizePath)(
@@ -5499,18 +5757,54 @@ ${item.content}`
         return;
       }
     }
+    const analysisCache = await this.loadAnalysisCache();
+    const providerCacheSignature = this.getProviderCacheSignature();
+    const settingsSignature = this.buildAnalysisSettingsSignature(providerCacheSignature);
+    const selectionSignature = this.buildSelectionSignature(selectedFiles);
+    let skippedUnchanged = 0;
+    let filesToAnalyze = selectedFiles;
+    if (this.settings.analysisOnlyChangedNotes) {
+      const pending = [];
+      for (const file of selectedFiles) {
+        const cacheKey = this.buildAnalysisCacheKey(providerCacheSignature, file.path);
+        if (this.canSkipByChangedOnlyMode(
+          analysisCache,
+          cacheKey,
+          file,
+          settingsSignature,
+          selectionSignature
+        )) {
+          skippedUnchanged += 1;
+          continue;
+        }
+        pending.push(file);
+      }
+      filesToAnalyze = pending;
+      if (filesToAnalyze.length === 0) {
+        this.setStatus("analysis done (unchanged cache hit)");
+        this.notice(
+          `No changed notes to analyze. Selected=${selectedFiles.length}, SkippedUnchanged=${skippedUnchanged}.`,
+          5e3
+        );
+        return;
+      }
+      this.notice(
+        `Changed-only mode: ${skippedUnchanged} skipped, ${filesToAnalyze.length} queued.`,
+        4e3
+      );
+    }
     const capacityModelLabel = getProviderModelLabel(this.settings);
     const recommendedMax = this.estimateRecommendedSelectionMax(capacityModelLabel);
-    if (selectedFiles.length >= Math.floor(recommendedMax * 0.85)) {
+    if (filesToAnalyze.length >= Math.floor(recommendedMax * 0.85)) {
       this.notice(
-        `Selected ${selectedFiles.length}. Recommended max for current model is about ${recommendedMax}.`,
+        `Selected ${filesToAnalyze.length}. Recommended max for current model is about ${recommendedMax}.`,
         5e3
       );
     }
-    if (selectedFiles.length > recommendedMax) {
+    if (filesToAnalyze.length > recommendedMax) {
       const capacityDecision = await CapacityGuardModal.ask(
         this.app,
-        selectedFiles.length,
+        filesToAnalyze.length,
         recommendedMax,
         capacityModelLabel,
         this.settings.semanticLinkingEnabled && this.settings.analyzeLinked
@@ -5532,7 +5826,7 @@ ${item.content}`
     let backupFolder = null;
     if (decision.backupBeforeRun) {
       this.setStatus("creating backup...");
-      backupFolder = await this.createBackupForFiles(selectedFiles);
+      backupFolder = await this.createBackupForFiles(filesToAnalyze);
       if (backupFolder) {
         this.notice(`Backup completed before analysis: ${backupFolder}`, 5e3);
       }
@@ -5541,9 +5835,10 @@ ${item.content}`
     if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
       this.setStatus("building semantic candidates...");
       try {
+        const semanticScopeFiles = this.settings.analysisOnlyChangedNotes ? filesToAnalyze : selectedFiles;
         const semanticResult = await buildSemanticNeighborMap(
           this.app,
-          selectedFiles,
+          semanticScopeFiles,
           this.settings
         );
         semanticNeighbors = semanticResult.neighborMap;
@@ -5568,8 +5863,6 @@ ${item.content}`
     }
     const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
     progressModal.open();
-    const analysisCache = await this.loadAnalysisCache();
-    const providerCacheSignature = this.getProviderCacheSignature();
     const selectedPathSet = new Set(selectedFiles.map((file) => file.path));
     const suggestions = [];
     const errors = [];
@@ -5579,22 +5872,22 @@ ${item.content}`
     let analysisCacheHits = 0;
     let analysisCacheWrites = 0;
     let cancelled = false;
-    for (let index = 0; index < selectedFiles.length; index += 1) {
+    for (let index = 0; index < filesToAnalyze.length; index += 1) {
       if (progressModal.isCancelled()) {
         cancelled = true;
         break;
       }
-      const file = selectedFiles[index];
+      const file = filesToAnalyze[index];
       progressModal.update({
         stage: "Analyzing",
         current: index + 1,
-        total: selectedFiles.length,
+        total: filesToAnalyze.length,
         startedAt: runStartedAt,
         currentFile: file.path,
         errors,
         events
       });
-      this.setStatus(`analyzing ${index + 1}/${selectedFiles.length}`);
+      this.setStatus(`analyzing ${index + 1}/${filesToAnalyze.length}`);
       try {
         const candidateLinkPaths = this.getCandidateLinkPathsForFile(
           file.path,
@@ -5621,7 +5914,9 @@ ${item.content}`
           analysisCache,
           cacheKey,
           requestSignature,
-          file
+          file,
+          settingsSignature,
+          selectionSignature
         );
         let outcome;
         if (cachedOutcome) {
@@ -5637,6 +5932,8 @@ ${item.content}`
             analysisCache,
             cacheKey,
             requestSignature,
+            settingsSignature,
+            selectionSignature,
             file,
             outcome
           );
@@ -5722,7 +6019,7 @@ ${item.content}`
         events.push({ filePath: file.path, status: "error", message });
       }
     }
-    if (analysisCacheWrites > 0) {
+    if (analysisCacheWrites > 0 || this.analysisCacheDirty) {
       try {
         await this.flushAnalysisCache();
       } catch (error) {
@@ -5731,13 +6028,13 @@ ${item.content}`
       }
     }
     progressModal.setFinished(
-      cancelled ? "Analysis stopped by user." : `Analysis complete: ${suggestions.length} changed of ${selectedFiles.length}`
+      cancelled ? "Analysis stopped by user." : `Analysis complete: ${suggestions.length} changed of ${filesToAnalyze.length}`
     );
     progressModal.close();
     const summary = {
       provider: this.settings.provider,
       model: getProviderModelLabel(this.settings),
-      totalFiles: selectedFiles.length,
+      totalFiles: filesToAnalyze.length,
       changedFiles: suggestions.length,
       usedFallbackCount,
       elapsedMs: Date.now() - runStartedAt,
@@ -5747,19 +6044,19 @@ ${item.content}`
     this.setStatus(`analysis done (${summary.changedFiles}/${summary.totalFiles} changed)`);
     if (suggestions.length === 0) {
       this.notice(
-        `No metadata changes. Provider=${summary.provider}, Model=${summary.model}, Errors=${summary.errorCount}, Elapsed=${formatDurationMs(summary.elapsedMs)}, CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}.`,
+        `No metadata changes. Provider=${summary.provider}, Model=${summary.model}, Errors=${summary.errorCount}, Elapsed=${formatDurationMs(summary.elapsedMs)}, CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, SkippedUnchanged=${skippedUnchanged}.`,
         5e3
       );
       return;
     }
     if (cancelled) {
       this.notice(
-        `Analysis stopped. Showing partial suggestions (${suggestions.length} file(s)). CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}.`,
+        `Analysis stopped. Showing partial suggestions (${suggestions.length} file(s)). CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, SkippedUnchanged=${skippedUnchanged}.`,
         5e3
       );
     }
     this.notice(
-      `Analysis complete: ${summary.changedFiles}/${summary.totalFiles} changed. CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
+      `Analysis complete: ${summary.changedFiles}/${summary.totalFiles} changed. CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, SkippedUnchanged=${skippedUnchanged}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
       5e3
     );
     if (this.settings.suggestionMode) {

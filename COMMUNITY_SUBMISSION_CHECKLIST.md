@@ -1,6 +1,6 @@
 # Community Submission Checklist
 
-Use this before submitting or updating `Auto-Linker` in Obsidian community channels.
+Use this before submitting or updating `Auto Link` in Obsidian community channels.
 
 Official references:
 

@@ -1,6 +1,6 @@
 # Release Guide
 
-This guide defines the release process for `Auto-Linker`.
+This guide defines the release process for `Auto Link`.
 
 ## Versioning Rules
 

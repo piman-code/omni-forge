@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.13] - 2026-02-15
+
+### Changed
+
+- Rebranded user-facing plugin name from `Auto-Linker` to `Auto Link` across UI and docs.
+- Rewrote `README.md` and `README_KO.md` for first-time global/Korean users with clearer install, setup, workflow, and troubleshooting guidance.
+- Updated BRAT/repository references from `piman-code/auto-linker` to `piman-code/auto-link`.
+
+### Performance
+
+- Added `Analyze changed notes only` option to skip unchanged files based on cache metadata/signature.
+- Added pre-analysis early-exit in changed-only mode to avoid unnecessary semantic/indexing work.
+
+### Added
+
+- Added watched-folder workflow:
+  - `Watch folders for new notes`
+  - `Watched folders`
+- New-note modal now prompts user to ignore, add to selection, or add and analyze immediately.
+
 ## [0.2.12] - 2026-02-15
 
 ### Changed
@@ -73,7 +93,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Command palette labels no longer duplicate `Auto-Linker:` prefixes.
+- Command palette labels no longer duplicate `Auto Link:` prefixes.
 - Cleanup dry-run report path now uses safe vault-relative validation.
 - Improved source row visibility in themes with high color-contrast differences.
 - Markdown render consistency improvements for table/checklist/blockquote/code blocks across themes.
@@ -82,7 +102,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- Ribbon icon to open `Auto-Linker Local Chat` quickly.
+- Ribbon icon to open `Auto Link Local Chat` quickly.
 - Configurable `Chat transcript folder path`.
 - Configurable `Cleanup dry-run report folder`.
 - `Auto-sync chat thread` setting for continuous thread-note synchronization.
@@ -97,14 +117,14 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Command palette labels no longer show duplicated `Auto-Linker:` prefix.
+- Command palette labels no longer show duplicated `Auto Link:` prefix.
 - Cleanup dry-run report output path is now safely configurable (vault-relative validation).
 
 ## [0.1.0] - 2026-02-14
 
 ### Added
 
-- Initial Obsidian community plugin scaffold for `Auto-Linker`.
+- Initial Obsidian community plugin scaffold for `Auto Link`.
 - Target-note selector modal to analyze only chosen notes.
 - Suggestion-first workflow: analyze, preview, then apply.
 - Per-field rationale display for `tags`, `topic`, `linked`, and `index`.

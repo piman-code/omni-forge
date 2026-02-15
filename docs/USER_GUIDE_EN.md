@@ -1,8 +1,8 @@
-# Auto-Linker User Guide (EN)
+# Auto Link User Guide (EN)
 
 ## What this plugin does
 
-Auto-Linker helps you build a cleaner Obsidian knowledge graph by suggesting frontmatter metadata from selected notes only.
+Auto Link helps you build a cleaner Obsidian knowledge graph by suggesting frontmatter metadata from selected notes only.
 
 Managed fields:
 
@@ -13,9 +13,9 @@ Managed fields:
 
 ## Key workflow
 
-1. Run `Auto-Linker: Select target notes/folders`
+1. Run `Auto Link: Select target notes/folders`
 2. Choose files and/or folders
-3. Run `Auto-Linker: Analyze selected notes (suggestions by default)`
+3. Run `Auto Link: Analyze selected notes (suggestions by default)`
 4. Confirm backup choice (recommended)
 5. Review preview (provider/model/time/fallback info)
 6. Apply changes
@@ -41,9 +41,9 @@ During analyze/apply:
 
 - Backup confirmation appears before analysis.
 - Backup command:
-  - `Auto-Linker: Backup selected notes`
+  - `Auto Link: Backup selected notes`
 - Restore command:
-  - `Auto-Linker: Restore from latest backup`
+  - `Auto Link: Restore from latest backup`
 - Backup retention is configurable (`Backup retention count`).
 
 ## Ollama model detection and picker

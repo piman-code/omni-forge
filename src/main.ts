@@ -84,6 +84,7 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   analyzeIndex: true,
   maxTags: 8,
   maxLinked: 8,
+  analysisOnlyChangedNotes: false,
   semanticLinkingEnabled: false,
   semanticOllamaBaseUrl: "http://127.0.0.1:11434",
   semanticOllamaModel: "",
@@ -99,8 +100,10 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaPreferChatApi: true,
   qaStructureGuardEnabled: true,
   qaThreadAutoSyncEnabled: true,
-  chatTranscriptRootPath: "Auto-Linker Chats",
-  cleanupReportRootPath: "Auto-Linker Reports",
+  watchNewNotesEnabled: false,
+  watchNewNotesFolders: "",
+  chatTranscriptRootPath: "Auto Link Chats",
+  cleanupReportRootPath: "Auto Link Reports",
   propertyCleanupEnabled: false,
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
@@ -110,9 +113,9 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   includeSubfoldersInFolderSelection: true,
   selectionPathWidthPercent: 72,
   backupBeforeApply: true,
-  backupRootPath: "Auto-Linker Backups",
+  backupRootPath: "Auto Link Backups",
   backupRetentionCount: 10,
-  excludedFolderPatterns: ".obsidian,Auto-Linker Backups",
+  excludedFolderPatterns: ".obsidian,Auto Link Backups",
   showProgressNotices: true,
   generateMoc: true,
   mocPath: "MOC/Selected Knowledge MOC.md",
@@ -785,6 +788,10 @@ interface CapacityDecision {
   proceed: boolean;
 }
 
+interface NewNoteWatchDecision {
+  action: "ignore" | "add_only" | "analyze_now";
+}
+
 class CapacityGuardModal extends Modal {
   private readonly selectedCount: number;
   private readonly recommendedMax: number;
@@ -856,6 +863,77 @@ class CapacityGuardModal extends Modal {
         semanticEnabled,
         resolve,
       ).open();
+    });
+  }
+}
+
+class NewNoteWatchModal extends Modal {
+  private readonly filePath: string;
+  private readonly watchedFolder: string;
+  private readonly onResolve: (decision: NewNoteWatchDecision) => void;
+  private resolved = false;
+
+  constructor(
+    app: App,
+    filePath: string,
+    watchedFolder: string,
+    onResolve: (decision: NewNoteWatchDecision) => void,
+  ) {
+    super(app);
+    this.filePath = filePath;
+    this.watchedFolder = watchedFolder;
+    this.onResolve = onResolve;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "New note detected in watched folder" });
+    contentEl.createEl("p", { text: `Folder: ${this.watchedFolder}` });
+    contentEl.createEl("p", { text: `File: ${this.filePath}` });
+    contentEl.createEl("p", {
+      text: "Add this note to target selection and run analysis now?",
+    });
+
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "12px";
+
+    const ignoreButton = footer.createEl("button", { text: "Ignore" });
+    ignoreButton.onclick = () => this.resolve({ action: "ignore" });
+
+    const addOnlyButton = footer.createEl("button", { text: "Add to selection" });
+    addOnlyButton.onclick = () => this.resolve({ action: "add_only" });
+
+    const analyzeNowButton = footer.createEl("button", {
+      text: "Add and analyze now",
+      cls: "mod-cta",
+    });
+    analyzeNowButton.onclick = () => this.resolve({ action: "analyze_now" });
+  }
+
+  onClose(): void {
+    if (!this.resolved) {
+      this.onResolve({ action: "ignore" });
+      this.resolved = true;
+    }
+    this.contentEl.empty();
+  }
+
+  private resolve(decision: NewNoteWatchDecision): void {
+    if (this.resolved) {
+      return;
+    }
+    this.resolved = true;
+    this.onResolve(decision);
+    this.close();
+  }
+
+  static ask(app: App, filePath: string, watchedFolder: string): Promise<NewNoteWatchDecision> {
+    return new Promise((resolve) => {
+      new NewNoteWatchModal(app, filePath, watchedFolder, resolve).open();
     });
   }
 }
@@ -1403,7 +1481,7 @@ class LocalQAWorkspaceView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Auto-Linker Local Chat";
+    return "Auto Link Local Chat";
   }
 
   getIcon(): string {
@@ -1520,7 +1598,7 @@ class LocalQAWorkspaceView extends ItemView {
     const folderButton = actionRow.createEl("button", { text: "Chat folder" });
     folderButton.addClass("auto-linker-chat-btn");
     folderButton.onclick = async () => {
-      const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto-Linker Chats";
+      const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto Link Chats";
       const next = window.prompt("Chat transcript folder (vault-relative)", current);
       if (next === null) {
         return;
@@ -2213,7 +2291,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Auto-Linker Settings" });
+    containerEl.createEl("h2", { text: "Auto Link Settings" });
 
     containerEl.createEl("p", {
       text: "Language docs: README.md (index) | README_KO.md (Korean quick access)",
@@ -2569,6 +2647,20 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(containerEl)
+      .setName("Analyze changed notes only")
+      .setDesc(
+        "Skip unchanged notes when cache metadata matches. Turn off to include cached notes in every run.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.analysisOnlyChangedNotes)
+          .onChange(async (value) => {
+            this.plugin.settings.analysisOnlyChangedNotes = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
     containerEl.createEl("h3", { text: "Semantic linking (Ollama embeddings)" });
 
     new Setting(containerEl)
@@ -2829,7 +2921,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Vault-relative path for saving chat transcripts.")
       .addText((text) =>
         text
-          .setPlaceholder("Auto-Linker Chats")
+          .setPlaceholder("Auto Link Chats")
           .setValue(this.plugin.settings.chatTranscriptRootPath)
           .onChange(async (value) => {
             this.plugin.settings.chatTranscriptRootPath = value.trim();
@@ -2951,7 +3043,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Vault-relative folder for cleanup dry-run report files.")
       .addText((text) =>
         text
-          .setPlaceholder("Auto-Linker Reports")
+          .setPlaceholder("Auto Link Reports")
           .setValue(this.plugin.settings.cleanupReportRootPath)
           .onChange(async (value) => {
             this.plugin.settings.cleanupReportRootPath = value.trim();
@@ -2985,6 +3077,33 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Watch folders for new notes")
+      .setDesc(
+        "When a new markdown file appears in watched folders, prompt to add/analyze it.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.watchNewNotesEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.watchNewNotesEnabled = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Watched folders")
+      .setDesc("Comma/newline separated vault-relative folder paths. Example: Inbox,Clippings")
+      .addTextArea((text) =>
+        text
+          .setPlaceholder("Inbox,Clippings")
+          .setValue(this.plugin.settings.watchNewNotesFolders)
+          .onChange(async (value) => {
+            this.plugin.settings.watchNewNotesFolders = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName("Selection path width percent")
       .setDesc("Controls path width in Select target notes/folders modal (45-100).")
       .addText((text) =>
@@ -3005,7 +3124,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Comma-separated substrings. Matched folders are ignored during selection/analysis.")
       .addText((text) =>
         text
-          .setPlaceholder(".obsidian,Auto-Linker Backups")
+          .setPlaceholder(".obsidian,Auto Link Backups")
           .setValue(this.plugin.settings.excludedFolderPatterns)
           .onChange(async (value) => {
             this.plugin.settings.excludedFolderPatterns = value;
@@ -3030,7 +3149,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Vault-relative folder path used for versioned backups.")
       .addText((text) =>
         text
-          .setPlaceholder("Auto-Linker Backups")
+          .setPlaceholder("Auto Link Backups")
           .setValue(this.plugin.settings.backupRootPath)
           .onChange(async (value) => {
             try {
@@ -3102,6 +3221,8 @@ interface BackupManifest {
 
 interface AnalysisCacheEntry {
   requestSignature: string;
+  settingsSignature?: string;
+  selectionSignature?: string;
   mtime: number;
   size: number;
   proposal: MetadataProposal;
@@ -3139,6 +3260,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     "Embedding model detection has not run yet. Click refresh to detect installed Ollama models.";
   private analysisCache: AnalysisCacheData | null = null;
   private analysisCacheDirty = false;
+  private pendingNewNoteWatchPrompts = new Set<string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -3150,9 +3272,17 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       (leaf) => new LocalQAWorkspaceView(leaf, this),
     );
     await this.cleanupLegacyCacheArtifacts();
-    this.addRibbonIcon("message-square", "Open Auto-Linker Local Chat", () => {
+    this.addRibbonIcon("message-square", "Open Auto Link Local Chat", () => {
       void this.openLocalQaWorkspaceView();
     });
+    this.registerEvent(
+      this.app.vault.on("create", (entry) => {
+        if (!(entry instanceof TFile) || entry.extension !== "md") {
+          return;
+        }
+        void this.handleWatchedNewFile(entry);
+      }),
+    );
 
     this.addCommand({
       id: "select-target-notes",
@@ -3360,13 +3490,13 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   }
 
   async setChatTranscriptRootPathForQa(path: string): Promise<void> {
-    const next = this.resolveSafeFolderPath(path, "Auto-Linker Chats", "Chat transcript");
+    const next = this.resolveSafeFolderPath(path, "Auto Link Chats", "Chat transcript");
     this.settings.chatTranscriptRootPath = next;
     await this.saveSettings();
   }
 
   async setBackupRootPathForQa(path: string): Promise<void> {
-    const next = this.resolveSafeFolderPath(path, "Auto-Linker Backups", "Backup root");
+    const next = this.resolveSafeFolderPath(path, "Auto Link Backups", "Backup root");
     this.settings.backupRootPath = next;
     await this.saveSettings();
   }
@@ -3432,7 +3562,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   private async allocateLocalQaThreadPath(threadId: string): Promise<string> {
     const folder = this.resolveSafeFolderPath(
       this.settings.chatTranscriptRootPath,
-      "Auto-Linker Chats",
+      "Auto Link Chats",
       "Chat transcript",
     );
     let outputPath = normalizePath(`${folder}/${threadId}.md`);
@@ -3752,6 +3882,9 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!Number.isFinite(this.settings.semanticMaxChars)) {
       this.settings.semanticMaxChars = DEFAULT_SETTINGS.semanticMaxChars;
     }
+    if (typeof this.settings.analysisOnlyChangedNotes !== "boolean") {
+      this.settings.analysisOnlyChangedNotes = DEFAULT_SETTINGS.analysisOnlyChangedNotes;
+    }
     if (!Number.isFinite(this.settings.qaTopK)) {
       this.settings.qaTopK = DEFAULT_SETTINGS.qaTopK;
     }
@@ -3786,6 +3919,12 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
       this.settings.qaThreadAutoSyncEnabled =
         DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
+    }
+    if (typeof this.settings.watchNewNotesEnabled !== "boolean") {
+      this.settings.watchNewNotesEnabled = DEFAULT_SETTINGS.watchNewNotesEnabled;
+    }
+    if (typeof this.settings.watchNewNotesFolders !== "string") {
+      this.settings.watchNewNotesFolders = DEFAULT_SETTINGS.watchNewNotesFolders;
     }
     if (typeof this.settings.chatTranscriptRootPath !== "string") {
       this.settings.chatTranscriptRootPath = DEFAULT_SETTINGS.chatTranscriptRootPath;
@@ -3823,7 +3962,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   }
 
   private setStatus(text: string): void {
-    this.statusBarEl?.setText(`Auto-Linker: ${text}`);
+    this.statusBarEl?.setText(`Auto Link: ${text}`);
   }
 
   private notice(text: string, timeout = 3500): void {
@@ -3988,6 +4127,52 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return this.hashString(payload);
   }
 
+  private buildAnalysisSettingsSignature(providerSignature: string): string {
+    const payload = JSON.stringify({
+      providerSignature,
+      maxTags: this.settings.maxTags,
+      maxLinked: this.settings.maxLinked,
+      analyzeTags: this.settings.analyzeTags,
+      analyzeTopic: this.settings.analyzeTopic,
+      analyzeLinked: this.settings.analyzeLinked,
+      analyzeIndex: this.settings.analyzeIndex,
+      includeReasons: this.settings.includeReasons,
+      semanticLinkingEnabled: this.settings.semanticLinkingEnabled,
+      semanticTopK: this.settings.semanticTopK,
+      semanticMinSimilarity: this.settings.semanticMinSimilarity,
+      semanticMaxChars: this.settings.semanticMaxChars,
+    });
+    return this.hashString(payload);
+  }
+
+  private buildSelectionSignature(selectedFiles: TFile[]): string {
+    const payload = JSON.stringify(selectedFiles.map((file) => file.path));
+    return this.hashString(payload);
+  }
+
+  private canSkipByChangedOnlyMode(
+    cache: AnalysisCacheData,
+    cacheKey: string,
+    file: TFile,
+    settingsSignature: string,
+    selectionSignature: string,
+  ): boolean {
+    const entry = cache.entries[cacheKey];
+    if (!entry) {
+      return false;
+    }
+    if (entry.mtime !== file.stat.mtime || entry.size !== file.stat.size) {
+      return false;
+    }
+    if (entry.settingsSignature !== settingsSignature) {
+      return false;
+    }
+    if (entry.selectionSignature !== selectionSignature) {
+      return false;
+    }
+    return true;
+  }
+
   private async loadAnalysisCache(): Promise<AnalysisCacheData> {
     if (this.analysisCache) {
       return this.analysisCache;
@@ -4072,6 +4257,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     cacheKey: string,
     requestSignature: string,
     file: TFile,
+    settingsSignature: string,
+    selectionSignature: string,
   ): AnalyzeOutcome | null {
     const entry = cache.entries[cacheKey];
     if (
@@ -4081,6 +4268,16 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       entry.size !== file.stat.size
     ) {
       return null;
+    }
+
+    if (
+      entry.settingsSignature !== settingsSignature ||
+      entry.selectionSignature !== selectionSignature
+    ) {
+      entry.settingsSignature = settingsSignature;
+      entry.selectionSignature = selectionSignature;
+      entry.updatedAt = new Date().toISOString();
+      this.analysisCacheDirty = true;
     }
 
     return {
@@ -4096,11 +4293,15 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     cache: AnalysisCacheData,
     cacheKey: string,
     requestSignature: string,
+    settingsSignature: string,
+    selectionSignature: string,
     file: TFile,
     outcome: AnalyzeOutcome,
   ): void {
     cache.entries[cacheKey] = {
       requestSignature,
+      settingsSignature,
+      selectionSignature,
       mtime: file.stat.mtime,
       size: file.stat.size,
       proposal: cloneMetadataProposal(outcome.proposal),
@@ -5328,6 +5529,147 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return mergeUniqueStrings(semantic, rankedFallback).slice(0, candidateLimit);
   }
 
+  private normalizeFolderPrefix(path: string): string {
+    const normalized = normalizePath(path.trim());
+    return normalized.endsWith("/") ? normalized : `${normalized}/`;
+  }
+
+  private isPathInsideFolder(filePath: string, folderPath: string): boolean {
+    const fileNormalized = normalizePath(filePath);
+    const folderNormalized = normalizePath(folderPath);
+    if (!fileNormalized || !folderNormalized) {
+      return false;
+    }
+    if (fileNormalized === folderNormalized) {
+      return true;
+    }
+    return fileNormalized.startsWith(this.normalizeFolderPrefix(folderNormalized));
+  }
+
+  private parseWatchedFolders(): string[] {
+    return this.settings.watchNewNotesFolders
+      .split(/[\n,;]+/)
+      .map((item) => normalizePath(item.trim()))
+      .filter((item) => item.length > 0)
+      .filter((item) => this.isSafeVaultRelativePath(item))
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  private resolveMatchedWatchedFolder(filePath: string): string | null {
+    const watchedFolders = this.parseWatchedFolders();
+    for (const folder of watchedFolders) {
+      if (this.isPathInsideFolder(filePath, folder)) {
+        return folder;
+      }
+    }
+    return null;
+  }
+
+  private isManagedOutputPath(path: string): boolean {
+    try {
+      const chatRoot = this.resolveSafeFolderPath(
+        this.settings.chatTranscriptRootPath,
+        "Auto Link Chats",
+        "Chat transcript",
+      );
+      if (this.isPathInsideFolder(path, chatRoot)) {
+        return true;
+      }
+    } catch {
+      // ignore invalid setting in watch filter
+    }
+
+    try {
+      const reportRoot = this.resolveSafeFolderPath(
+        this.settings.cleanupReportRootPath,
+        "Auto Link Reports",
+        "Cleanup dry-run report",
+      );
+      if (this.isPathInsideFolder(path, reportRoot)) {
+        return true;
+      }
+    } catch {
+      // ignore invalid setting in watch filter
+    }
+
+    try {
+      const backupRoot = this.resolveSafeFolderPath(
+        this.settings.backupRootPath,
+        "Auto Link Backups",
+        "Backup root",
+      );
+      if (this.isPathInsideFolder(path, backupRoot)) {
+        return true;
+      }
+    } catch {
+      // ignore invalid setting in watch filter
+    }
+
+    return false;
+  }
+
+  private async addFileToSelection(filePath: string): Promise<"added" | "already"> {
+    const normalized = normalizePath(filePath);
+    if (!normalized || this.isPathExcluded(normalized)) {
+      return "already";
+    }
+
+    const alreadySelected = this.getSelectedFiles().some((file) => file.path === normalized);
+    if (alreadySelected || this.settings.targetFilePaths.includes(normalized)) {
+      return "already";
+    }
+
+    this.settings.targetFilePaths = [...this.settings.targetFilePaths, normalized].sort(
+      (a, b) => a.localeCompare(b),
+    );
+    await this.saveSettings();
+    return "added";
+  }
+
+  private async handleWatchedNewFile(file: TFile): Promise<void> {
+    if (!this.settings.watchNewNotesEnabled) {
+      return;
+    }
+    if (this.isPathExcluded(file.path) || this.isManagedOutputPath(file.path)) {
+      return;
+    }
+
+    const matchedFolder = this.resolveMatchedWatchedFolder(file.path);
+    if (!matchedFolder) {
+      return;
+    }
+    if (this.pendingNewNoteWatchPrompts.has(file.path)) {
+      return;
+    }
+
+    this.pendingNewNoteWatchPrompts.add(file.path);
+    try {
+      const decision = await NewNoteWatchModal.ask(this.app, file.path, matchedFolder);
+      if (decision.action === "ignore") {
+        return;
+      }
+
+      const addResult = await this.addFileToSelection(file.path);
+      if (decision.action === "add_only") {
+        if (addResult === "added") {
+          this.notice(`Added to selection: ${file.path}`, 5000);
+        } else {
+          this.notice(`Already included in selection: ${file.path}`, 4000);
+        }
+        return;
+      }
+
+      if (addResult === "added") {
+        this.notice(`Added and analyzing: ${file.path}`, 5000);
+      } else {
+        this.notice(`Analyzing with current selection: ${file.path}`, 5000);
+      }
+      await this.runAnalysis();
+    } finally {
+      this.pendingNewNoteWatchPrompts.delete(file.path);
+    }
+  }
+
   private parseExcludedPatterns(): string[] {
     return this.settings.excludedFolderPatterns
       .split(/[\n,;]+/)
@@ -5659,7 +6001,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         : "(none)";
 
       const lines: string[] = [];
-      lines.push("# Auto-Linker Cleanup Dry-Run Report");
+      lines.push("# Auto Link Cleanup Dry-Run Report");
       lines.push("");
       lines.push(`Generated: ${new Date().toISOString()}`);
       lines.push(`Selected files: ${selectedFiles.length}`);
@@ -5680,7 +6022,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       try {
         const reportFolder = this.resolveSafeFolderPath(
           this.settings.cleanupReportRootPath,
-          "Auto-Linker Reports",
+          "Auto Link Reports",
           "Cleanup dry-run report",
         );
         reportPath = normalizePath(
@@ -5758,18 +6100,58 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
     }
 
+    const analysisCache = await this.loadAnalysisCache();
+    const providerCacheSignature = this.getProviderCacheSignature();
+    const settingsSignature = this.buildAnalysisSettingsSignature(providerCacheSignature);
+    const selectionSignature = this.buildSelectionSignature(selectedFiles);
+
+    let skippedUnchanged = 0;
+    let filesToAnalyze = selectedFiles;
+    if (this.settings.analysisOnlyChangedNotes) {
+      const pending: TFile[] = [];
+      for (const file of selectedFiles) {
+        const cacheKey = this.buildAnalysisCacheKey(providerCacheSignature, file.path);
+        if (
+          this.canSkipByChangedOnlyMode(
+            analysisCache,
+            cacheKey,
+            file,
+            settingsSignature,
+            selectionSignature,
+          )
+        ) {
+          skippedUnchanged += 1;
+          continue;
+        }
+        pending.push(file);
+      }
+      filesToAnalyze = pending;
+      if (filesToAnalyze.length === 0) {
+        this.setStatus("analysis done (unchanged cache hit)");
+        this.notice(
+          `No changed notes to analyze. Selected=${selectedFiles.length}, SkippedUnchanged=${skippedUnchanged}.`,
+          5000,
+        );
+        return;
+      }
+      this.notice(
+        `Changed-only mode: ${skippedUnchanged} skipped, ${filesToAnalyze.length} queued.`,
+        4000,
+      );
+    }
+
     const capacityModelLabel = getProviderModelLabel(this.settings);
     const recommendedMax = this.estimateRecommendedSelectionMax(capacityModelLabel);
-    if (selectedFiles.length >= Math.floor(recommendedMax * 0.85)) {
+    if (filesToAnalyze.length >= Math.floor(recommendedMax * 0.85)) {
       this.notice(
-        `Selected ${selectedFiles.length}. Recommended max for current model is about ${recommendedMax}.`,
+        `Selected ${filesToAnalyze.length}. Recommended max for current model is about ${recommendedMax}.`,
         5000,
       );
     }
-    if (selectedFiles.length > recommendedMax) {
+    if (filesToAnalyze.length > recommendedMax) {
       const capacityDecision = await CapacityGuardModal.ask(
         this.app,
-        selectedFiles.length,
+        filesToAnalyze.length,
         recommendedMax,
         capacityModelLabel,
         this.settings.semanticLinkingEnabled && this.settings.analyzeLinked,
@@ -5794,7 +6176,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     let backupFolder: string | null = null;
     if (decision.backupBeforeRun) {
       this.setStatus("creating backup...");
-      backupFolder = await this.createBackupForFiles(selectedFiles);
+      backupFolder = await this.createBackupForFiles(filesToAnalyze);
       if (backupFolder) {
         this.notice(`Backup completed before analysis: ${backupFolder}`, 5000);
       }
@@ -5804,9 +6186,12 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
       this.setStatus("building semantic candidates...");
       try {
+        const semanticScopeFiles = this.settings.analysisOnlyChangedNotes
+          ? filesToAnalyze
+          : selectedFiles;
         const semanticResult = await buildSemanticNeighborMap(
           this.app,
-          selectedFiles,
+          semanticScopeFiles,
           this.settings,
         );
         semanticNeighbors = semanticResult.neighborMap;
@@ -5837,9 +6222,6 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
     progressModal.open();
 
-    const analysisCache = await this.loadAnalysisCache();
-    const providerCacheSignature = this.getProviderCacheSignature();
-
     const selectedPathSet = new Set(selectedFiles.map((file) => file.path));
     const suggestions: NoteSuggestion[] = [];
     const errors: ProgressErrorItem[] = [];
@@ -5850,23 +6232,23 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     let analysisCacheWrites = 0;
     let cancelled = false;
 
-    for (let index = 0; index < selectedFiles.length; index += 1) {
+    for (let index = 0; index < filesToAnalyze.length; index += 1) {
       if (progressModal.isCancelled()) {
         cancelled = true;
         break;
       }
 
-      const file = selectedFiles[index];
+      const file = filesToAnalyze[index];
       progressModal.update({
         stage: "Analyzing",
         current: index + 1,
-        total: selectedFiles.length,
+        total: filesToAnalyze.length,
         startedAt: runStartedAt,
         currentFile: file.path,
         errors,
         events,
       });
-      this.setStatus(`analyzing ${index + 1}/${selectedFiles.length}`);
+      this.setStatus(`analyzing ${index + 1}/${filesToAnalyze.length}`);
 
       try {
         const candidateLinkPaths = this.getCandidateLinkPathsForFile(
@@ -5897,6 +6279,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
           cacheKey,
           requestSignature,
           file,
+          settingsSignature,
+          selectionSignature,
         );
         let outcome: AnalyzeOutcome;
         if (cachedOutcome) {
@@ -5912,6 +6296,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
             analysisCache,
             cacheKey,
             requestSignature,
+            settingsSignature,
+            selectionSignature,
             file,
             outcome,
           );
@@ -6015,7 +6401,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
     }
 
-    if (analysisCacheWrites > 0) {
+    if (analysisCacheWrites > 0 || this.analysisCacheDirty) {
       try {
         await this.flushAnalysisCache();
       } catch (error) {
@@ -6028,14 +6414,14 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     progressModal.setFinished(
       cancelled
         ? "Analysis stopped by user."
-        : `Analysis complete: ${suggestions.length} changed of ${selectedFiles.length}`,
+        : `Analysis complete: ${suggestions.length} changed of ${filesToAnalyze.length}`,
     );
     progressModal.close();
 
     const summary: AnalysisRunSummary = {
       provider: this.settings.provider,
       model: getProviderModelLabel(this.settings),
-      totalFiles: selectedFiles.length,
+      totalFiles: filesToAnalyze.length,
       changedFiles: suggestions.length,
       usedFallbackCount,
       elapsedMs: Date.now() - runStartedAt,
@@ -6047,7 +6433,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     if (suggestions.length === 0) {
       this.notice(
-        `No metadata changes. Provider=${summary.provider}, Model=${summary.model}, Errors=${summary.errorCount}, Elapsed=${formatDurationMs(summary.elapsedMs)}, CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}.`,
+        `No metadata changes. Provider=${summary.provider}, Model=${summary.model}, Errors=${summary.errorCount}, Elapsed=${formatDurationMs(summary.elapsedMs)}, CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, SkippedUnchanged=${skippedUnchanged}.`,
         5000,
       );
       return;
@@ -6055,13 +6441,13 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     if (cancelled) {
       this.notice(
-        `Analysis stopped. Showing partial suggestions (${suggestions.length} file(s)). CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}.`,
+        `Analysis stopped. Showing partial suggestions (${suggestions.length} file(s)). CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, SkippedUnchanged=${skippedUnchanged}.`,
         5000,
       );
     }
 
     this.notice(
-      `Analysis complete: ${summary.changedFiles}/${summary.totalFiles} changed. CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
+      `Analysis complete: ${summary.changedFiles}/${summary.totalFiles} changed. CacheHits=${analysisCacheHits}, CacheWrites=${analysisCacheWrites}, SkippedUnchanged=${skippedUnchanged}, Elapsed=${formatDurationMs(summary.elapsedMs)}.`,
       5000,
     );
 

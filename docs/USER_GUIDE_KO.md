@@ -1,8 +1,8 @@
-# Auto-Linker 사용자 가이드 (KO)
+# Auto Link 사용자 가이드 (KO)
 
 ## 플러그인이 하는 일
 
-Auto-Linker는 선택한 노트만 분석해 Obsidian 그래프에 유리한 메타데이터를 제안합니다.
+Auto Link는 선택한 노트만 분석해 Obsidian 그래프에 유리한 메타데이터를 제안합니다.
 
 관리 필드:
 
@@ -13,9 +13,9 @@ Auto-Linker는 선택한 노트만 분석해 Obsidian 그래프에 유리한 메
 
 ## 기본 사용 순서
 
-1. `Auto-Linker: Select target notes/folders` 실행
+1. `Auto Link: Select target notes/folders` 실행
 2. 파일/폴더 대상 선택
-3. `Auto-Linker: Analyze selected notes (suggestions by default)` 실행
+3. `Auto Link: Analyze selected notes (suggestions by default)` 실행
 4. 백업 여부 확인(권장: 백업)
 5. 미리보기에서 provider/model/시간/fallback 확인
 6. 적용
@@ -41,9 +41,9 @@ Auto-Linker는 선택한 노트만 분석해 Obsidian 그래프에 유리한 메
 
 - 분석 시작 전에 백업 확인 창이 표시됩니다.
 - 백업 명령:
-  - `Auto-Linker: Backup selected notes`
+  - `Auto Link: Backup selected notes`
 - 복구 명령:
-  - `Auto-Linker: Restore from latest backup`
+  - `Auto Link: Restore from latest backup`
 - `Backup retention count`로 최신 N개만 보관하도록 설정 가능
 
 ## Ollama 모델 탐지/선택
