@@ -146,6 +146,7 @@ export interface KnowledgeWeaverSettings {
   analyzeTags: boolean;
   analyzeTopic: boolean;
   analyzeLinked: boolean;
+  forceAllToAllLinkedEnabled: boolean;
   analyzeIndex: boolean;
   maxTags: number;
   maxLinked: number;

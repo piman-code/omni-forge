@@ -83,6 +83,7 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   analyzeTags: true,
   analyzeTopic: true,
   analyzeLinked: true,
+  forceAllToAllLinkedEnabled: false,
   analyzeIndex: true,
   maxTags: 8,
   maxLinked: 8,
@@ -2497,6 +2498,7 @@ const SETTINGS_DESC_KO_MAP: Readonly<Record<string, string>> = {
   "Auto-fill role model fields from detected models when values are missing or legacy-uniform.": "값이 비어 있거나 기존처럼 동일 모델로만 채워진 경우, 감지 모델 기반 권장값으로 역할별 필드를 자동 채웁니다.",
   "Calculate role-specific recommended models from detected list and apply.": "감지된 모델 목록에서 역할별 권장 모델을 계산해 즉시 적용합니다.",
   "Optional role-specific model. Empty uses Q&A model as fallback.": "역할 전용 모델(선택)입니다. 비우면 Q&A 모델을 사용합니다.",
+  "Prefer vision-capable models for Ask (vision). Chat UI is text-first; image handling depends on host input support.": "Ask(비전)은 비전 가능한 모델을 우선 권장합니다. 채팅 UI는 텍스트 중심이며 이미지 처리는 호스트 입력 지원에 따라 달라집니다.",
   "Used when role preset is Ask (vision). Text-only for now, image input support is planned.": "Ask(비전) 프리셋에서 사용합니다. 현재는 텍스트 중심이며 이미지 입력 지원은 추후 확장 예정입니다.",
   "Reserved for image-generation workflows. Current chat UI is text-first.": "이미지 생성 워크플로용 예약 모델입니다. 현재 채팅 UI는 텍스트 중심입니다.",
   "Add extra system instructions per role agent. Empty keeps built-in role prompt only.": "역할별 에이전트에 추가 시스템 지시를 넣습니다. 비우면 기본 역할 프롬프트만 사용합니다.",
@@ -2585,7 +2587,8 @@ const ROLE_MODEL_SETTING_CONFIGS: ReadonlyArray<RoleModelSettingConfig> = [
     key: "qaAskVisionModel",
     role: "ask_vision",
     name: "Ask model (vision)",
-    description: "Used when role preset is Ask (vision). Text-only for now, image input support is planned.",
+    description:
+      "Prefer vision-capable models for Ask (vision). Chat UI is text-first; image handling depends on host input support.",
   },
   {
     key: "qaImageGeneratorModel",
@@ -2637,8 +2640,21 @@ function extractModelSizeBillions(modelName: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isOllamaModelAllowedForQaRole(role: QaRolePreset, modelName: string): boolean {
+  const trimmed = modelName.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (role === "ask_vision") {
+    return (
+      isOllamaModelAnalyzable(trimmed) || VISION_MODEL_REGEX.test(trimmed.toLowerCase())
+    );
+  }
+  return isOllamaModelAnalyzable(trimmed);
+}
+
 function scoreRoleModel(role: QaRolePreset, modelName: string): number {
-  if (!isOllamaModelAnalyzable(modelName)) {
+  if (!isOllamaModelAllowedForQaRole(role, modelName)) {
     return -100;
   }
   const lower = modelName.toLowerCase();
@@ -2683,6 +2699,11 @@ function scoreRoleModel(role: QaRolePreset, modelName: string): number {
       break;
     case "ask_vision":
       score += isGeneral ? 34 : 18;
+      if (isVision) {
+        score += 34;
+      } else {
+        score -= 10;
+      }
       if (isCoder) {
         score -= 8;
       }
@@ -2782,7 +2803,7 @@ function scoreRoleModel(role: QaRolePreset, modelName: string): number {
       break;
   }
 
-  if (!isGeneral && !isCoder && !isSafeguard) {
+  if (!isGeneral && !isCoder && !isSafeguard && !(role === "ask_vision" && isVision)) {
     score -= 4;
   }
   if (/qwen3/.test(lower)) {
@@ -2807,12 +2828,15 @@ function buildRoleSpecificOllamaModelOptions(
     .sort((a, b) => b.score - a.score || a.model.localeCompare(b.model));
   const recommended = scored.find((item) => item.score > -100)?.model;
   const options = models.map((model): OllamaModelOption => {
-    const isAnalyzable = isOllamaModelAnalyzable(model);
-    if (!isAnalyzable) {
+    const isRoleCompatible = isOllamaModelAllowedForQaRole(role, model);
+    if (!isRoleCompatible) {
       return {
         model,
         status: "unavailable",
-        reason: "Not suitable for current text-based role pipeline.",
+        reason:
+          role === "ask_vision"
+            ? "Not suitable for Ask (vision) role."
+            : "Not suitable for current text-based role pipeline.",
       };
     }
     if (recommended && model === recommended) {
@@ -2825,7 +2849,10 @@ function buildRoleSpecificOllamaModelOptions(
     return {
       model,
       status: "available",
-      reason: "Available text-capable model.",
+      reason:
+        role === "ask_vision" && VISION_MODEL_REGEX.test(model.toLowerCase())
+          ? "Available vision-capable model for Ask (vision)."
+          : "Available text-capable model.",
     };
   });
 
@@ -3262,6 +3289,20 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.analyzeLinked)
           .onChange(async (value) => {
             this.plugin.settings.analyzeLinked = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Force all-to-all linked (deterministic)")
+      .setDesc(
+        "When enabled, linked field includes all selected notes for each note (except self). maxLinked is ignored in this mode.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.forceAllToAllLinkedEnabled)
+          .onChange(async (value) => {
+            this.plugin.settings.forceAllToAllLinkedEnabled = value;
             await this.plugin.saveSettings();
           }),
       );
@@ -4204,6 +4245,7 @@ interface AnalysisRequestSignatureInput {
   analyzeTags: boolean;
   analyzeTopic: boolean;
   analyzeLinked: boolean;
+  forceAllToAllLinkedEnabled: boolean;
   analyzeIndex: boolean;
   includeReasons: boolean;
 }
@@ -4423,7 +4465,8 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
       const current = this.readRoleModelSetting(config.key);
       const currentFound = current.length > 0 && options.some((option) => option.model === current);
-      const currentUnavailable = current.length > 0 && !isOllamaModelAnalyzable(current);
+      const currentUnavailable =
+        current.length > 0 && !isOllamaModelAllowedForQaRole(config.role, current);
       const shouldApply =
         forceApply ||
         legacyUniform ||
@@ -4513,6 +4556,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   getQaRoleModelSummaryForQa(): string {
     const entries: Array<{ role: QaRolePreset; short: string }> = [
       { role: "ask", short: "ask" },
+      { role: "ask_vision", short: "vision" },
       { role: "orchestrator", short: "orch" },
       { role: "architect", short: "arch" },
       { role: "coder", short: "coder" },
@@ -4522,7 +4566,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return entries
       .map((entry) => {
         const model = this.getQaModelLabelForQa(entry.role);
-        const status = isOllamaModelAnalyzable(model) ? "" : "(불가)";
+        const status = isOllamaModelAllowedForQaRole(entry.role, model) ? "" : "(불가)";
         return `${entry.short}=${model}${status}`;
       })
       .join(", ");
@@ -5053,6 +5097,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
     if (typeof this.settings.analysisOnlyChangedNotes !== "boolean") {
       this.settings.analysisOnlyChangedNotes = DEFAULT_SETTINGS.analysisOnlyChangedNotes;
+    }
+    if (typeof this.settings.forceAllToAllLinkedEnabled !== "boolean") {
+      this.settings.forceAllToAllLinkedEnabled =
+        DEFAULT_SETTINGS.forceAllToAllLinkedEnabled;
     }
     if (!Number.isFinite(this.settings.qaTopK)) {
       this.settings.qaTopK = DEFAULT_SETTINGS.qaTopK;
@@ -6840,7 +6888,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       this.emitQaEvent(onEvent, "warning", `Skipping ${role} pass: model is empty`);
       return null;
     }
-    if (!isOllamaModelAnalyzable(model)) {
+    if (!isOllamaModelAllowedForQaRole(role, model)) {
       this.emitQaEvent(
         onEvent,
         "warning",
@@ -7091,7 +7139,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     if (!qaModel) {
       throw new Error("Q&A model is empty.");
     }
-    if (!isOllamaModelAnalyzable(qaModel)) {
+    if (!isOllamaModelAllowedForQaRole(primaryRole, qaModel)) {
       throw new Error(`Q&A model is not suitable: ${qaModel}`);
     }
 
@@ -7598,6 +7646,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         analyzeTags: true,
         analyzeTopic: false,
         analyzeLinked: false,
+        forceAllToAllLinkedEnabled: false,
         analyzeIndex: false,
         includeReasons: this.settings.includeReasons,
       };
@@ -8169,6 +8218,15 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
     }
 
+    const forceAllToAllLinked =
+      this.settings.analyzeLinked && this.settings.forceAllToAllLinkedEnabled;
+    if (forceAllToAllLinked) {
+      this.notice(
+        "All-to-all linked mode is ON. Each note will include all selected notes (except itself).",
+        6000,
+      );
+    }
+
     const decision = await this.askBackupDecision();
     if (!decision.proceed) {
       this.notice("Analysis cancelled.");
@@ -8190,7 +8248,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     }
 
     let semanticNeighbors = new Map<string, SemanticNeighbor[]>();
-    if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
+    const shouldBuildSemanticNeighbors =
+      this.settings.semanticLinkingEnabled &&
+      this.settings.analyzeLinked &&
+      !forceAllToAllLinked;
+    if (shouldBuildSemanticNeighbors) {
       this.setStatus("building semantic candidates...");
       try {
         const semanticScopeFiles = this.settings.analysisOnlyChangedNotes
@@ -8224,6 +8286,11 @@ export default class KnowledgeWeaverPlugin extends Plugin {
           error instanceof Error ? error.message : "Unknown semantic embedding error";
         this.notice(`Semantic candidate ranking skipped: ${message}`, 6000);
       }
+    } else if (forceAllToAllLinked && this.settings.semanticLinkingEnabled) {
+      this.notice(
+        "Semantic candidate build skipped because all-to-all linked mode is ON.",
+        5000,
+      );
     }
 
     const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
@@ -8263,14 +8330,17 @@ export default class KnowledgeWeaverPlugin extends Plugin {
           selectedFiles,
           semanticNeighbors,
         );
+        const analyzeLinkedByModel = this.settings.analyzeLinked && !forceAllToAllLinked;
+        const candidateLinkPathsForRequest = analyzeLinkedByModel ? candidateLinkPaths : [];
         const signatureInput: AnalysisRequestSignatureInput = {
           sourcePath: file.path,
-          candidateLinkPaths,
+          candidateLinkPaths: candidateLinkPathsForRequest,
           maxTags: this.settings.maxTags,
           maxLinked: this.settings.maxLinked,
           analyzeTags: this.settings.analyzeTags,
           analyzeTopic: this.settings.analyzeTopic,
-          analyzeLinked: this.settings.analyzeLinked,
+          analyzeLinked: analyzeLinkedByModel,
+          forceAllToAllLinkedEnabled: forceAllToAllLinked,
           analyzeIndex: this.settings.analyzeIndex,
           includeReasons: this.settings.includeReasons,
         };
@@ -8359,10 +8429,15 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         }
 
         if (this.settings.analyzeLinked) {
+          const linkedSource = forceAllToAllLinked
+            ? selectedFiles
+                .filter((candidate) => candidate.path !== file.path)
+                .map((candidate) => candidate.path)
+            : (outcome.proposal.linked ?? []).slice(0, this.settings.maxLinked);
           const proposedLinked = normalizeLinked(
             this.app,
             file.path,
-            (outcome.proposal.linked ?? []).slice(0, this.settings.maxLinked),
+            linkedSource,
             selectedPathSet,
           );
           proposed.linked = mergeUniqueStrings(existingValidated.linked, proposedLinked);

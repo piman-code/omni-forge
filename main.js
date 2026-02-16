@@ -1401,6 +1401,7 @@ var DEFAULT_SETTINGS = {
   analyzeTags: true,
   analyzeTopic: true,
   analyzeLinked: true,
+  forceAllToAllLinkedEnabled: false,
   analyzeIndex: true,
   maxTags: 8,
   maxLinked: 8,
@@ -3158,6 +3159,7 @@ var SETTINGS_DESC_KO_MAP = {
   "Auto-fill role model fields from detected models when values are missing or legacy-uniform.": "\uAC12\uC774 \uBE44\uC5B4 \uC788\uAC70\uB098 \uAE30\uC874\uCC98\uB7FC \uB3D9\uC77C \uBAA8\uB378\uB85C\uB9CC \uCC44\uC6CC\uC9C4 \uACBD\uC6B0, \uAC10\uC9C0 \uBAA8\uB378 \uAE30\uBC18 \uAD8C\uC7A5\uAC12\uC73C\uB85C \uC5ED\uD560\uBCC4 \uD544\uB4DC\uB97C \uC790\uB3D9 \uCC44\uC6C1\uB2C8\uB2E4.",
   "Calculate role-specific recommended models from detected list and apply.": "\uAC10\uC9C0\uB41C \uBAA8\uB378 \uBAA9\uB85D\uC5D0\uC11C \uC5ED\uD560\uBCC4 \uAD8C\uC7A5 \uBAA8\uB378\uC744 \uACC4\uC0B0\uD574 \uC989\uC2DC \uC801\uC6A9\uD569\uB2C8\uB2E4.",
   "Optional role-specific model. Empty uses Q&A model as fallback.": "\uC5ED\uD560 \uC804\uC6A9 \uBAA8\uB378(\uC120\uD0DD)\uC785\uB2C8\uB2E4. \uBE44\uC6B0\uBA74 Q&A \uBAA8\uB378\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Prefer vision-capable models for Ask (vision). Chat UI is text-first; image handling depends on host input support.": "Ask(\uBE44\uC804)\uC740 \uBE44\uC804 \uAC00\uB2A5\uD55C \uBAA8\uB378\uC744 \uC6B0\uC120 \uAD8C\uC7A5\uD569\uB2C8\uB2E4. \uCC44\uD305 UI\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC774\uBA70 \uC774\uBBF8\uC9C0 \uCC98\uB9AC\uB294 \uD638\uC2A4\uD2B8 \uC785\uB825 \uC9C0\uC6D0\uC5D0 \uB530\uB77C \uB2EC\uB77C\uC9D1\uB2C8\uB2E4.",
   "Used when role preset is Ask (vision). Text-only for now, image input support is planned.": "Ask(\uBE44\uC804) \uD504\uB9AC\uC14B\uC5D0\uC11C \uC0AC\uC6A9\uD569\uB2C8\uB2E4. \uD604\uC7AC\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC774\uBA70 \uC774\uBBF8\uC9C0 \uC785\uB825 \uC9C0\uC6D0\uC740 \uCD94\uD6C4 \uD655\uC7A5 \uC608\uC815\uC785\uB2C8\uB2E4.",
   "Reserved for image-generation workflows. Current chat UI is text-first.": "\uC774\uBBF8\uC9C0 \uC0DD\uC131 \uC6CC\uD06C\uD50C\uB85C\uC6A9 \uC608\uC57D \uBAA8\uB378\uC785\uB2C8\uB2E4. \uD604\uC7AC \uCC44\uD305 UI\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC785\uB2C8\uB2E4.",
   "Add extra system instructions per role agent. Empty keeps built-in role prompt only.": "\uC5ED\uD560\uBCC4 \uC5D0\uC774\uC804\uD2B8\uC5D0 \uCD94\uAC00 \uC2DC\uC2A4\uD15C \uC9C0\uC2DC\uB97C \uB123\uC2B5\uB2C8\uB2E4. \uBE44\uC6B0\uBA74 \uAE30\uBCF8 \uC5ED\uD560 \uD504\uB86C\uD504\uD2B8\uB9CC \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
@@ -3217,7 +3219,7 @@ var ROLE_MODEL_SETTING_CONFIGS = [
     key: "qaAskVisionModel",
     role: "ask_vision",
     name: "Ask model (vision)",
-    description: "Used when role preset is Ask (vision). Text-only for now, image input support is planned."
+    description: "Prefer vision-capable models for Ask (vision). Chat UI is text-first; image handling depends on host input support."
   },
   {
     key: "qaImageGeneratorModel",
@@ -3266,8 +3268,18 @@ function extractModelSizeBillions(modelName) {
   const parsed = Number.parseFloat(matched[1]);
   return Number.isFinite(parsed) ? parsed : null;
 }
+function isOllamaModelAllowedForQaRole(role, modelName) {
+  const trimmed = modelName.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (role === "ask_vision") {
+    return isOllamaModelAnalyzable(trimmed) || VISION_MODEL_REGEX.test(trimmed.toLowerCase());
+  }
+  return isOllamaModelAnalyzable(trimmed);
+}
 function scoreRoleModel(role, modelName) {
-  if (!isOllamaModelAnalyzable(modelName)) {
+  if (!isOllamaModelAllowedForQaRole(role, modelName)) {
     return -100;
   }
   const lower = modelName.toLowerCase();
@@ -3310,6 +3322,11 @@ function scoreRoleModel(role, modelName) {
       break;
     case "ask_vision":
       score += isGeneral ? 34 : 18;
+      if (isVision) {
+        score += 34;
+      } else {
+        score -= 10;
+      }
       if (isCoder) {
         score -= 8;
       }
@@ -3408,7 +3425,7 @@ function scoreRoleModel(role, modelName) {
       score += 22;
       break;
   }
-  if (!isGeneral && !isCoder && !isSafeguard) {
+  if (!isGeneral && !isCoder && !isSafeguard && !(role === "ask_vision" && isVision)) {
     score -= 4;
   }
   if (/qwen3/.test(lower)) {
@@ -3427,12 +3444,12 @@ function buildRoleSpecificOllamaModelOptions(role, models) {
   const scored = models.map((model) => ({ model, score: scoreRoleModel(role, model) })).sort((a, b) => b.score - a.score || a.model.localeCompare(b.model));
   const recommended = (_a = scored.find((item) => item.score > -100)) == null ? void 0 : _a.model;
   const options = models.map((model) => {
-    const isAnalyzable = isOllamaModelAnalyzable(model);
-    if (!isAnalyzable) {
+    const isRoleCompatible = isOllamaModelAllowedForQaRole(role, model);
+    if (!isRoleCompatible) {
       return {
         model,
         status: "unavailable",
-        reason: "Not suitable for current text-based role pipeline."
+        reason: role === "ask_vision" ? "Not suitable for Ask (vision) role." : "Not suitable for current text-based role pipeline."
       };
     }
     if (recommended && model === recommended) {
@@ -3445,7 +3462,7 @@ function buildRoleSpecificOllamaModelOptions(role, models) {
     return {
       model,
       status: "available",
-      reason: "Available text-capable model."
+      reason: role === "ask_vision" && VISION_MODEL_REGEX.test(model.toLowerCase()) ? "Available vision-capable model for Ask (vision)." : "Available text-capable model."
     };
   });
   const weight = (status) => {
@@ -3717,6 +3734,14 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
     new import_obsidian4.Setting(containerEl).setName("Analyze linked").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.analyzeLinked).onChange(async (value) => {
         this.plugin.settings.analyzeLinked = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Force all-to-all linked (deterministic)").setDesc(
+      "When enabled, linked field includes all selected notes for each note (except self). maxLinked is ignored in this mode."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.forceAllToAllLinkedEnabled).onChange(async (value) => {
+        this.plugin.settings.forceAllToAllLinkedEnabled = value;
         await this.plugin.saveSettings();
       })
     );
@@ -4430,7 +4455,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       }
       const current = this.readRoleModelSetting(config.key);
       const currentFound = current.length > 0 && options.some((option) => option.model === current);
-      const currentUnavailable = current.length > 0 && !isOllamaModelAnalyzable(current);
+      const currentUnavailable = current.length > 0 && !isOllamaModelAllowedForQaRole(config.role, current);
       const shouldApply = forceApply || legacyUniform || current.length === 0 || !currentFound || currentUnavailable;
       if (!shouldApply || current === recommended) {
         continue;
@@ -4502,6 +4527,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getQaRoleModelSummaryForQa() {
     const entries = [
       { role: "ask", short: "ask" },
+      { role: "ask_vision", short: "vision" },
       { role: "orchestrator", short: "orch" },
       { role: "architect", short: "arch" },
       { role: "coder", short: "coder" },
@@ -4510,7 +4536,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     ];
     return entries.map((entry) => {
       const model = this.getQaModelLabelForQa(entry.role);
-      const status = isOllamaModelAnalyzable(model) ? "" : "(\uBD88\uAC00)";
+      const status = isOllamaModelAllowedForQaRole(entry.role, model) ? "" : "(\uBD88\uAC00)";
       return `${entry.short}=${model}${status}`;
     }).join(", ");
   }
@@ -4952,6 +4978,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.analysisOnlyChangedNotes !== "boolean") {
       this.settings.analysisOnlyChangedNotes = DEFAULT_SETTINGS.analysisOnlyChangedNotes;
+    }
+    if (typeof this.settings.forceAllToAllLinkedEnabled !== "boolean") {
+      this.settings.forceAllToAllLinkedEnabled = DEFAULT_SETTINGS.forceAllToAllLinkedEnabled;
     }
     if (!Number.isFinite(this.settings.qaTopK)) {
       this.settings.qaTopK = DEFAULT_SETTINGS.qaTopK;
@@ -6364,7 +6393,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       this.emitQaEvent(onEvent, "warning", `Skipping ${role} pass: model is empty`);
       return null;
     }
-    if (!isOllamaModelAnalyzable(model)) {
+    if (!isOllamaModelAllowedForQaRole(role, model)) {
       this.emitQaEvent(
         onEvent,
         "warning",
@@ -6570,7 +6599,7 @@ ${roleSystemPrompt}` : ""
     if (!qaModel) {
       throw new Error("Q&A model is empty.");
     }
-    if (!isOllamaModelAnalyzable(qaModel)) {
+    if (!isOllamaModelAllowedForQaRole(primaryRole, qaModel)) {
       throw new Error(`Q&A model is not suitable: ${qaModel}`);
     }
     try {
@@ -6989,6 +7018,7 @@ ${roleSystemPrompt}` : ""
         analyzeTags: true,
         analyzeTopic: false,
         analyzeLinked: false,
+        forceAllToAllLinkedEnabled: false,
         analyzeIndex: false,
         includeReasons: this.settings.includeReasons
       };
@@ -7458,6 +7488,13 @@ ${roleSystemPrompt}` : ""
         return;
       }
     }
+    const forceAllToAllLinked = this.settings.analyzeLinked && this.settings.forceAllToAllLinkedEnabled;
+    if (forceAllToAllLinked) {
+      this.notice(
+        "All-to-all linked mode is ON. Each note will include all selected notes (except itself).",
+        6e3
+      );
+    }
     const decision = await this.askBackupDecision();
     if (!decision.proceed) {
       this.notice("Analysis cancelled.");
@@ -7476,7 +7513,8 @@ ${roleSystemPrompt}` : ""
       }
     }
     let semanticNeighbors = /* @__PURE__ */ new Map();
-    if (this.settings.semanticLinkingEnabled && this.settings.analyzeLinked) {
+    const shouldBuildSemanticNeighbors = this.settings.semanticLinkingEnabled && this.settings.analyzeLinked && !forceAllToAllLinked;
+    if (shouldBuildSemanticNeighbors) {
       this.setStatus("building semantic candidates...");
       try {
         const semanticScopeFiles = this.settings.analysisOnlyChangedNotes ? filesToAnalyze : selectedFiles;
@@ -7504,6 +7542,11 @@ ${roleSystemPrompt}` : ""
         const message = error instanceof Error ? error.message : "Unknown semantic embedding error";
         this.notice(`Semantic candidate ranking skipped: ${message}`, 6e3);
       }
+    } else if (forceAllToAllLinked && this.settings.semanticLinkingEnabled) {
+      this.notice(
+        "Semantic candidate build skipped because all-to-all linked mode is ON.",
+        5e3
+      );
     }
     const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
     progressModal.open();
@@ -7538,14 +7581,17 @@ ${roleSystemPrompt}` : ""
           selectedFiles,
           semanticNeighbors
         );
+        const analyzeLinkedByModel = this.settings.analyzeLinked && !forceAllToAllLinked;
+        const candidateLinkPathsForRequest = analyzeLinkedByModel ? candidateLinkPaths : [];
         const signatureInput = {
           sourcePath: file.path,
-          candidateLinkPaths,
+          candidateLinkPaths: candidateLinkPathsForRequest,
           maxTags: this.settings.maxTags,
           maxLinked: this.settings.maxLinked,
           analyzeTags: this.settings.analyzeTags,
           analyzeTopic: this.settings.analyzeTopic,
-          analyzeLinked: this.settings.analyzeLinked,
+          analyzeLinked: analyzeLinkedByModel,
+          forceAllToAllLinkedEnabled: forceAllToAllLinked,
           analyzeIndex: this.settings.analyzeIndex,
           includeReasons: this.settings.includeReasons
         };
@@ -7622,10 +7668,11 @@ ${roleSystemPrompt}` : ""
           }
         }
         if (this.settings.analyzeLinked) {
+          const linkedSource = forceAllToAllLinked ? selectedFiles.filter((candidate) => candidate.path !== file.path).map((candidate) => candidate.path) : ((_e = outcome.proposal.linked) != null ? _e : []).slice(0, this.settings.maxLinked);
           const proposedLinked = normalizeLinked(
             this.app,
             file.path,
-            ((_e = outcome.proposal.linked) != null ? _e : []).slice(0, this.settings.maxLinked),
+            linkedSource,
             selectedPathSet
           );
           proposed.linked = mergeUniqueStrings(existingValidated.linked, proposedLinked);
