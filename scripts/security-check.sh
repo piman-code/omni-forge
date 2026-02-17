@@ -6,16 +6,12 @@ cd "$ROOT_DIR"
 
 FAILED=0
 
-SECURITY_TARGETS=(
+SECURITY_TARGET_CANDIDATES=(
   "src"
   "scripts"
-  "docs"
   "README.md"
   "README_KO.md"
   "CHANGELOG.md"
-  "SECURITY.md"
-  "RELEASE.md"
-  "COMMUNITY_SUBMISSION_CHECKLIST.md"
   "manifest.json"
   "package.json"
   "versions.json"
@@ -23,7 +19,20 @@ SECURITY_TARGETS=(
   "tsconfig.json"
   ".gitignore"
   "main.js"
+  "styles.css"
 )
+
+SECURITY_TARGETS=()
+for target in "${SECURITY_TARGET_CANDIDATES[@]}"; do
+  if [ -e "$target" ]; then
+    SECURITY_TARGETS+=("$target")
+  fi
+done
+
+if [ "${#SECURITY_TARGETS[@]}" -eq 0 ]; then
+  echo "No security targets found."
+  exit 1
+fi
 
 echo "[1/6] Checking for possible hardcoded secrets..."
 if rg -n \

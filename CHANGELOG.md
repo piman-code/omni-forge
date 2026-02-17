@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.23] - 2026-02-17
+
+### Changed
+
+- Removed user-specific absolute path defaults from agent allowlist settings and updated placeholders/examples to generic absolute paths.
+- Updated release security scan targets to use minimal release files and only scan existing paths.
+- Minimized repository documentation surface to core release docs (`README.md`, `README_KO.md`, `CHANGELOG.md`, `LICENSE`).
+
+### Security
+
+- Re-ran release checks after removing personal-path defaults and documentation cleanup.
+
 ## [0.2.19] - 2026-02-16
 
 ### Added

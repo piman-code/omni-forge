@@ -23,6 +23,8 @@ Auto Link takes the opposite approach:
 - Selected-scope analysis only (files/folders you chose)
 - Suggestion-first workflow (preview before apply)
 - Local AI chat over selected notes with markdown answers
+- Attachment-aware chat (drag/upload/paste, up to 10 items, image thumbnails)
+- General chat works even without selected notes (attachment-first context supported)
 - Send/Stop control for long-running local chat generation
 - Source links for traceability (`[[note path]]`)
 - Thinking/progress timeline during retrieval and generation
@@ -45,7 +47,7 @@ Auto Link takes the opposite approach:
   - MOC output path
 - Legacy cache cleanup is best-effort and isolated
 
-See [SECURITY.md](SECURITY.md) for policy details.
+Keep non-local endpoints disabled unless you explicitly trust the destination and data boundary.
 
 ## Installation
 
@@ -62,23 +64,29 @@ See [SECURITY.md](SECURITY.md) for policy details.
    - `manifest.json`
    - `main.js`
    - `styles.css`
-2. Place them in: `.obsidian/plugins/auto-linker/`
+2. Place them in: `.obsidian/plugins/auto-link/`
 3. Reload Obsidian and enable **Auto Link**.
 
 ## 5-Minute Quick Start
 
 1. Open `Settings -> Auto Link`.
+   - Keep `Settings view mode` on `Simple` for an essentials-only screen.
+   - Use `Open Full` only when you need advanced controls.
+   - Use top tabs (`Quick/Models/Chat/Workflow/Advanced`) to focus on one area at a time.
 2. Choose provider/model.
    - local-first recommendation: `Ollama`
-3. Run command: `Select target notes/folders`.
-4. Run command: `Analyze selected notes (suggestions by default)`.
-5. Review suggestions and apply.
-6. (Optional) Run command: `Ask local AI from selected notes`.
+3. Pick a `One-click local presets` profile (`Balanced` is the default recommendation).
+4. Run command: `Select target notes/folders`.
+5. Run command: `Analyze selected notes (suggestions by default)`.
+6. Review suggestions and apply.
+7. (Optional) Run command: `Ask local AI from selected notes`.
 
 ## Recommended Settings
 
 | Area | Setting | Recommended |
 |---|---|---|
+| UI | Settings view mode | Simple (daily), Full (advanced tuning) |
+| UI | One-click local presets | Balanced default, Fast/Quality+ for specific goals |
 | Safety | Allow non-local Q&A endpoint | OFF |
 | Q&A | Prefer Ollama /api/chat (with fallback) | ON |
 | Q&A | Structured answer guard | ON |
@@ -184,8 +192,5 @@ npm run release:check
 ```
 
 Related docs:
-- [USER_GUIDE_EN.md](docs/USER_GUIDE_EN.md)
-- [USER_GUIDE_KO.md](docs/USER_GUIDE_KO.md)
-- [SECURITY.md](SECURITY.md)
-- [RELEASE.md](RELEASE.md)
-- [COMMUNITY_SUBMISSION_CHECKLIST.md](COMMUNITY_SUBMISSION_CHECKLIST.md)
+- [README_KO.md](README_KO.md)
+- [CHANGELOG.md](CHANGELOG.md)

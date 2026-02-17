@@ -442,7 +442,7 @@ function pruneRuntimeQueryVectorCache(): void {
 
 function getEmbeddingCachePath(app: App): string {
   return normalizePath(
-    `${app.vault.configDir}/plugins/auto-linker/semantic-embedding-cache.json`,
+    `${app.vault.configDir}/plugins/auto-link/semantic-embedding-cache.json`,
   );
 }
 
@@ -564,11 +564,18 @@ function resolveEmbeddingConfig(settings: KnowledgeWeaverSettings): EmbeddingCon
   return { baseUrl, model };
 }
 
+function throwAbortIfNeeded(abortSignal?: AbortSignal): void {
+  if (abortSignal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+}
+
 async function buildFileVectorIndex(
   app: App,
   files: TFile[],
   config: EmbeddingConfig,
   maxChars: number,
+  abortSignal?: AbortSignal,
 ): Promise<FileVectorBuildResult> {
   const vectorsByPath = new Map<string, number[]>();
   const errors: string[] = [];
@@ -584,6 +591,7 @@ async function buildFileVectorIndex(
   }> = [];
 
   for (const file of files) {
+    throwAbortIfNeeded(abortSignal);
     const runtimeKey = buildRuntimeFileVectorKey(
       config.baseUrl,
       config.model,
@@ -615,6 +623,7 @@ async function buildFileVectorIndex(
     }
 
     const content = await app.vault.cachedRead(file);
+    throwAbortIfNeeded(abortSignal);
     const text = normalizeSourceText(content, maxChars);
     const fingerprint = fingerprintText(text);
     if (
@@ -645,6 +654,7 @@ async function buildFileVectorIndex(
   }
 
   for (let i = 0; i < missing.length; i += EMBEDDING_BATCH_SIZE) {
+    throwAbortIfNeeded(abortSignal);
     const batch = missing.slice(i, i + EMBEDDING_BATCH_SIZE);
 
     try {
@@ -653,6 +663,7 @@ async function buildFileVectorIndex(
         config.model,
         batch.map((item) => item.text),
       );
+      throwAbortIfNeeded(abortSignal);
 
       if (embeddings.length !== batch.length) {
         throw new Error(
@@ -716,9 +727,11 @@ export async function buildSemanticNeighborMap(
   app: App,
   files: TFile[],
   settings: KnowledgeWeaverSettings,
+  abortSignal?: AbortSignal,
 ): Promise<SemanticNeighborResult> {
   const neighborMap = new Map<string, SemanticNeighbor[]>();
   for (const file of files) {
+    throwAbortIfNeeded(abortSignal);
     neighborMap.set(file.path, []);
   }
 
@@ -743,6 +756,7 @@ export async function buildSemanticNeighborMap(
     files,
     config,
     maxChars,
+    abortSignal,
   );
   const vectorsByPath = vectorBuild.vectorsByPath;
   const errors = [...vectorBuild.errors];
@@ -750,6 +764,7 @@ export async function buildSemanticNeighborMap(
   const cacheWrites = vectorBuild.cacheWrites;
 
   for (const sourceFile of files) {
+    throwAbortIfNeeded(abortSignal);
     const sourceVector = vectorsByPath.get(sourceFile.path);
     if (!sourceVector) {
       continue;
@@ -758,6 +773,7 @@ export async function buildSemanticNeighborMap(
     const scored: SemanticNeighbor[] = [];
 
     for (const targetFile of files) {
+      throwAbortIfNeeded(abortSignal);
       if (targetFile.path === sourceFile.path) {
         continue;
       }
@@ -798,6 +814,7 @@ export async function searchSemanticNotesByQuery(
   settings: KnowledgeWeaverSettings,
   query: string,
   topK: number,
+  abortSignal?: AbortSignal,
 ): Promise<SemanticQueryResult> {
   if (files.length === 0) {
     return {
@@ -815,7 +832,13 @@ export async function searchSemanticNotesByQuery(
   const queryText = normalizeSourceText(query, maxChars);
   const safeTopK = Math.max(1, topK);
 
-  const vectorBuild = await buildFileVectorIndex(app, files, config, maxChars);
+  const vectorBuild = await buildFileVectorIndex(
+    app,
+    files,
+    config,
+    maxChars,
+    abortSignal,
+  );
   const hits: SemanticQueryHit[] = [];
   const errors = [...vectorBuild.errors];
 
@@ -833,10 +856,12 @@ export async function searchSemanticNotesByQuery(
   }
 
   try {
+    throwAbortIfNeeded(abortSignal);
     if (!queryVector) {
       const queryEmbeddings = await requestOllamaEmbeddings(config.baseUrl, config.model, [
         queryText,
       ]);
+      throwAbortIfNeeded(abortSignal);
       queryVector = queryEmbeddings[0] ?? null;
       if (queryVector && queryVector.length > 0) {
         runtimeQueryVectorCache.set(queryCacheKey, {
@@ -853,6 +878,7 @@ export async function searchSemanticNotesByQuery(
 
   if (queryVector) {
     for (const file of files) {
+      throwAbortIfNeeded(abortSignal);
       const fileVector = vectorBuild.vectorsByPath.get(file.path);
       if (!fileVector) {
         continue;

@@ -1,8 +1,10 @@
 /* eslint-disable */
 "use strict";
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -16,6 +18,14 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/main.ts
@@ -24,6 +34,11 @@ __export(main_exports, {
   default: () => KnowledgeWeaverPlugin
 });
 module.exports = __toCommonJS(main_exports);
+var import_child_process = require("child_process");
+var nodeFs = __toESM(require("fs"));
+var nodeOs = __toESM(require("os"));
+var nodePath = __toESM(require("path"));
+var import_util = require("util");
 var import_obsidian4 = require("obsidian");
 
 // src/frontmatter.ts
@@ -1027,7 +1042,7 @@ function pruneRuntimeQueryVectorCache() {
 }
 function getEmbeddingCachePath(app) {
   return (0, import_obsidian3.normalizePath)(
-    `${app.vault.configDir}/plugins/auto-linker/semantic-embedding-cache.json`
+    `${app.vault.configDir}/plugins/auto-link/semantic-embedding-cache.json`
   );
 }
 async function ensureParentFolder(app, path) {
@@ -1124,7 +1139,12 @@ function resolveEmbeddingConfig(settings) {
   }
   return { baseUrl, model };
 }
-async function buildFileVectorIndex(app, files, config, maxChars) {
+function throwAbortIfNeeded(abortSignal) {
+  if (abortSignal == null ? void 0 : abortSignal.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+}
+async function buildFileVectorIndex(app, files, config, maxChars, abortSignal) {
   const vectorsByPath = /* @__PURE__ */ new Map();
   const errors = [];
   const cache = await readEmbeddingCache(app);
@@ -1133,6 +1153,7 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
   let cacheDirty = false;
   const missing = [];
   for (const file of files) {
+    throwAbortIfNeeded(abortSignal);
     const runtimeKey = buildRuntimeFileVectorKey(
       config.baseUrl,
       config.model,
@@ -1154,6 +1175,7 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
       continue;
     }
     const content = await app.vault.cachedRead(file);
+    throwAbortIfNeeded(abortSignal);
     const text = normalizeSourceText(content, maxChars);
     const fingerprint = fingerprintText(text);
     if (hit && hit.fingerprint === fingerprint && Array.isArray(hit.vector) && hit.vector.length > 0) {
@@ -1177,6 +1199,7 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
     });
   }
   for (let i = 0; i < missing.length; i += EMBEDDING_BATCH_SIZE) {
+    throwAbortIfNeeded(abortSignal);
     const batch = missing.slice(i, i + EMBEDDING_BATCH_SIZE);
     try {
       const embeddings = await requestOllamaEmbeddings(
@@ -1184,6 +1207,7 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
         config.model,
         batch.map((item) => item.text)
       );
+      throwAbortIfNeeded(abortSignal);
       if (embeddings.length !== batch.length) {
         throw new Error(
           `Embedding count mismatch (${embeddings.length} vs ${batch.length}).`
@@ -1237,9 +1261,10 @@ async function buildFileVectorIndex(app, files, config, maxChars) {
     errors
   };
 }
-async function buildSemanticNeighborMap(app, files, settings) {
+async function buildSemanticNeighborMap(app, files, settings, abortSignal) {
   const neighborMap = /* @__PURE__ */ new Map();
   for (const file of files) {
+    throwAbortIfNeeded(abortSignal);
     neighborMap.set(file.path, []);
   }
   if (files.length < 2) {
@@ -1261,19 +1286,22 @@ async function buildSemanticNeighborMap(app, files, settings) {
     app,
     files,
     config,
-    maxChars
+    maxChars,
+    abortSignal
   );
   const vectorsByPath = vectorBuild.vectorsByPath;
   const errors = [...vectorBuild.errors];
   const cacheHits = vectorBuild.cacheHits;
   const cacheWrites = vectorBuild.cacheWrites;
   for (const sourceFile of files) {
+    throwAbortIfNeeded(abortSignal);
     const sourceVector = vectorsByPath.get(sourceFile.path);
     if (!sourceVector) {
       continue;
     }
     const scored = [];
     for (const targetFile of files) {
+      throwAbortIfNeeded(abortSignal);
       if (targetFile.path === sourceFile.path) {
         continue;
       }
@@ -1302,7 +1330,7 @@ async function buildSemanticNeighborMap(app, files, settings) {
     errors
   };
 }
-async function searchSemanticNotesByQuery(app, files, settings, query, topK) {
+async function searchSemanticNotesByQuery(app, files, settings, query, topK, abortSignal) {
   var _a;
   if (files.length === 0) {
     return {
@@ -1318,7 +1346,13 @@ async function searchSemanticNotesByQuery(app, files, settings, query, topK) {
   const maxChars = Math.max(400, settings.semanticMaxChars);
   const queryText = normalizeSourceText(query, maxChars);
   const safeTopK = Math.max(1, topK);
-  const vectorBuild = await buildFileVectorIndex(app, files, config, maxChars);
+  const vectorBuild = await buildFileVectorIndex(
+    app,
+    files,
+    config,
+    maxChars,
+    abortSignal
+  );
   const hits = [];
   const errors = [...vectorBuild.errors];
   let queryVector = null;
@@ -1334,10 +1368,12 @@ async function searchSemanticNotesByQuery(app, files, settings, query, topK) {
     queryVector = queryCacheHit.vector;
   }
   try {
+    throwAbortIfNeeded(abortSignal);
     if (!queryVector) {
       const queryEmbeddings = await requestOllamaEmbeddings(config.baseUrl, config.model, [
         queryText
       ]);
+      throwAbortIfNeeded(abortSignal);
       queryVector = (_a = queryEmbeddings[0]) != null ? _a : null;
       if (queryVector && queryVector.length > 0) {
         runtimeQueryVectorCache.set(queryCacheKey, {
@@ -1353,6 +1389,7 @@ async function searchSemanticNotesByQuery(app, files, settings, query, topK) {
   }
   if (queryVector) {
     for (const file of files) {
+      throwAbortIfNeeded(abortSignal);
       const fileVector = vectorBuild.vectorsByPath.get(file.path);
       if (!fileVector) {
         continue;
@@ -1379,7 +1416,11 @@ async function searchSemanticNotesByQuery(app, files, settings, query, topK) {
 }
 
 // src/main.ts
+var execAsync = (0, import_util.promisify)(import_child_process.exec);
 var DEFAULT_SETTINGS = {
+  settingsViewMode: "full",
+  settingsUiLanguage: "ko",
+  settingsActiveTab: "quick",
   provider: "ollama",
   ollamaBaseUrl: "http://127.0.0.1:11434",
   ollamaModel: "",
@@ -1418,12 +1459,18 @@ var DEFAULT_SETTINGS = {
   qaTopK: 5,
   qaMaxContextChars: 12e3,
   qaAllowNonLocalEndpoint: false,
+  qaAllowedOutboundHosts: "",
   qaPreferChatApi: true,
   qaStructureGuardEnabled: true,
   qaAlwaysDetailedAnswer: true,
   qaMinAnswerChars: 320,
   qaPreferredResponseLanguage: "korean",
-  qaCustomSystemPrompt: "",
+  qaLocalPresetProfile: "balanced_local",
+  qaConversationMode: "ask",
+  qaQuickCustomProfileSlot1: "",
+  qaQuickCustomProfileSlot2: "",
+  qaQuickCustomProfileSlot3: "",
+  qaCustomSystemPrompt: '\uB108\uB294 \uB85C\uCEEC Obsidian \uB178\uD2B8 \uAE30\uBC18 \uC2E4\uD589 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uC81C\uACF5\uB41C \uC18C\uC2A4 \uBC94\uC704 \uC548\uC5D0\uC11C\uB9CC \uB2F5\uD558\uACE0, \uADFC\uAC70\uAC00 \uBD80\uC871\uD558\uBA74 \uBC18\uB4DC\uC2DC "\uC815\uBCF4 \uBD80\uC871"\uC774\uB77C\uACE0 \uBA85\uC2DC\uD55C\uB2E4. \uCD94\uCE21/\uD658\uAC01/\uACFC\uC7A5 \uD45C\uD604\uC744 \uAE08\uC9C0\uD55C\uB2E4. \uC6B0\uC120\uC21C\uC704: (1) \uB178\uD2B8 \uB9C1\uD06C\uB97C \uC815\uD655\uD788 \uC5F0\uACB0\uD574 \uADF8\uB798\uD504 \uC778\uC0AC\uC774\uD2B8\uB97C \uAC15\uD654 (2) \uB178\uD2B8 \uAE30\uBC18 \uBB38\uC11C/\uBD84\uC11D/\uAC1C\uBC1C \uC791\uC5C5 \uD6A8\uC728\uC744 \uB192\uC774\uB294 \uC2E4\uD589\uC548 \uC81C\uC2DC. \uCCA8\uBD80\uAC00 \uC788\uC73C\uBA74 \uCCA8\uBD80\uB97C 1\uC21C\uC704 \uADFC\uAC70\uB85C \uC0AC\uC6A9\uD558\uACE0, \uC120\uD0DD \uB178\uD2B8\uB294 \uBCF4\uC870 \uADFC\uAC70\uB85C\uB9CC \uC0AC\uC6A9\uD55C\uB2E4. \uB2F5\uBCC0 \uD615\uC2DD: 1) \uD55C \uC904 \uC694\uC57D 2) \uD575\uC2EC \uADFC\uAC70 (\uCD5C\uB300 5\uAC1C) 3) \uC2E4\uD589 \uAC00\uB2A5\uD55C \uB2E4\uC74C \uB2E8\uACC4 (\uCD5C\uB300 5\uAC1C). \uC8FC\uC7A5\uC5D0\uB294 \uAC00\uB2A5\uD55C \uACBD\uC6B0 \uC18C\uC2A4 \uACBD\uB85C\uB97C \uAD04\uD638\uB85C \uD45C\uAE30\uD55C\uB2E4. \uC7A5\uD669\uD568\uBCF4\uB2E4 \uC815\uD655\uC131\uACFC \uC7AC\uD604 \uAC00\uB2A5\uC131\uC744 \uC6B0\uC120\uD55C\uB2E4.',
   qaRolePreset: "ask",
   qaPipelinePreset: "orchestrator_safeguard",
   qaAskModel: "",
@@ -1433,20 +1480,37 @@ var DEFAULT_SETTINGS = {
   qaArchitectModel: "",
   qaOrchestratorModel: "",
   qaSafeguardModel: "",
-  qaAskSystemPrompt: "",
-  qaAskVisionSystemPrompt: "",
-  qaImageGeneratorSystemPrompt: "",
-  qaCoderSystemPrompt: "",
-  qaDebuggerSystemPrompt: "",
-  qaArchitectSystemPrompt: "",
-  qaOrchestratorSystemPrompt: "",
-  qaSafeguardSystemPrompt: "",
+  qaBalancedPresetBaseModel: "qwen3:14b",
+  qaBalancedPresetVisionModel: "qwen2.5vl:7b",
+  qaBalancedPresetEmbeddingModel: "nomic-embed-text",
+  qaQualityPresetBaseModel: "qwen3:30b",
+  qaQualityPresetVisionModel: "qwen2.5vl:7b",
+  qaQualityPresetEmbeddingModel: "nomic-embed-text",
+  qaAskSystemPrompt: "\uB108\uB294 \uB85C\uCEEC \uB178\uD2B8 \uAE30\uBC18 Ask \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uADFC\uAC70\uAC00 \uBD80\uC871\uD558\uBA74 '\uC815\uBCF4 \uBD80\uC871'\uC744 \uBA85\uC2DC\uD558\uACE0, \uD575\uC2EC\uB9CC \uC815\uD655\uD558\uAC8C \uC804\uB2EC\uD55C\uB2E4.",
+  qaAskVisionSystemPrompt: '\uB108\uB294 Ask(vision) \uC5ED\uD560\uC774\uC9C0\uB9CC, \uD604\uC7AC \uD30C\uC774\uD504\uB77C\uC778\uC740 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC784\uC744 \uC804\uC81C\uB85C \uB3D9\uC791\uD55C\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uC2E4\uC81C \uC774\uBBF8\uC9C0\uB97C \uC9C1\uC811 \uBCF8 \uAC83\uCC98\uB7FC \uB9D0\uD558\uC9C0 \uC54A\uB294\uB2E4. \uC774\uBBF8\uC9C0 \uC790\uCCB4\uAC00 \uC785\uB825\uB418\uC9C0 \uC54A\uC558\uC73C\uBA74 "\uC774\uBBF8\uC9C0 \uC6D0\uBCF8 \uD655\uC778 \uBD88\uAC00"\uB97C \uBA85\uC2DC\uD558\uACE0, \uD14D\uC2A4\uD2B8 \uAE30\uBC18\uC73C\uB85C \uAC00\uB2A5\uD55C \uD574\uC11D/\uC694\uCCAD\uC0AC\uD56D/\uB2E4\uC74C \uD655\uC778 \uC808\uCC28\uB97C \uC81C\uC2DC\uD55C\uB2E4. \uB2F5\uBCC0 \uD615\uC2DD: 1) \uD604\uC7AC \uD655\uC778 \uAC00\uB2A5\uD55C \uC0AC\uC2E4 2) \uD655\uC778 \uBD88\uAC00\uB2A5\uD55C \uD56D\uBAA9 3) \uCD94\uAC00\uB85C \uBC1B\uC73C\uBA74 \uC815\uD655\uB3C4\uAC00 \uC62C\uB77C\uAC00\uB294 \uC785\uB825 \uBAA9\uB85D',
+  qaImageGeneratorSystemPrompt: '\uB108\uB294 \uC774\uBBF8\uC9C0 \uC0DD\uC131 \uC6CC\uD06C\uD50C\uB85C \uC124\uACC4 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uC2E4\uC81C \uC774\uBBF8\uC9C0\uB97C \uC0DD\uC131\uD588\uB2E4\uACE0 \uC8FC\uC7A5\uD558\uC9C0 \uB9D0\uACE0, "\uC0DD\uC131\uC6A9 \uD504\uB86C\uD504\uD2B8 \uC124\uACC4"\uB9CC \uC81C\uACF5\uD55C\uB2E4. \uCD9C\uB825 \uD615\uC2DD: 1) \uBAA9\uC801 \uC694\uC57D 2) Positive prompt 3) Negative prompt 4) \uC2A4\uD0C0\uC77C/\uAD6C\uB3C4/\uC870\uBA85/\uC0C9\uAC10 \uC9C0\uC2DC 5) \uAD8C\uC7A5 \uD30C\uB77C\uBBF8\uD130(\uBE44\uC728, \uC2A4\uD15D, \uC2DC\uB4DC \uC804\uB7B5) \uC694\uCCAD\uC774 \uBD88\uBA85\uD655\uD558\uBA74 \uAE30\uBCF8\uAC12\uC744 \uBA85\uC2DC\uD558\uACE0 \uBCF4\uC218\uC801\uC73C\uB85C \uC81C\uC548\uD55C\uB2E4.',
+  qaCoderSystemPrompt: '\uB108\uB294 \uAD6C\uD604 \uC911\uC2EC \uCF54\uB354 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uC124\uACC4 \uC124\uBA85\uBCF4\uB2E4 "\uBC14\uB85C \uC801\uC6A9 \uAC00\uB2A5\uD55C \uBCC0\uACBD\uC548"\uC744 \uC6B0\uC120\uD55C\uB2E4. \uADDC\uCE59: - \uC694\uAD6C\uC0AC\uD56D\uC5D0 \uC9C1\uC811 \uC5F0\uACB0\uB41C \uCF54\uB4DC/\uAD6C\uC870\uB9CC \uC81C\uC2DC - \uBD88\uD655\uC2E4\uD55C \uBD80\uBD84\uC740 \uAC00\uC815\uC744 \uBA85\uC2DC - \uD14C\uC2A4\uD2B8/\uAC80\uC99D \uC808\uCC28\uB97C \uBC18\uB4DC\uC2DC \uD3EC\uD568 \uCD9C\uB825 \uD615\uC2DD: 1) \uBCC0\uACBD \uC694\uC57D 2) \uD30C\uC77C \uB2E8\uC704 \uC218\uC815 \uACC4\uD68D 3) \uD575\uC2EC \uCF54\uB4DC \uC2A4\uB2C8\uD3AB \uB610\uB294 \uD328\uCE58 \uD615\uD0DC \uC81C\uC548 4) \uD14C\uC2A4\uD2B8 \uD56D\uBAA9(\uC815\uC0C1/\uC5E3\uC9C0/\uD68C\uADC0) 5) \uB864\uBC31 \uBC29\uBC95',
+  qaDebuggerSystemPrompt: "\uB108\uB294 \uB514\uBC84\uAE45 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uBAA9\uD45C: \uC7AC\uD604 \uAC00\uB2A5\uC131, \uC6D0\uC778 \uBD84\uB9AC, \uC548\uC804\uD55C \uC218\uC815. \uADDC\uCE59: - \uC6D0\uC778 \uD6C4\uBCF4\uB97C \uC6B0\uC120\uC21C\uC704\uB85C \uC815\uB9AC - \uAC01 \uD6C4\uBCF4\uBCC4 \uAC80\uC99D \uC2E4\uD5D8\uC744 \uC81C\uC2DC - \uD655\uC815\uB418\uC9C0 \uC54A\uC740 \uC6D0\uC778\uC744 \uB2E8\uC815\uD558\uC9C0 \uC54A\uB294\uB2E4 \uCD9C\uB825 \uD615\uC2DD: 1) \uC99D\uC0C1 \uC815\uB9AC 2) \uC6D0\uC778 \uAC00\uC124 Top 3 3) \uAC00\uC124\uBCC4 \uAC80\uC99D \uC808\uCC28 4) \uCD5C\uC18C \uC218\uC815\uC548 5) \uC218\uC815 \uD6C4 \uAC80\uC99D \uCCB4\uD06C\uB9AC\uC2A4\uD2B8",
+  qaArchitectSystemPrompt: "\uB108\uB294 \uC2DC\uC2A4\uD15C \uC544\uD0A4\uD14D\uD2B8 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uBAA9\uD45C: \uC7A5\uAE30 \uC720\uC9C0\uBCF4\uC218 \uAC00\uB2A5\uD55C \uAD6C\uC870\uC640 \uD2B8\uB808\uC774\uB4DC\uC624\uD504 \uC81C\uC2DC. \uADDC\uCE59: - \uB300\uC548 \uCD5C\uC18C 2\uAC1C \uC81C\uC2DC - \uC131\uB2A5/\uBCF5\uC7A1\uB3C4/\uC6B4\uC601\uBE44/\uBCF4\uC548 \uAD00\uC810 \uBE44\uAD50 - \uC758\uC0AC\uACB0\uC815 \uAE30\uC900\uC744 \uBA85\uD655\uD788 \uC81C\uC2DC \uCD9C\uB825 \uD615\uC2DD: 1) \uC694\uAD6C\uC0AC\uD56D/\uC81C\uC57D \uC694\uC57D 2) \uC544\uD0A4\uD14D\uCC98 \uC635\uC158 \uBE44\uAD50\uD45C 3) \uAD8C\uC7A5\uC548\uACFC \uC120\uD0DD \uC774\uC720 4) \uB2E8\uACC4\uC801 \uC774\uD589 \uACC4\uD68D 5) \uB9AC\uC2A4\uD06C\uC640 \uBAA8\uB2C8\uD130\uB9C1 \uD3EC\uC778\uD2B8",
+  qaOrchestratorSystemPrompt: '\uB108\uB294 \uBA40\uD2F0 \uC5D0\uC774\uC804\uD2B8 \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uBAA9\uD45C: \uC9C8\uBB38\uC744 \uC2E4\uD589 \uAC00\uB2A5\uD55C \uC791\uC5C5 \uD750\uB984\uC73C\uB85C \uBD84\uD574\uD558\uACE0, \uD544\uC694\uD55C \uD558\uC704 \uC5ED\uD560(architect/coder/debugger/safeguard)\uC744 \uC9C0\uC815\uD55C\uB2E4. \uADDC\uCE59: - \uC0AC\uC2E4 \uC0DD\uC131 \uAE08\uC9C0, \uADFC\uAC70 \uBD80\uC871 \uC2DC "\uC815\uBCF4 \uBD80\uC871" \uD45C\uAE30 - \uACFC\uB3C4\uD55C \uC7A5\uBB38 \uAE08\uC9C0, \uD575\uC2EC \uC758\uC0AC\uACB0\uC815 \uC911\uC2EC - \uCCA8\uBD80\uAC00 \uC788\uC73C\uBA74 \uCCA8\uBD80\uB97C 1\uC21C\uC704 \uADFC\uAC70\uB85C \uC0AC\uC6A9 \uCD9C\uB825 \uD615\uC2DD: 1) \uC791\uC5C5 \uBAA9\uD45C/\uBC94\uC704 2) \uB2E8\uACC4\uBCC4 \uACC4\uD68D(\uC21C\uC11C/\uC758\uC874\uC131/\uC644\uB8CC\uC870\uAC74) 3) \uC5ED\uD560 \uB77C\uC6B0\uD305 \uD45C (\uC5ED\uD560 | \uB9E1\uAE38 \uC77C | \uAE30\uB300 \uC0B0\uCD9C\uBB3C) 4) \uC5ED\uD560 \uC2E4\uD589 \uC694\uC57D (\uC5ED\uD560 | \uC2E4\uC81C \uAE30\uC5EC | \uC0B0\uCD9C\uBB3C | \uC870\uC728 \uBA54\uBAA8 | \uBBF8\uD574\uACB0 \uC774\uC288) 5) \uC704\uD5D8\uC694\uC18C\uC640 \uC644\uD654\uCC45 6) \uC989\uC2DC \uC2E4\uD589\uD560 3\uB2E8\uACC4',
+  qaSafeguardSystemPrompt: '\uB108\uB294 \uBCF4\uC548/\uC548\uC804 \uAC80\uC99D \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uCD08\uC810: \uAC1C\uC778\uC815\uBCF4, \uBCF4\uC548, \uADDC\uC815 \uC900\uC218, \uACFC\uC7A5/\uD5C8\uC704 \uC8FC\uC7A5 \uC81C\uAC70. \uADDC\uCE59: - \uADFC\uAC70 \uC5C6\uB294 \uBB38\uC7A5\uC740 \uC0AD\uC81C \uB610\uB294 "\uC815\uBCF4 \uBD80\uC871"\uC73C\uB85C \uB0AE\uCDB0 \uD45C\uD604 - \uBBFC\uAC10\uC815\uBCF4 \uB178\uCD9C \uAC00\uB2A5\uC131, \uC678\uBD80 \uC804\uC1A1 \uC704\uD5D8, \uAD8C\uD55C \uACFC\uB2E4 \uC5EC\uBD80\uB97C \uC6B0\uC120 \uC810\uAC80 \uCD9C\uB825 \uD615\uC2DD: 1) \uC704\uD5D8 \uC694\uC57D (\uC2EC\uAC01\uB3C4: \uB192\uC74C/\uC911\uAC04/\uB0AE\uC74C) 2) \uBC1C\uACAC \uD56D\uBAA9 (\uBB38\uC81C | \uC601\uD5A5 | \uADFC\uAC70) 3) \uC989\uC2DC \uC218\uC815 \uAD8C\uACE0\uC548 4) \uC6B4\uC601 \uC804 \uCD5C\uC885 \uCCB4\uD06C\uB9AC\uC2A4\uD2B8',
   qaRoleModelAutoPickEnabled: true,
   qaOrchestratorEnabled: false,
   qaSafeguardPassEnabled: false,
   qaIncludeSelectionInventory: true,
   qaSelectionInventoryMaxFiles: 200,
   qaThreadAutoSyncEnabled: true,
+  qaPdfAttachmentEnabled: true,
+  qaContextInChat: true,
+  qaParserMode: "fast",
+  qaAgentToolModeEnabled: false,
+  qaAgentRequireApproval: true,
+  qaAgentAllowShellTool: false,
+  qaAgentShellFullAccess: false,
+  qaAgentShellTimeoutSec: 20,
+  qaAgentShellCwdPath: "",
+  qaAgentPathAllowlist: "",
+  qaAttachmentIngestRootPath: "Auto Link Ingest",
   autoTagActiveNoteEnabled: false,
   autoTagActiveNoteCooldownSec: 90,
   watchNewNotesEnabled: false,
@@ -1470,6 +1534,9 @@ var DEFAULT_SETTINGS = {
   mocPath: "MOC/Selected Knowledge MOC.md"
 };
 var LOCAL_QA_VIEW_TYPE = "auto-linker-local-qa-view";
+var LOCAL_QA_MAX_ATTACHMENTS = 10;
+var LOCAL_QA_PDF_OCR_MAX_PAGES_FAST = 3;
+var LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED = 8;
 var ANALYSIS_CACHE_FILE = "analysis-proposal-cache.json";
 var ANALYSIS_CACHE_VERSION = 1;
 var ANALYSIS_CACHE_MAX_ENTRIES = 4e3;
@@ -1564,6 +1631,42 @@ function parsePositiveInt(value, fallback) {
     return fallback;
   }
   return parsed;
+}
+function isEnterLikeKey(event) {
+  var _a, _b;
+  const legacyCode = (_b = (_a = event.keyCode) != null ? _a : event.which) != null ? _b : 0;
+  return event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter" || legacyCode === 13;
+}
+function shouldSubmitChatOnEnter(event) {
+  return isEnterLikeKey(event) && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing;
+}
+function insertTextareaLineBreak(target) {
+  var _a, _b;
+  const start = (_a = target.selectionStart) != null ? _a : target.value.length;
+  const end = (_b = target.selectionEnd) != null ? _b : start;
+  target.setRangeText("\n", start, end, "end");
+}
+function handleChatTextareaEnterKey(event, target, onSubmit) {
+  if (!isEnterLikeKey(event)) {
+    return;
+  }
+  if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    insertTextareaLineBreak(target);
+    return;
+  }
+  if (event.isComposing) {
+    return;
+  }
+  if (!shouldSubmitChatOnEnter(event)) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  void onSubmit();
 }
 function cloneMetadataProposal(proposal) {
   return {
@@ -1978,8 +2081,8 @@ var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian4.Moda
     this.close();
   }
   static ask(app, defaultBackup) {
-    return new Promise((resolve) => {
-      new _BackupConfirmModal(app, defaultBackup, resolve).open();
+    return new Promise((resolve2) => {
+      new _BackupConfirmModal(app, defaultBackup, resolve2).open();
     });
   }
 };
@@ -2020,14 +2123,14 @@ var CapacityGuardModal = class _CapacityGuardModal extends import_obsidian4.Moda
     this.close();
   }
   static ask(app, selectedCount, recommendedMax, modelName, semanticEnabled) {
-    return new Promise((resolve) => {
+    return new Promise((resolve2) => {
       new _CapacityGuardModal(
         app,
         selectedCount,
         recommendedMax,
         modelName,
         semanticEnabled,
-        resolve
+        resolve2
       ).open();
     });
   }
@@ -2080,8 +2183,8 @@ var NewNoteWatchModal = class _NewNoteWatchModal extends import_obsidian4.Modal 
     this.close();
   }
   static ask(app, filePath, watchedFolder) {
-    return new Promise((resolve) => {
-      new _NewNoteWatchModal(app, filePath, watchedFolder, resolve).open();
+    return new Promise((resolve2) => {
+      new _NewNoteWatchModal(app, filePath, watchedFolder, resolve2).open();
     });
   }
 };
@@ -2278,10 +2381,78 @@ var SuggestionPreviewModal = class extends import_obsidian4.Modal {
     }
   }
 };
+var VaultTextInputModal = class extends import_obsidian4.Modal {
+  constructor(app, titleText, placeholder, initialValue, submitText, onSubmitValue) {
+    super(app);
+    this.titleText = titleText;
+    this.placeholder = placeholder;
+    this.initialValue = initialValue;
+    this.submitText = submitText;
+    this.onSubmitValue = onSubmitValue;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: this.titleText });
+    this.inputEl = contentEl.createEl("input", { type: "text" });
+    this.inputEl.style.width = "100%";
+    this.inputEl.placeholder = this.placeholder;
+    this.inputEl.value = this.initialValue;
+    this.inputEl.focus();
+    this.inputEl.setSelectionRange(0, this.inputEl.value.length);
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "10px";
+    const cancelButton = footer.createEl("button", { text: "Cancel / \uCDE8\uC18C" });
+    cancelButton.onclick = () => this.close();
+    this.submitButton = footer.createEl("button", {
+      text: this.submitText,
+      cls: "mod-cta"
+    });
+    this.submitButton.onclick = async () => {
+      await this.commit();
+    };
+    this.inputEl.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        await this.commit();
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.close();
+      }
+    });
+  }
+  async commit() {
+    const value = this.inputEl.value.trim();
+    if (!value) {
+      new import_obsidian4.Notice("\uAC12\uC774 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4. / Value is empty.", 4e3);
+      return;
+    }
+    this.submitButton.disabled = true;
+    try {
+      await this.onSubmitValue(value);
+      this.close();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown input error";
+      new import_obsidian4.Notice(message, 7e3);
+      this.submitButton.disabled = false;
+      this.inputEl.focus();
+    }
+  }
+};
 var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
+    this.roleSelect = null;
+    this.pipelineSelect = null;
+    this.conversationModeSelect = null;
+    this.pendingAttachments = [];
+    this.qaContextButton = null;
     this.running = false;
+    this.stopRequested = false;
     this.activeRequestController = null;
     this.messages = [];
     this.threadPath = null;
@@ -2291,8 +2462,14 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.syncTimer = null;
     this.syncInFlight = false;
     this.syncQueued = false;
+    this.queuedTurns = [];
+    this.pendingPreemptTurn = null;
+    this.queueDrainInProgress = false;
     this.renderVersion = 0;
     this.streamRenderTimer = null;
+    this.fileOpenEventBound = false;
+    this.lastKnownOpenMarkdownPath = null;
+    this.commandAvailabilityCache = /* @__PURE__ */ new Map();
     this.plugin = plugin;
   }
   getViewType() {
@@ -2307,14 +2484,35 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   async onOpen() {
     this.resetThreadState();
     this.render();
-    this.refreshModelOptions();
-    await this.refreshScopeLabel();
+    if (!this.fileOpenEventBound) {
+      this.registerEvent(
+        this.app.workspace.on("file-open", (file) => {
+          if (file instanceof import_obsidian4.TFile && file.extension === "md") {
+            this.lastKnownOpenMarkdownPath = file.path;
+          } else {
+            this.lastKnownOpenMarkdownPath = null;
+          }
+          void this.refreshActiveFileStatus();
+          void this.refreshScopeLabel();
+        })
+      );
+      this.registerEvent(
+        this.app.workspace.on("active-leaf-change", () => {
+          void this.refreshActiveFileStatus();
+          void this.refreshScopeLabel();
+        })
+      );
+      this.fileOpenEventBound = true;
+    }
+    const initialOpen = this.resolveVisibleMarkdownFile();
+    if (initialOpen instanceof import_obsidian4.TFile) {
+      this.lastKnownOpenMarkdownPath = initialOpen.path;
+    }
+    await this.refreshFromSettingsForQa();
     this.refreshThreadMeta();
   }
   async onClose() {
-    var _a;
-    (_a = this.activeRequestController) == null ? void 0 : _a.abort();
-    this.activeRequestController = null;
+    this.requestImmediateStop();
     if (this.syncTimer !== null) {
       window.clearTimeout(this.syncTimer);
       this.syncTimer = null;
@@ -2335,6 +2533,33 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.syncStatus = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "Auto-sync ready / \uC790\uB3D9 \uB3D9\uAE30\uD654 \uC900\uBE44" : "Manual save mode / \uC218\uB3D9 \uC800\uC7A5 \uBAA8\uB4DC";
     this.refreshThreadMeta();
   }
+  requestImmediateStop(reason) {
+    this.stopRequested = true;
+    if (this.streamRenderTimer !== null) {
+      window.clearTimeout(this.streamRenderTimer);
+      this.streamRenderTimer = null;
+    }
+    if (this.stopButton) {
+      this.stopButton.disabled = true;
+    }
+    this.refreshSendButtonState();
+    if (!this.activeRequestController) {
+      return;
+    }
+    const controller = this.activeRequestController;
+    this.activeRequestController = null;
+    try {
+      controller.abort();
+    } catch (e) {
+    }
+    if (reason && this.running) {
+      this.pushMessage({
+        role: "system",
+        text: `\uC911\uC9C0 \uC694\uCCAD\uB428: ${reason}`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
+  }
   refreshThreadMeta() {
     if (!this.threadInfoEl || !this.syncInfoEl) {
       return;
@@ -2347,104 +2572,238 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.syncStatus = next;
     this.refreshThreadMeta();
   }
+  createHeaderIconButton(parent, icon, tooltip, onClick, cta = false) {
+    const button = parent.createEl("button");
+    button.addClass("auto-linker-chat-btn");
+    button.addClass("auto-linker-chat-icon-btn");
+    if (cta) {
+      button.addClass("mod-cta");
+    }
+    button.setAttr("aria-label", tooltip);
+    button.setAttr("title", tooltip);
+    (0, import_obsidian4.setIcon)(button, icon);
+    button.onclick = () => {
+      void onClick();
+    };
+    return button;
+  }
   render() {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("auto-linker-chat-view");
     const root = contentEl.createDiv({ cls: "auto-linker-chat-root" });
     const header = root.createDiv({ cls: "auto-linker-chat-header" });
-    header.createEl("h3", { text: "Local AI Chat (Selected Notes) / \uB85C\uCEEC AI \uCC44\uD305 (\uC120\uD0DD \uB178\uD2B8)" });
+    header.createEl("h3", {
+      text: "Auto Link Chat"
+    });
     this.scopeEl = header.createDiv({ cls: "auto-linker-chat-scope" });
-    const metaRow = header.createDiv({ cls: "auto-linker-chat-meta" });
-    this.threadInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-thread-info" });
-    this.syncInfoEl = metaRow.createDiv({ cls: "auto-linker-chat-sync-info" });
     const actionRow = root.createDiv({ cls: "auto-linker-chat-actions" });
+    this.createHeaderIconButton(
+      actionRow,
+      "plus-square",
+      "\uC0C8 \uC2A4\uB808\uB4DC",
+      async () => {
+        await this.startNewThread();
+      }
+    );
+    this.createHeaderIconButton(
+      actionRow,
+      "files",
+      "\uB178\uD2B8 \uC120\uD0DD",
+      async () => {
+        await this.plugin.openSelectionForQa();
+        await this.refreshScopeLabel();
+      }
+    );
+    this.createHeaderIconButton(
+      actionRow,
+      "rotate-ccw",
+      "\uC120\uD0DD \uCD08\uAE30\uD654",
+      async () => {
+        await this.plugin.clearSelectionForQa(true);
+        await this.refreshScopeLabel();
+        this.pushMessage({
+          role: "system",
+          text: "\uC120\uD0DD\uB41C \uD30C\uC77C/\uD3F4\uB354 \uBC94\uC704\uB97C \uCD08\uAE30\uD654\uD588\uC2B5\uB2C8\uB2E4.",
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      }
+    );
+    this.createHeaderIconButton(
+      actionRow,
+      "refresh-cw",
+      "\uBAA8\uB378 \uAC10\uC9C0 \uC0C8\uB85C\uACE0\uCE68",
+      async () => {
+        await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
+        this.refreshModelOptions();
+        await this.refreshScopeLabel();
+      }
+    );
+    this.createHeaderIconButton(
+      actionRow,
+      "file-text",
+      "\uCC44\uD305 \uB178\uD2B8 \uC5F4\uAE30",
+      async () => {
+        await this.openThreadNote();
+      }
+    );
     const newThreadButton = actionRow.createEl("button", { text: "New thread / \uC0C8 \uC2A4\uB808\uB4DC" });
     newThreadButton.addClass("auto-linker-chat-btn");
+    newThreadButton.addClass("auto-linker-chat-hidden-action");
     newThreadButton.onclick = async () => {
       await this.startNewThread();
     };
     const selectButton = actionRow.createEl("button", { text: "Select notes / \uB178\uD2B8 \uC120\uD0DD" });
     selectButton.addClass("auto-linker-chat-btn");
+    selectButton.addClass("auto-linker-chat-hidden-action");
     selectButton.onclick = async () => {
       await this.plugin.openSelectionForQa();
       await this.refreshScopeLabel();
     };
-    const cleanupPickerButton = actionRow.createEl("button", { text: "Cleanup keys / \uC815\uB9AC \uD0A4" });
+    const resetSelectionButton = actionRow.createEl("button", {
+      text: "Select reset / \uC120\uD0DD \uCD08\uAE30\uD654"
+    });
+    resetSelectionButton.addClass("auto-linker-chat-btn");
+    resetSelectionButton.addClass("auto-linker-chat-hidden-action");
+    resetSelectionButton.onclick = async () => {
+      await this.plugin.clearSelectionForQa(true);
+      await this.refreshScopeLabel();
+      this.pushMessage({
+        role: "system",
+        text: "\uC120\uD0DD\uB41C \uD30C\uC77C/\uD3F4\uB354 \uBC94\uC704\uB97C \uCD08\uAE30\uD654\uD588\uC2B5\uB2C8\uB2E4.",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    };
+    const refreshModelsButton = actionRow.createEl("button", { text: "Refresh models / \uBAA8\uB378 \uAC10\uC9C0" });
+    refreshModelsButton.addClass("auto-linker-chat-btn");
+    refreshModelsButton.addClass("auto-linker-chat-hidden-action");
+    refreshModelsButton.setAttr(
+      "title",
+      "\uB85C\uCEEC \uBAA8\uB378 \uAC10\uC9C0\uB97C \uB2E4\uC2DC \uC77D\uACE0, \uCC44\uD305\uC758 \uBAA8\uB378 \uC120\uD0DD \uBAA9\uB85D\uC744 \uAC31\uC2E0\uD569\uB2C8\uB2E4."
+    );
+    refreshModelsButton.onclick = async () => {
+      await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
+      this.refreshModelOptions();
+      await this.refreshScopeLabel();
+    };
+    const openThreadButton = actionRow.createEl("button", { text: "Open chat note / \uCC44\uD305 \uB178\uD2B8 \uC5F4\uAE30" });
+    openThreadButton.addClass("auto-linker-chat-btn");
+    openThreadButton.addClass("auto-linker-chat-hidden-action");
+    openThreadButton.onclick = async () => {
+      await this.openThreadNote();
+    };
+    const utilityDetails = root.createEl("details", { cls: "auto-linker-chat-collapsible" });
+    utilityDetails.createEl("summary", { text: "More tools / \uCD94\uAC00 \uB3C4\uAD6C" });
+    utilityDetails.createEl("small", {
+      text: "Cleanup keys\uB294 AI \uBD84\uC11D \uC5C6\uC774 frontmatter \uD0A4\uB9CC \uC815\uB9AC\uD558\uBBC0\uB85C Analyze/Apply\uBCF4\uB2E4 \uC77C\uBC18\uC801\uC73C\uB85C \uBE60\uB985\uB2C8\uB2E4."
+    });
+    const utilityRow = utilityDetails.createDiv({ cls: "auto-linker-chat-actions" });
+    const cleanupPickerButton = utilityRow.createEl("button", { text: "Cleanup keys / \uC815\uB9AC \uD0A4" });
     cleanupPickerButton.addClass("auto-linker-chat-btn");
     cleanupPickerButton.onclick = async () => {
       await this.plugin.openCleanupKeyPickerForQa();
       await this.refreshScopeLabel();
     };
-    const cleanupApplyButton = actionRow.createEl("button", { text: "Run cleanup / \uC815\uB9AC \uC2E4\uD589" });
+    const cleanupApplyButton = utilityRow.createEl("button", { text: "Run cleanup / \uC815\uB9AC \uC2E4\uD589" });
     cleanupApplyButton.addClass("auto-linker-chat-btn");
     cleanupApplyButton.onclick = async () => {
       await this.plugin.runCleanupForQa(false);
       await this.refreshScopeLabel();
     };
-    const cleanupDryRunButton = actionRow.createEl("button", { text: "Cleanup dry-run / \uC815\uB9AC \uBBF8\uB9AC\uBCF4\uAE30" });
+    const cleanupDryRunButton = utilityRow.createEl("button", { text: "Cleanup dry-run / \uC815\uB9AC \uBBF8\uB9AC\uBCF4\uAE30" });
     cleanupDryRunButton.addClass("auto-linker-chat-btn");
     cleanupDryRunButton.onclick = async () => {
       await this.plugin.runCleanupForQa(true);
       await this.refreshScopeLabel();
     };
-    const refreshButton = actionRow.createEl("button", { text: "Refresh scope / \uBC94\uC704 \uC0C8\uB85C\uACE0\uCE68" });
-    refreshButton.addClass("auto-linker-chat-btn");
-    refreshButton.onclick = async () => {
-      await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
-      this.refreshModelOptions();
-      await this.refreshScopeLabel();
-    };
-    const folderButton = actionRow.createEl("button", { text: "Chat folder / \uCC44\uD305 \uD3F4\uB354" });
+    const folderButton = utilityRow.createEl("button", { text: "Chat folder / \uCC44\uD305 \uD3F4\uB354" });
     folderButton.addClass("auto-linker-chat-btn");
-    folderButton.onclick = async () => {
+    folderButton.setAttr("title", "\uCC44\uD305 \uAE30\uB85D \uC800\uC7A5 \uD3F4\uB354\uB97C \uBCC0\uACBD\uD569\uB2C8\uB2E4.");
+    folderButton.onclick = () => {
       const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto Link Chats";
-      const next = window.prompt("Chat transcript folder (vault-relative) / \uCC44\uD305 \uC800\uC7A5 \uD3F4\uB354", current);
-      if (next === null) {
-        return;
-      }
-      try {
-        await this.plugin.setChatTranscriptRootPathForQa(next);
-        new import_obsidian4.Notice(`Chat folder set / \uCC44\uD305 \uD3F4\uB354 \uC124\uC815: ${this.plugin.getChatTranscriptRootPathForQa()}`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown transcript folder error";
-        new import_obsidian4.Notice(`Invalid chat folder / \uC720\uD6A8\uD558\uC9C0 \uC54A\uC740 \uCC44\uD305 \uD3F4\uB354: ${message}`, 7e3);
-      }
-      await this.refreshScopeLabel();
+      new VaultTextInputModal(
+        this.app,
+        "Chat transcript folder / \uCC44\uD305 \uC800\uC7A5 \uD3F4\uB354",
+        "Auto Link Chats",
+        current,
+        "Save / \uC800\uC7A5",
+        async (value) => {
+          await this.plugin.setChatTranscriptRootPathForQa(value);
+          new import_obsidian4.Notice(
+            `Chat folder set / \uCC44\uD305 \uD3F4\uB354 \uC124\uC815: ${this.plugin.getChatTranscriptRootPathForQa()}`,
+            5e3
+          );
+          await this.refreshScopeLabel();
+        }
+      ).open();
     };
-    const openThreadButton = actionRow.createEl("button", { text: "Open chat note / \uCC44\uD305 \uB178\uD2B8 \uC5F4\uAE30" });
-    openThreadButton.addClass("auto-linker-chat-btn");
-    openThreadButton.onclick = async () => {
-      await this.openThreadNote();
-    };
-    const controlRow = root.createDiv({ cls: "auto-linker-chat-controls" });
-    const roleWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
-    roleWrap.createEl("label", { text: "Role / \uC5ED\uD560" });
-    this.roleSelect = roleWrap.createEl("select", { cls: "auto-linker-chat-model-select" });
-    this.roleSelect.onchange = async () => {
-      await this.plugin.setQaRolePresetForQa(this.roleSelect.value);
+    const modelDetails = root.createEl("details", { cls: "auto-linker-chat-collapsible" });
+    modelDetails.createEl("summary", { text: "Model options / \uBAA8\uB378 \uC635\uC158" });
+    this.modelPresetHintEl = modelDetails.createEl("small", {
+      cls: "auto-linker-chat-model-hint"
+    });
+    this.modelLayoutSummaryEl = modelDetails.createDiv({
+      cls: "auto-linker-chat-model-layout-summary"
+    });
+    const presetRow = modelDetails.createDiv({ cls: "auto-linker-chat-actions" });
+    presetRow.createEl("small", {
+      text: "One-click local presets / \uC6D0\uD074\uB9AD \uD504\uB9AC\uC14B"
+    });
+    const applyPresetFromChat = async (preset) => {
+      const summary = await this.plugin.applyOneClickLocalPresetForQa(preset);
+      new import_obsidian4.Notice(summary, 6500);
+      this.refreshRoleOptions();
+      this.refreshPipelineOptions();
       this.refreshModelOptions();
       await this.refreshScopeLabel();
     };
-    const pipelineWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
-    pipelineWrap.createEl("label", { text: "Pipeline / \uD30C\uC774\uD504\uB77C\uC778" });
-    this.pipelineSelect = pipelineWrap.createEl("select", {
-      cls: "auto-linker-chat-model-select"
+    const applyCustomSlotFromChat = async (slotKey) => {
+      try {
+        const summary = await this.plugin.applyQaQuickCustomProfileSlot(slotKey);
+        new import_obsidian4.Notice(summary, 6e3);
+        this.refreshModelOptions();
+        await this.refreshScopeLabel();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "\uCEE4\uC2A4\uD140 \uD504\uB9AC\uC14B\uC744 \uC801\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.";
+        new import_obsidian4.Notice(message, 6e3);
+      }
+    };
+    const fastPresetButton = presetRow.createEl("button", { text: "Flash" });
+    fastPresetButton.addClass("auto-linker-chat-btn");
+    fastPresetButton.onclick = async () => {
+      await applyPresetFromChat("fast_local");
+    };
+    const proPresetButton = presetRow.createEl("button", { text: "Pro" });
+    proPresetButton.addClass("auto-linker-chat-btn");
+    proPresetButton.onclick = async () => {
+      await applyPresetFromChat("balanced_local");
+    };
+    const custom1Button = presetRow.createEl("button", { text: "Custom 1" });
+    custom1Button.addClass("auto-linker-chat-btn");
+    custom1Button.onclick = async () => {
+      await applyCustomSlotFromChat("qaQuickCustomProfileSlot1");
+    };
+    const custom2Button = presetRow.createEl("button", { text: "Custom 2" });
+    custom2Button.addClass("auto-linker-chat-btn");
+    custom2Button.onclick = async () => {
+      await applyCustomSlotFromChat("qaQuickCustomProfileSlot2");
+    };
+    const custom3Button = presetRow.createEl("button", { text: "Custom 3" });
+    custom3Button.addClass("auto-linker-chat-btn");
+    custom3Button.onclick = async () => {
+      await applyCustomSlotFromChat("qaQuickCustomProfileSlot3");
+    };
+    const refreshLocalAiButton = presetRow.createEl("button", {
+      text: "Refresh Local AI"
     });
-    this.pipelineSelect.onchange = async () => {
-      await this.plugin.setQaPipelinePresetForQa(
-        this.pipelineSelect.value
-      );
+    refreshLocalAiButton.addClass("auto-linker-chat-btn");
+    refreshLocalAiButton.onclick = async () => {
+      await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
+      await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+      this.refreshModelOptions();
       await this.refreshScopeLabel();
     };
-    const modelWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
-    modelWrap.createEl("label", { text: "Q&A fallback model / Q&A \uD3F4\uBC31 \uBAA8\uB378" });
-    this.modelSelect = modelWrap.createEl("select", { cls: "auto-linker-chat-model-select" });
-    this.modelSelect.onchange = async () => {
-      const next = this.modelSelect.value;
-      await this.plugin.setQaModelOverrideForQa(next === "__fallback__" ? "" : next);
-      await this.refreshScopeLabel();
-    };
+    const controlRow = modelDetails.createDiv({ cls: "auto-linker-chat-controls" });
     const topKWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
     topKWrap.createEl("label", { text: "Top sources / \uC0C1\uC704 \uC18C\uC2A4 \uC218" });
     this.topKInput = topKWrap.createEl("input", {
@@ -2463,15 +2822,82 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       this.plugin.settings.qaTopK = Math.min(15, parsed);
       await this.plugin.saveSettings();
     };
+    const runtimePanel = root.createEl("details", { cls: "auto-linker-chat-runtime-panel" });
+    runtimePanel.open = false;
+    runtimePanel.createEl("summary", {
+      cls: "auto-linker-chat-runtime-head",
+      text: "Runtime status / \uD604\uC7AC \uC0C1\uD0DC"
+    });
+    const runtimeBody = runtimePanel.createDiv({ cls: "auto-linker-chat-runtime-body" });
+    const runtimeMetaRow = runtimeBody.createDiv({ cls: "auto-linker-chat-meta" });
+    this.threadInfoEl = runtimeMetaRow.createDiv({ cls: "auto-linker-chat-thread-info" });
+    this.syncInfoEl = runtimeMetaRow.createDiv({ cls: "auto-linker-chat-sync-info" });
+    this.runtimeSummaryEl = runtimeBody.createDiv({ cls: "auto-linker-chat-runtime-summary" });
     this.threadEl = root.createDiv({ cls: "auto-linker-chat-thread" });
     this.threadEl.createDiv({
       cls: "auto-linker-chat-empty",
       text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694. / Ask a question to start."
     });
     const composer = root.createDiv({ cls: "auto-linker-chat-composer" });
+    composer.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      composer.addClass("auto-linker-chat-drop-active");
+    });
+    composer.addEventListener("dragleave", () => {
+      composer.removeClass("auto-linker-chat-drop-active");
+    });
+    composer.addEventListener("drop", (event) => {
+      void this.handleChatDrop(event, composer);
+    });
+    this.activeFileStatusEl = composer.createDiv({ cls: "auto-linker-chat-active-file-status" });
+    void this.refreshActiveFileStatus();
     this.inputEl = composer.createEl("textarea", { cls: "auto-linker-chat-input" });
-    this.inputEl.placeholder = "\uC120\uD0DD \uB178\uD2B8/\uD3F4\uB354 \uBC94\uC704\uC5D0\uC11C \uC9C8\uBB38\uD558\uC138\uC694... / Ask from selected notes/folders...";
+    this.inputEl.placeholder = "\uC120\uD0DD \uBB38\uC11C\uAC00 \uC5C6\uC5B4\uB3C4 \uB300\uD654\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4. \uCCA8\uBD80/\uC120\uD0DD \uBB38\uC11C \uAE30\uBC18 \uC9C8\uBB38\uB3C4 \uAC00\uB2A5\uD569\uB2C8\uB2E4.";
+    this.attachmentStatusEl = composer.createDiv({
+      cls: "auto-linker-chat-attachment-status"
+    });
+    this.refreshAttachmentStatus();
     const footer = composer.createDiv({ cls: "auto-linker-chat-footer" });
+    const footerLeft = footer.createDiv({ cls: "auto-linker-chat-footer-left" });
+    const attachButton = footerLeft.createEl("button", { text: "+ \uCCA8\uBD80 / Add" });
+    attachButton.addClass("auto-linker-chat-btn");
+    attachButton.onclick = async () => {
+      await this.openAttachmentPicker();
+    };
+    const conversationModeSelect = footerLeft.createEl("select", {
+      cls: "auto-linker-chat-mode-select"
+    });
+    this.conversationModeSelect = conversationModeSelect;
+    conversationModeSelect.setAttr("aria-label", "Conversation mode");
+    conversationModeSelect.setAttr("title", "\uB300\uD654 \uBAA8\uB4DC");
+    conversationModeSelect.onchange = async () => {
+      const mode = conversationModeSelect.value;
+      await this.plugin.setQaConversationModeForQa(mode);
+      this.refreshConversationModeOptions();
+      this.refreshRoleOptions();
+      this.refreshPipelineOptions();
+      this.refreshModelOptions();
+      await this.refreshScopeLabel();
+      this.pushMessage({
+        role: "system",
+        text: `\uB300\uD654 \uBAA8\uB4DC\uB97C ${this.plugin.getQaConversationModeLabelForQa()}\uB85C \uBCC0\uACBD\uD588\uC2B5\uB2C8\uB2E4.`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    };
+    this.qaContextButton = footerLeft.createEl("button", { text: "QA ON" });
+    this.qaContextButton.addClass("auto-linker-chat-btn");
+    this.qaContextButton.onclick = async () => {
+      const next = !this.plugin.isQaContextEnabledForQa();
+      await this.plugin.setQaContextEnabledForQa(next);
+      this.refreshQaContextButton();
+      await this.refreshScopeLabel();
+      this.pushMessage({
+        role: "system",
+        text: next ? "QA \uCEE8\uD14D\uC2A4\uD2B8 ON: \uC120\uD0DD \uB178\uD2B8/\uC5F4\uB9B0 \uBB38\uC11C \uAE30\uBC18 \uB9AC\uD2B8\uB9AC\uBC8C\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4." : "QA \uCEE8\uD14D\uC2A4\uD2B8 OFF: \uC77C\uBC18 \uCC44\uD305 \uBAA8\uB4DC(\uC120\uD0DD \uB178\uD2B8 \uB9AC\uD2B8\uB9AC\uBC8C \uC5C6\uC74C)\uB85C \uC804\uD658\uD588\uC2B5\uB2C8\uB2E4.",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    };
+    this.refreshQaContextButton();
     this.sendButton = footer.createEl("button", { text: "Send / \uC804\uC1A1", cls: "mod-cta" });
     this.sendButton.addClass("auto-linker-chat-send");
     this.sendButton.onclick = async () => {
@@ -2481,20 +2907,73 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.stopButton.addClass("auto-linker-chat-stop");
     this.stopButton.disabled = true;
     this.stopButton.onclick = () => {
-      var _a;
-      (_a = this.activeRequestController) == null ? void 0 : _a.abort();
-    };
-    this.inputEl.addEventListener("keydown", async (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        await this.submitQuestion();
+      if (!this.running) {
+        return;
       }
+      this.stopButton.disabled = true;
+      this.requestImmediateStop("\uC0AC\uC6A9\uC790\uAC00 \uC911\uC9C0 \uBC84\uD2BC\uC744 \uB20C\uB800\uC2B5\uB2C8\uB2E4.");
+    };
+    this.inputEl.addEventListener(
+      "keydown",
+      (event) => {
+        handleChatTextareaEnterKey(event, this.inputEl, async () => this.submitQuestion());
+      },
+      { capture: true }
+    );
+    this.inputEl.addEventListener(
+      "keyup",
+      (event) => {
+        if (!isEnterLikeKey(event)) {
+          return;
+        }
+        if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+        }
+      },
+      { capture: true }
+    );
+    this.registerDomEvent(
+      window,
+      "keydown",
+      (event) => {
+        if (document.activeElement !== this.inputEl) {
+          return;
+        }
+        handleChatTextareaEnterKey(event, this.inputEl, async () => this.submitQuestion());
+      },
+      { capture: true }
+    );
+    this.inputEl.addEventListener("paste", (event) => {
+      void this.handleChatPaste(event);
     });
+    this.refreshSendButtonState();
+    this.refreshConversationModeOptions();
     this.refreshRoleOptions();
     this.refreshPipelineOptions();
     this.refreshThreadMeta();
   }
+  async refreshFromSettingsForQa() {
+    if (!this.contentEl.isConnected) {
+      return;
+    }
+    this.refreshRoleOptions();
+    this.refreshPipelineOptions();
+    this.refreshModelOptions();
+    this.refreshConversationModeOptions();
+    this.refreshQaContextButton();
+    if (this.topKInput) {
+      this.topKInput.value = String(this.plugin.settings.qaTopK);
+    }
+    await this.refreshScopeLabel();
+    await this.refreshActiveFileStatus();
+    this.refreshThreadMeta();
+  }
   refreshRoleOptions() {
+    if (!this.roleSelect) {
+      return;
+    }
     const options = this.plugin.getQaRolePresetOptionsForQa();
     const current = this.plugin.getQaRolePresetForQa();
     this.roleSelect.empty();
@@ -2504,6 +2983,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.roleSelect.value = current;
   }
   refreshPipelineOptions() {
+    if (!this.pipelineSelect) {
+      return;
+    }
     const options = this.plugin.getQaPipelinePresetOptionsForQa();
     const current = this.plugin.getQaPipelinePresetForQa();
     this.pipelineSelect.empty();
@@ -2515,22 +2997,1065 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     this.pipelineSelect.value = current;
   }
-  refreshModelOptions() {
-    const currentOverride = this.plugin.getQaModelOverrideForQa();
-    const role = this.plugin.getQaRolePresetForQa();
-    const roleLabel = getQaRolePresetLabel(role);
-    const fallbackLabel = this.plugin.getQaModelLabelForQa(role);
-    const options = this.plugin.getQaModelOptionsForQa();
-    this.modelSelect.empty();
-    this.modelSelect.createEl("option", {
-      text: `Use role/default model / \uC5ED\uD560\xB7\uAE30\uBCF8 \uBAA8\uB378 \uC0AC\uC6A9 (${roleLabel}: ${fallbackLabel})`,
-      value: "__fallback__"
-    });
-    for (const model of options) {
-      this.modelSelect.createEl("option", { text: model, value: model });
+  refreshConversationModeOptions() {
+    if (!this.conversationModeSelect) {
+      return;
     }
-    const selected = currentOverride && options.includes(currentOverride) ? currentOverride : "__fallback__";
-    this.modelSelect.value = selected;
+    const options = this.plugin.getQaConversationModeOptionsForQa();
+    const current = this.plugin.getQaConversationModeForQa();
+    this.conversationModeSelect.empty();
+    for (const option of options) {
+      this.conversationModeSelect.createEl("option", {
+        text: option.label,
+        value: option.value
+      });
+    }
+    this.conversationModeSelect.value = current;
+    this.conversationModeSelect.setAttr(
+      "title",
+      `Mode=${this.plugin.getQaConversationModeLabelForQa()}`
+    );
+  }
+  refreshQaContextButton() {
+    if (!this.qaContextButton) {
+      return;
+    }
+    const enabled = this.plugin.isQaContextEnabledForQa();
+    this.qaContextButton.setText(enabled ? "QA ON" : "QA OFF");
+    this.qaContextButton.setAttr(
+      "title",
+      enabled ? "\uC120\uD0DD \uB178\uD2B8/\uC5F4\uB9B0 \uBB38\uC11C \uAE30\uBC18 QA \uCEE8\uD14D\uC2A4\uD2B8\uB97C \uC0AC\uC6A9\uD569\uB2C8\uB2E4." : "\uC120\uD0DD \uB178\uD2B8 \uB9AC\uD2B8\uB9AC\uBC8C \uC5C6\uC774 \uC77C\uBC18 \uCC44\uD305\uC73C\uB85C \uB3D9\uC791\uD569\uB2C8\uB2E4."
+    );
+    this.qaContextButton.toggleClass("mod-cta", enabled);
+  }
+  refreshModelOptions() {
+    const presetLabel = this.plugin.getQaPresetProfileLabelForQa();
+    if (this.modelPresetHintEl) {
+      this.modelPresetHintEl.setText(
+        `Preset=${presetLabel} | convo=${this.plugin.getQaConversationModeLabelForQa()} | pipeline=${getQaPipelinePresetLabel(this.plugin.getQaPipelinePresetForQa())}`
+      );
+    }
+    if (this.modelLayoutSummaryEl) {
+      const lines = [
+        `ask(text): ${this.plugin.getQaModelLabelForQa("ask")}`,
+        `ask(vision): ${this.plugin.getQaModelLabelForQa("ask_vision")}`,
+        `image: ${this.plugin.getQaModelLabelForQa("image_generator")}`,
+        `code: ${this.plugin.getQaModelLabelForQa("coder")}`,
+        `debug: ${this.plugin.getQaModelLabelForQa("debugger")}`,
+        `architect: ${this.plugin.getQaModelLabelForQa("architect")}`,
+        `orchestrator: ${this.plugin.getQaModelLabelForQa("orchestrator")}`,
+        `safeguard: ${this.plugin.getQaModelLabelForQa("safeguard")}`
+      ];
+      this.modelLayoutSummaryEl.setText(lines.join(" | "));
+      this.modelLayoutSummaryEl.setAttr("title", lines.join("\n"));
+    }
+  }
+  refreshSendButtonState() {
+    if (!this.sendButton) {
+      return;
+    }
+    if (this.running) {
+      const queueCount = this.queuedTurns.length;
+      const preemptPending = this.pendingPreemptTurn !== null;
+      this.sendButton.setText(
+        preemptPending ? queueCount > 0 ? `Steer \uB300\uAE30\uC911 +${queueCount}` : "Steer \uC804\uD658 \uB300\uAE30\uC911" : queueCount > 0 ? `Steer +1 (\uB300\uAE30 ${queueCount + 1})` : "Steer / \uC911\uAC04 \uC9C0\uC2DC"
+      );
+      this.sendButton.setAttr(
+        "title",
+        preemptPending ? "\uD604\uC7AC \uD134 \uC911\uC9C0 \uD6C4 steer \uC9C8\uBB38\uC744 \uC6B0\uC120 \uC2E4\uD589\uD569\uB2C8\uB2E4." : "\uC2E4\uD589 \uC911\uC5D0\uB294 \uC804\uC1A1 \uB300\uC2E0 steer \uAE30\uB2A5\uC73C\uB85C \uC989\uC2DC \uC804\uD658/\uB300\uAE30\uC5F4 \uCD94\uAC00\uAC00 \uB3D9\uC791\uD569\uB2C8\uB2E4."
+      );
+      this.sendButton.disabled = false;
+      this.sendButton.removeClass("mod-cta");
+      return;
+    }
+    this.sendButton.setText("Send / \uC804\uC1A1");
+    this.sendButton.setAttr("title", "\uD604\uC7AC \uC785\uB825\uD55C \uC9C8\uBB38\uC744 \uC989\uC2DC \uC804\uC1A1\uD569\uB2C8\uB2E4.");
+    this.sendButton.disabled = false;
+    this.sendButton.addClass("mod-cta");
+  }
+  captureCurrentInputTurn() {
+    const question = this.inputEl.value.trim();
+    if (!question) {
+      return null;
+    }
+    const attachments = this.consumePendingAttachments();
+    const openFile = this.resolveVisibleMarkdownFile();
+    const openFilePath = openFile instanceof import_obsidian4.TFile && openFile.extension === "md" ? openFile.path : void 0;
+    this.inputEl.value = "";
+    return {
+      question,
+      attachments,
+      openFilePath
+    };
+  }
+  queueCurrentInputTurn() {
+    const captured = this.captureCurrentInputTurn();
+    if (!captured) {
+      return false;
+    }
+    this.queuedTurns.push({
+      question: captured.question,
+      attachments: captured.attachments,
+      openFilePath: captured.openFilePath
+    });
+    this.pushMessage({
+      role: "system",
+      text: `\uC2E4\uD589 \uC911\uC774\uB77C steer \uAE30\uB2A5\uC73C\uB85C \uB300\uAE30\uC5F4\uC5D0 \uCD94\uAC00\uD588\uC2B5\uB2C8\uB2E4. (\uD604\uC7AC \uB300\uAE30 ${this.queuedTurns.length}\uAC1C)`,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    this.refreshSendButtonState();
+    void this.refreshScopeLabel();
+    return true;
+  }
+  preemptRunningTurnWithCurrentInput() {
+    const captured = this.captureCurrentInputTurn();
+    if (!captured) {
+      return false;
+    }
+    if (this.pendingPreemptTurn) {
+      this.queuedTurns.push(captured);
+      this.pushMessage({
+        role: "system",
+        text: `\uC911\uC9C0 \uC804\uD658 \uCC98\uB9AC \uC911\uC774\uB77C steer \uC9C8\uBB38\uC744 \uB300\uAE30\uC5F4\uB85C \uCD94\uAC00\uD588\uC2B5\uB2C8\uB2E4. (\uD604\uC7AC \uB300\uAE30 ${this.queuedTurns.length}\uAC1C)`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      this.refreshSendButtonState();
+      void this.refreshScopeLabel();
+      return true;
+    }
+    this.pendingPreemptTurn = captured;
+    this.pushMessage({
+      role: "system",
+      text: "steer \uC989\uC2DC \uC804\uD658: \uD604\uC7AC \uC751\uB2F5\uC744 \uC911\uB2E8\uD558\uACE0 \uC0C8 \uC9C8\uBB38\uC744 \uC6B0\uC120 \uC2E4\uD589\uD569\uB2C8\uB2E4.",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    this.requestImmediateStop("steer \uC989\uC2DC \uC804\uD658");
+    this.refreshSendButtonState();
+    void this.refreshScopeLabel();
+    return true;
+  }
+  async drainQueuedTurns() {
+    if (this.queueDrainInProgress || this.running) {
+      return;
+    }
+    if (this.queuedTurns.length === 0) {
+      this.refreshSendButtonState();
+      return;
+    }
+    this.queueDrainInProgress = true;
+    try {
+      while (!this.running && this.queuedTurns.length > 0) {
+        const next = this.queuedTurns.shift();
+        if (!next) {
+          break;
+        }
+        await this.submitQuestion(next);
+      }
+    } finally {
+      this.queueDrainInProgress = false;
+      this.refreshSendButtonState();
+      await this.refreshScopeLabel();
+    }
+  }
+  normalizeAttachmentLabel(raw, fallback) {
+    const trimmed = raw.trim();
+    const value = trimmed || fallback;
+    return value.length > 96 ? `${value.slice(0, 93)}...` : value;
+  }
+  clampAttachmentText(text, maxChars = 12e3) {
+    if (text.length <= maxChars) {
+      return text;
+    }
+    return `${text.slice(0, maxChars)}
+...(truncated ${text.length - maxChars} chars)`;
+  }
+  attachmentMimeFromExt(ext) {
+    switch (ext.toLowerCase()) {
+      case "png":
+        return "image/png";
+      case "jpg":
+      case "jpeg":
+        return "image/jpeg";
+      case "gif":
+        return "image/gif";
+      case "webp":
+        return "image/webp";
+      case "bmp":
+        return "image/bmp";
+      case "svg":
+      case "svgz":
+        return "image/svg+xml";
+      default:
+        return "application/octet-stream";
+    }
+  }
+  isImageExt(ext) {
+    return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "svgz"].includes(
+      ext.toLowerCase()
+    );
+  }
+  isPdfExt(ext) {
+    return ext.toLowerCase() === "pdf";
+  }
+  isLikelyTextFile(file) {
+    if (file.type.startsWith("text/")) {
+      return true;
+    }
+    const lowerType = file.type.toLowerCase();
+    if (lowerType.includes("json") || lowerType.includes("xml") || lowerType.includes("yaml") || lowerType.includes("csv")) {
+      return true;
+    }
+    const name = file.name.toLowerCase();
+    return /\.(md|txt|json|ya?ml|csv|ts|js|jsx|tsx|py|java|go|rs|c|cpp|h|hpp|html|css|sql)$/i.test(name);
+  }
+  arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 32768;
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+  attachmentKey(item) {
+    var _a;
+    const source = ((_a = item.path) == null ? void 0 : _a.trim()) || item.label.trim();
+    return `${item.kind}:${source}`;
+  }
+  sanitizeIngestFileName(rawName, fallbackBase, extHint = "") {
+    const base = rawName.trim() || fallbackBase;
+    const normalized = base.normalize("NFKD").replace(/[^\x20-\x7E]/g, "");
+    const collapsed = normalized.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-");
+    const trimmed = collapsed.replace(/^-+|-+$/g, "") || fallbackBase;
+    const ext = extHint.trim().replace(/^\.+/, "").toLowerCase();
+    if (!ext) {
+      return trimmed;
+    }
+    return trimmed.toLowerCase().endsWith(`.${ext}`) ? trimmed : `${trimmed}.${ext}`;
+  }
+  async ensureVaultFolderPathForIngest(folderPath) {
+    const normalized = (0, import_obsidian4.normalizePath)(folderPath);
+    if (!normalized) {
+      return;
+    }
+    const parts = normalized.split("/");
+    let cursor = "";
+    for (const part of parts) {
+      cursor = cursor ? `${cursor}/${part}` : part;
+      const existing = this.app.vault.getAbstractFileByPath(cursor);
+      if (existing instanceof import_obsidian4.TFolder || existing instanceof import_obsidian4.TFile) {
+        continue;
+      }
+      await this.app.vault.createFolder(cursor);
+    }
+  }
+  buildIngestVaultPath(fileName, extHint, kind) {
+    const stamp = formatBackupStamp(/* @__PURE__ */ new Date());
+    const day = stamp.slice(0, 10);
+    const root = (0, import_obsidian4.normalizePath)(
+      (this.plugin.settings.qaAttachmentIngestRootPath || "").trim() || DEFAULT_SETTINGS.qaAttachmentIngestRootPath
+    );
+    const safeName = this.sanitizeIngestFileName(fileName, `${kind}-attachment`, extHint);
+    const suffix = Math.random().toString(36).slice(2, 8);
+    return (0, import_obsidian4.normalizePath)(
+      `${root}/${kind}/${day}/${stamp}-${suffix}-${safeName}`
+    );
+  }
+  async persistBinaryAttachmentToIngest(fileName, extHint, kind, binary) {
+    try {
+      const targetPath = this.buildIngestVaultPath(fileName, extHint, kind);
+      const folder = (0, import_obsidian4.normalizePath)(targetPath.split("/").slice(0, -1).join("/"));
+      await this.ensureVaultFolderPathForIngest(folder);
+      const adapter = this.app.vault.adapter;
+      const vaultWithBinary = this.app.vault;
+      if (typeof adapter.writeBinary === "function") {
+        await adapter.writeBinary(targetPath, binary);
+      } else if (typeof vaultWithBinary.createBinary === "function") {
+        await vaultWithBinary.createBinary(targetPath, binary);
+      } else {
+        return void 0;
+      }
+      return targetPath;
+    } catch (e) {
+      return void 0;
+    }
+  }
+  async persistTextAttachmentToIngest(fileName, extHint, kind, content) {
+    try {
+      const targetPath = this.buildIngestVaultPath(fileName, extHint, kind);
+      const folder = (0, import_obsidian4.normalizePath)(targetPath.split("/").slice(0, -1).join("/"));
+      await this.ensureVaultFolderPathForIngest(folder);
+      await this.app.vault.adapter.write(targetPath, content);
+      return targetPath;
+    } catch (e) {
+      return void 0;
+    }
+  }
+  decodePdfLiteralString(raw) {
+    let value = raw.replace(/\\\r?\n/g, "");
+    value = value.replace(/\\([nrtbf()\\])/g, (_match, token) => {
+      switch (token) {
+        case "n":
+          return "\n";
+        case "r":
+          return "\r";
+        case "t":
+          return "	";
+        case "b":
+          return "\b";
+        case "f":
+          return "\f";
+        default:
+          return token;
+      }
+    });
+    value = value.replace(/\\([0-7]{1,3})/g, (_match, octal) => {
+      const parsed = Number.parseInt(octal, 8);
+      return Number.isFinite(parsed) ? String.fromCharCode(parsed) : "";
+    });
+    return value;
+  }
+  extractPdfFallbackText(binary) {
+    const buffer = Buffer.from(binary);
+    const latin = buffer.toString("latin1");
+    const fragments = [];
+    const literalRegex = /\(([^()]{2,})\)\s*T[Jj]/g;
+    let match = literalRegex.exec(latin);
+    while (match) {
+      const decoded = this.decodePdfLiteralString(match[1]);
+      if (decoded.trim().length >= 2) {
+        fragments.push(decoded.trim());
+      }
+      match = literalRegex.exec(latin);
+      if (fragments.length >= 500) {
+        break;
+      }
+    }
+    if (fragments.length > 0) {
+      return fragments.join("\n");
+    }
+    const utf8 = buffer.toString("utf8");
+    return utf8.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ").replace(/\s+/g, " ").trim();
+  }
+  shellQuoteArg(value) {
+    return `'${value.replace(/'/g, `'"'"'`)}'`;
+  }
+  async canUseShellCommand(command) {
+    var _a;
+    const safe = command.trim();
+    if (!/^[A-Za-z0-9._-]+$/.test(safe)) {
+      return false;
+    }
+    if (this.commandAvailabilityCache.has(safe)) {
+      return (_a = this.commandAvailabilityCache.get(safe)) != null ? _a : false;
+    }
+    try {
+      await execAsync(`command -v ${safe}`);
+      this.commandAvailabilityCache.set(safe, true);
+      return true;
+    } catch (e) {
+      this.commandAvailabilityCache.set(safe, false);
+      return false;
+    }
+  }
+  async extractPdfTextViaPdftotext(pdfAbsolutePath) {
+    var _a;
+    const command = [
+      "pdftotext",
+      "-enc",
+      "UTF-8",
+      "-layout",
+      "-nopgbrk",
+      this.shellQuoteArg(pdfAbsolutePath),
+      "-"
+    ].join(" ");
+    const result = await execAsync(command, { timeout: 25e3, maxBuffer: 12 * 1024 * 1024 });
+    return ((_a = result.stdout) != null ? _a : "").trim();
+  }
+  async extractPdfTextViaOcr(pdfAbsolutePath, maxPages) {
+    var _a;
+    const tmpRoot = await nodeFs.promises.mkdtemp(
+      nodePath.join(nodeOs.tmpdir(), "auto-link-ocr-")
+    );
+    try {
+      const prefix = nodePath.join(tmpRoot, "page");
+      const renderCommand = [
+        "pdftoppm",
+        "-f",
+        "1",
+        "-l",
+        String(Math.max(1, maxPages)),
+        "-png",
+        this.shellQuoteArg(pdfAbsolutePath),
+        this.shellQuoteArg(prefix)
+      ].join(" ");
+      await execAsync(renderCommand, { timeout: 45e3, maxBuffer: 8 * 1024 * 1024 });
+      const pageImages = (await nodeFs.promises.readdir(tmpRoot)).filter((name) => /^page-\d+\.png$/i.test(name)).map((name) => nodePath.join(tmpRoot, name)).sort((a, b) => a.localeCompare(b));
+      const chunks = [];
+      for (const imagePath of pageImages) {
+        const ocrCommand = [
+          "tesseract",
+          this.shellQuoteArg(imagePath),
+          "stdout",
+          "-l",
+          "kor+eng",
+          "--psm",
+          "6"
+        ].join(" ");
+        try {
+          const output = await execAsync(ocrCommand, {
+            timeout: 45e3,
+            maxBuffer: 12 * 1024 * 1024
+          });
+          const text = ((_a = output.stdout) != null ? _a : "").trim();
+          if (text) {
+            chunks.push(text);
+          }
+        } catch (e) {
+        }
+      }
+      return chunks.join("\n").trim();
+    } finally {
+      await nodeFs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => {
+      });
+    }
+  }
+  resolveVaultAbsolutePath(vaultPath) {
+    const base = this.getVaultBasePathForChatView();
+    if (!base) {
+      return void 0;
+    }
+    return nodePath.resolve(base, vaultPath);
+  }
+  async extractPdfTextWithParserChain(binary, sourceAbsolutePath) {
+    const notes = [];
+    let parser = "metadata-only";
+    let extracted = "";
+    let workingPath = sourceAbsolutePath;
+    let tempDir;
+    const parserMode = this.plugin.settings.qaParserMode === "detailed" ? "detailed" : "fast";
+    const preferDetailed = parserMode === "detailed";
+    const pdftotextEnoughLength = preferDetailed ? 220 : 120;
+    const ocrMaxPages = preferDetailed ? LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED : LOCAL_QA_PDF_OCR_MAX_PAGES_FAST;
+    notes.push(`parser mode=${parserMode}`);
+    try {
+      if (!workingPath) {
+        tempDir = await nodeFs.promises.mkdtemp(
+          nodePath.join(nodeOs.tmpdir(), "auto-link-pdf-")
+        );
+        workingPath = nodePath.join(tempDir, "input.pdf");
+        await nodeFs.promises.writeFile(workingPath, Buffer.from(binary));
+      }
+      if (await this.canUseShellCommand("pdftotext")) {
+        try {
+          extracted = await this.extractPdfTextViaPdftotext(workingPath);
+          if (extracted.length > pdftotextEnoughLength) {
+            parser = "pdftotext";
+          } else {
+            notes.push("pdftotext \uACB0\uACFC\uAC00 \uC9E7\uC544 OCR/fallback\uC744 \uCD94\uAC00 \uC2DC\uB3C4\uD569\uB2C8\uB2E4.");
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "pdftotext failed";
+          notes.push(`pdftotext \uC2E4\uD328: ${message}`);
+        }
+      } else {
+        notes.push("pdftotext \uBBF8\uC124\uCE58: fallback \uCD94\uCD9C\uB85C \uC9C4\uD589\uD569\uB2C8\uB2E4.");
+      }
+      if (extracted.length < pdftotextEnoughLength && await this.canUseShellCommand("pdftoppm") && await this.canUseShellCommand("tesseract")) {
+        try {
+          const ocrText = await this.extractPdfTextViaOcr(workingPath, ocrMaxPages);
+          if (ocrText.length > extracted.length) {
+            extracted = ocrText;
+            parser = "ocr";
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "OCR failed";
+          notes.push(`OCR \uC2E4\uD328: ${message}`);
+        }
+      }
+    } finally {
+      if (tempDir) {
+        await nodeFs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
+        });
+      }
+    }
+    if (!extracted.trim()) {
+      extracted = this.extractPdfFallbackText(binary);
+      parser = "fallback";
+    }
+    const clipped = this.clampAttachmentText(
+      extracted.trim(),
+      preferDetailed ? 32e3 : 2e4
+    );
+    if (!clipped) {
+      return {
+        parser,
+        notes,
+        content: [
+          "PDF attachment received.",
+          "\uBCF8\uBB38\uC744 \uC548\uC815\uC801\uC73C\uB85C \uCD94\uCD9C\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uD575\uC2EC \uD398\uC774\uC9C0\uB97C \uC774\uBBF8\uC9C0/\uD14D\uC2A4\uD2B8\uB85C \uCD94\uAC00 \uCCA8\uBD80\uD574 \uC8FC\uC138\uC694."
+        ].join("\n")
+      };
+    }
+    return {
+      parser,
+      notes,
+      content: clipped
+    };
+  }
+  async extractImageTextViaOcr(imageAbsolutePath) {
+    var _a;
+    const command = [
+      "tesseract",
+      this.shellQuoteArg(imageAbsolutePath),
+      "stdout",
+      "-l",
+      "kor+eng",
+      "--psm",
+      "6"
+    ].join(" ");
+    const result = await execAsync(command, { timeout: 45e3, maxBuffer: 10 * 1024 * 1024 });
+    return ((_a = result.stdout) != null ? _a : "").trim();
+  }
+  async extractImageTextWithParserChain(binary, sourceAbsolutePath, fallbackExt = "png") {
+    const notes = [];
+    let parser = "metadata-only";
+    let extracted = "";
+    let workingPath = sourceAbsolutePath;
+    let tempDir;
+    const parserMode = this.plugin.settings.qaParserMode === "detailed" ? "detailed" : "fast";
+    const preferDetailed = parserMode === "detailed";
+    notes.push(`parser mode=${parserMode}`);
+    try {
+      if (!workingPath) {
+        tempDir = await nodeFs.promises.mkdtemp(
+          nodePath.join(nodeOs.tmpdir(), "auto-link-image-")
+        );
+        const ext = fallbackExt.replace(/[^A-Za-z0-9]/g, "").toLowerCase() || "png";
+        workingPath = nodePath.join(tempDir, `input.${ext}`);
+        await nodeFs.promises.writeFile(workingPath, Buffer.from(binary));
+      }
+      if (await this.canUseShellCommand("tesseract")) {
+        try {
+          extracted = await this.extractImageTextViaOcr(workingPath);
+          if (extracted.length > 30) {
+            parser = "ocr";
+          } else {
+            notes.push("OCR \uACB0\uACFC\uAC00 \uC9E7\uC544 \uC774\uBBF8\uC9C0 \uC124\uBA85\uB9CC \uC720\uC9C0\uD569\uB2C8\uB2E4.");
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "image OCR failed";
+          notes.push(`OCR \uC2E4\uD328: ${message}`);
+        }
+      } else {
+        notes.push("tesseract \uBBF8\uC124\uCE58: OCR \uC5C6\uC774 \uC774\uBBF8\uC9C0 \uC790\uCCB4 \uCEE8\uD14D\uC2A4\uD2B8\uB9CC \uC0AC\uC6A9\uD569\uB2C8\uB2E4.");
+      }
+    } finally {
+      if (tempDir) {
+        await nodeFs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
+        });
+      }
+    }
+    const clipped = this.clampAttachmentText(
+      extracted.trim(),
+      preferDetailed ? 18e3 : 1e4
+    );
+    return {
+      parser,
+      notes,
+      content: clipped
+    };
+  }
+  async readVaultFileAsAttachment(file) {
+    const ext = file.extension.toLowerCase();
+    if (this.isImageExt(ext)) {
+      const adapter = this.app.vault.adapter;
+      if (typeof adapter.readBinary !== "function") {
+        return null;
+      }
+      const binary = await adapter.readBinary(file.path);
+      if (binary.byteLength > 4 * 1024 * 1024) {
+        return null;
+      }
+      const absolutePath = this.resolveVaultAbsolutePath(file.path);
+      const parsed = await this.extractImageTextWithParserChain(binary, absolutePath, ext);
+      return {
+        kind: "image",
+        label: this.normalizeAttachmentLabel(file.name, file.path),
+        path: file.path,
+        imageBase64: this.arrayBufferToBase64(binary),
+        mimeType: this.attachmentMimeFromExt(ext),
+        content: parsed.content ? [
+          `Image attachment: ${file.name}`,
+          `Parser: ${parsed.parser}`,
+          ...parsed.notes.map((note) => `- ${note}`),
+          "---",
+          parsed.content
+        ].join("\n") : void 0
+      };
+    }
+    if (this.isPdfExt(ext)) {
+      if (!this.plugin.settings.qaPdfAttachmentEnabled) {
+        return null;
+      }
+      const adapter = this.app.vault.adapter;
+      if (typeof adapter.readBinary !== "function") {
+        return {
+          kind: "pdf",
+          label: this.normalizeAttachmentLabel(file.name, file.path),
+          path: file.path,
+          content: [
+            `PDF attachment: ${file.name}`,
+            "PDF \uBCF8\uBB38 \uCD94\uCD9C \uC2E4\uD328: readBinary API unavailable."
+          ].join("\n")
+        };
+      }
+      const binary = await adapter.readBinary(file.path);
+      const absolutePath = this.resolveVaultAbsolutePath(file.path);
+      const parsed = await this.extractPdfTextWithParserChain(binary, absolutePath);
+      return {
+        kind: "pdf",
+        label: this.normalizeAttachmentLabel(file.name, file.path),
+        path: file.path,
+        content: [
+          `PDF attachment: ${file.name}`,
+          `Parser: ${parsed.parser}`,
+          ...parsed.notes.map((note) => `- ${note}`),
+          "---",
+          parsed.content
+        ].join("\n")
+      };
+    }
+    const text = await this.app.vault.cachedRead(file);
+    const trimmed = this.clampAttachmentText(text.trim());
+    if (!trimmed) {
+      return null;
+    }
+    return {
+      kind: "text",
+      label: this.normalizeAttachmentLabel(file.name, file.path),
+      path: file.path,
+      content: trimmed
+    };
+  }
+  extractDropTextCandidates(text) {
+    const candidates = /* @__PURE__ */ new Set();
+    const wikiRegex = /\[\[([^\]]+)\]\]/g;
+    let match = wikiRegex.exec(text);
+    while (match) {
+      candidates.add(match[1]);
+      match = wikiRegex.exec(text);
+    }
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.length > 240) {
+        continue;
+      }
+      candidates.add(trimmed);
+    }
+    return [...candidates];
+  }
+  resolveDroppedVaultFile(candidate) {
+    var _a, _b, _c, _d;
+    let token = candidate.trim();
+    if (!token) {
+      return null;
+    }
+    if (token.startsWith("[[") && token.endsWith("]]")) {
+      token = token.slice(2, -2);
+    }
+    token = (_c = (_b = (_a = token.split("|")[0]) == null ? void 0 : _a.split("#")[0]) == null ? void 0 : _b.trim()) != null ? _c : "";
+    if (!token) {
+      return null;
+    }
+    const linked = this.app.metadataCache.getFirstLinkpathDest(
+      token,
+      (_d = this.threadPath) != null ? _d : ""
+    );
+    if (linked instanceof import_obsidian4.TFile) {
+      return linked;
+    }
+    const normalized = (0, import_obsidian4.normalizePath)(token);
+    const direct = this.app.vault.getAbstractFileByPath(normalized);
+    if (direct instanceof import_obsidian4.TFile) {
+      return direct;
+    }
+    if (!normalized.toLowerCase().endsWith(".md")) {
+      const withMd = this.app.vault.getAbstractFileByPath(`${normalized}.md`);
+      if (withMd instanceof import_obsidian4.TFile) {
+        return withMd;
+      }
+    }
+    return null;
+  }
+  async readExternalFileAsAttachment(file) {
+    var _a;
+    const absolutePath = this.extractDesktopAbsolutePathFromFile(file);
+    const ext = (_a = file.name.toLowerCase().split(".").pop()) != null ? _a : "";
+    if (file.type.startsWith("image/") || this.isImageExt(ext)) {
+      if (file.size > 4 * 1024 * 1024) {
+        return null;
+      }
+      const binary = await file.arrayBuffer();
+      const mirroredPath2 = await this.persistBinaryAttachmentToIngest(
+        file.name,
+        ext || "png",
+        "image",
+        binary
+      );
+      const mirroredAbsolutePath = mirroredPath2 ? this.resolveVaultAbsolutePath(mirroredPath2) : void 0;
+      const parsed = await this.extractImageTextWithParserChain(
+        binary,
+        absolutePath || mirroredAbsolutePath,
+        ext || "png"
+      );
+      return {
+        kind: "image",
+        label: this.normalizeAttachmentLabel(file.name, `image-${Date.now()}`),
+        imageBase64: this.arrayBufferToBase64(binary),
+        mimeType: file.type || this.attachmentMimeFromExt(ext),
+        path: mirroredPath2 || absolutePath,
+        content: parsed.content ? [
+          `Image attachment: ${file.name}`,
+          `Parser: ${parsed.parser}`,
+          ...parsed.notes.map((note) => `- ${note}`),
+          "---",
+          parsed.content
+        ].join("\n") : void 0
+      };
+    }
+    if (file.type === "application/pdf" || this.isPdfExt(ext)) {
+      if (!this.plugin.settings.qaPdfAttachmentEnabled) {
+        return null;
+      }
+      if (file.size > 20 * 1024 * 1024) {
+        return null;
+      }
+      const binary = await file.arrayBuffer();
+      const mirroredPath2 = await this.persistBinaryAttachmentToIngest(
+        file.name,
+        ext || "pdf",
+        "pdf",
+        binary
+      );
+      const mirroredAbsolutePath = mirroredPath2 ? this.resolveVaultAbsolutePath(mirroredPath2) : void 0;
+      const parsed = await this.extractPdfTextWithParserChain(
+        binary,
+        absolutePath || mirroredAbsolutePath
+      );
+      return {
+        kind: "pdf",
+        label: this.normalizeAttachmentLabel(file.name, `pdf-${Date.now()}`),
+        path: mirroredPath2 || absolutePath,
+        content: [
+          `PDF attachment: ${file.name}`,
+          `Parser: ${parsed.parser}`,
+          ...parsed.notes.map((note) => `- ${note}`),
+          "---",
+          parsed.content
+        ].join("\n")
+      };
+    }
+    if (!this.isLikelyTextFile(file)) {
+      return null;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      return null;
+    }
+    const text = await file.text();
+    const content = this.clampAttachmentText(text.trim());
+    if (!content) {
+      return null;
+    }
+    const mirroredPath = await this.persistTextAttachmentToIngest(
+      file.name,
+      ext || "txt",
+      "text",
+      content
+    );
+    return {
+      kind: "text",
+      label: this.normalizeAttachmentLabel(file.name, `document-${Date.now()}`),
+      path: mirroredPath || absolutePath,
+      content
+    };
+  }
+  extractDesktopAbsolutePathFromFile(file) {
+    var _a;
+    const raw = ((_a = file.path) != null ? _a : "").trim();
+    if (!raw) {
+      return void 0;
+    }
+    if (nodePath.isAbsolute(raw) || /^[A-Za-z]:[\\/]/.test(raw)) {
+      return nodePath.resolve(raw);
+    }
+    return void 0;
+  }
+  async collectAttachmentsFromDrop(dataTransfer) {
+    var _a;
+    const collected = [];
+    const seen = /* @__PURE__ */ new Set();
+    const pushItem = (item) => {
+      if (!item) {
+        return;
+      }
+      const key = this.attachmentKey(item);
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      collected.push(item);
+    };
+    const files = Array.from((_a = dataTransfer.files) != null ? _a : []);
+    for (const file of files) {
+      if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+        break;
+      }
+      try {
+        pushItem(await this.readExternalFileAsAttachment(file));
+      } catch (e) {
+      }
+    }
+    const textPayloads = [
+      dataTransfer.getData("text/plain"),
+      dataTransfer.getData("text/uri-list")
+    ].map((value) => value.trim()).filter((value) => value.length > 0);
+    for (const payload of textPayloads) {
+      if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+        break;
+      }
+      for (const candidate of this.extractDropTextCandidates(payload)) {
+        if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+          break;
+        }
+        const file = this.resolveDroppedVaultFile(candidate);
+        if (!(file instanceof import_obsidian4.TFile)) {
+          continue;
+        }
+        try {
+          pushItem(await this.readVaultFileAsAttachment(file));
+        } catch (e) {
+        }
+      }
+    }
+    return collected.slice(0, LOCAL_QA_MAX_ATTACHMENTS);
+  }
+  async collectAttachmentsFromClipboard(dataTransfer) {
+    var _a, _b;
+    const collected = [];
+    const items = Array.from((_a = dataTransfer.items) != null ? _a : []);
+    for (const item of items) {
+      if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+        break;
+      }
+      if (item.kind !== "file") {
+        continue;
+      }
+      const file = item.getAsFile();
+      if (!file) {
+        continue;
+      }
+      try {
+        const parsed = await this.readExternalFileAsAttachment(file);
+        if (parsed) {
+          collected.push(parsed);
+        }
+      } catch (e) {
+      }
+    }
+    if (collected.length === 0) {
+      for (const file of Array.from((_b = dataTransfer.files) != null ? _b : [])) {
+        if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+          break;
+        }
+        try {
+          const parsed = await this.readExternalFileAsAttachment(file);
+          if (parsed) {
+            collected.push(parsed);
+          }
+        } catch (e) {
+        }
+      }
+    }
+    return collected.slice(0, LOCAL_QA_MAX_ATTACHMENTS);
+  }
+  mergePendingAttachments(incoming) {
+    if (incoming.length === 0) {
+      return;
+    }
+    const merged = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const item of [...this.pendingAttachments, ...incoming]) {
+      const key = this.attachmentKey(item);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      merged.push(item);
+      if (merged.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+        break;
+      }
+    }
+    this.pendingAttachments = merged;
+    this.refreshAttachmentStatus();
+    void this.refreshScopeLabel();
+  }
+  consumePendingAttachments() {
+    const out = [...this.pendingAttachments];
+    this.pendingAttachments = [];
+    this.refreshAttachmentStatus();
+    void this.refreshScopeLabel();
+    return out;
+  }
+  removePendingAttachmentAt(index) {
+    if (index < 0 || index >= this.pendingAttachments.length) {
+      return;
+    }
+    this.pendingAttachments = this.pendingAttachments.filter((_, itemIndex) => itemIndex !== index);
+    this.refreshAttachmentStatus();
+    void this.refreshScopeLabel();
+  }
+  refreshAttachmentStatus() {
+    if (!this.attachmentStatusEl) {
+      return;
+    }
+    this.attachmentStatusEl.empty();
+    if (this.pendingAttachments.length === 0) {
+      this.attachmentStatusEl.createSpan({
+        text: `\uCCA8\uBD80 \uC5C6\uC74C (\uCD5C\uB300 ${LOCAL_QA_MAX_ATTACHMENTS}\uAC1C): \uB4DC\uB798\uADF8/\uC5C5\uB85C\uB4DC/\uBD99\uC5EC\uB123\uAE30(Ctrl/Cmd+V) \uC0AC\uC6A9 \uAC00\uB2A5`
+      });
+      return;
+    }
+    const head = this.attachmentStatusEl.createDiv({
+      cls: "auto-linker-chat-attachment-head"
+    });
+    head.createSpan({
+      text: `\uCCA8\uBD80 ${this.pendingAttachments.length}/${LOCAL_QA_MAX_ATTACHMENTS} (\uB2E4\uC74C \uC804\uC1A1\uC5D0 \uD3EC\uD568)`
+    });
+    const clearButton = head.createEl("button", {
+      text: "\uCCA8\uBD80 \uBE44\uC6B0\uAE30"
+    });
+    clearButton.addClass("auto-linker-chat-drop-clear");
+    clearButton.onclick = () => {
+      this.pendingAttachments = [];
+      this.refreshAttachmentStatus();
+      void this.refreshScopeLabel();
+    };
+    const list = this.attachmentStatusEl.createDiv({
+      cls: "auto-linker-chat-attachment-list"
+    });
+    this.pendingAttachments.forEach((item, index) => {
+      var _a;
+      const card = list.createDiv({ cls: "auto-linker-chat-attachment-item" });
+      if (item.kind === "image" && item.imageBase64) {
+        const image = card.createEl("img", { cls: "auto-linker-chat-attachment-thumb" });
+        image.src = `data:${item.mimeType || "image/png"};base64,${item.imageBase64}`;
+        image.alt = item.label || `image-${index + 1}`;
+      } else {
+        card.createDiv({
+          cls: "auto-linker-chat-attachment-file-badge",
+          text: "FILE"
+        });
+      }
+      const meta = card.createDiv({ cls: "auto-linker-chat-attachment-meta" });
+      meta.createDiv({
+        cls: "auto-linker-chat-attachment-title",
+        text: item.label || item.path || `attachment-${index + 1}`
+      });
+      meta.createDiv({
+        cls: "auto-linker-chat-attachment-sub",
+        text: ((_a = item.path) == null ? void 0 : _a.trim()) || (item.kind === "image" ? "image attachment" : item.kind === "pdf" ? "pdf attachment" : "document attachment")
+      });
+      const removeButton = card.createEl("button", {
+        text: "\uC81C\uAC70"
+      });
+      removeButton.addClass("auto-linker-chat-attachment-remove");
+      removeButton.onclick = () => {
+        this.removePendingAttachmentAt(index);
+      };
+    });
+  }
+  async openAttachmentPicker() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = ".md,.txt,.json,.yml,.yaml,.csv,.ts,.js,.py,.java,.go,.rs,.c,.cpp,.html,.css,.pdf,image/*";
+    input.style.display = "none";
+    document.body.appendChild(input);
+    input.onchange = async () => {
+      var _a;
+      try {
+        const files = Array.from((_a = input.files) != null ? _a : []);
+        const attachments = [];
+        for (const file of files) {
+          if (attachments.length + this.pendingAttachments.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+            break;
+          }
+          try {
+            const parsed = await this.readExternalFileAsAttachment(file);
+            if (parsed) {
+              attachments.push(parsed);
+            }
+          } catch (e) {
+          }
+        }
+        if (attachments.length === 0) {
+          new import_obsidian4.Notice("\uCCA8\uBD80\uD560 \uC218 \uC788\uB294 \uD30C\uC77C(\uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF)\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+        } else {
+          this.mergePendingAttachments(attachments);
+          this.pushMessage({
+            role: "system",
+            text: `\uCCA8\uBD80 \uCD94\uAC00\uB428: ${attachments.length}\uAC1C (\uD604\uC7AC ${this.pendingAttachments.length}/${LOCAL_QA_MAX_ATTACHMENTS})`,
+            timestamp: (/* @__PURE__ */ new Date()).toISOString()
+          });
+        }
+      } finally {
+        input.remove();
+      }
+    };
+    input.click();
+  }
+  async handleChatDrop(event, dropZone) {
+    event.preventDefault();
+    dropZone.removeClass("auto-linker-chat-drop-active");
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) {
+      return;
+    }
+    const attachments = await this.collectAttachmentsFromDrop(dataTransfer);
+    if (attachments.length === 0) {
+      new import_obsidian4.Notice("\uB4DC\uB798\uADF8\uD55C \uD56D\uBAA9\uC5D0\uC11C \uC77D\uC744 \uC218 \uC788\uB294 \uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF\uB97C \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+      return;
+    }
+    this.mergePendingAttachments(attachments);
+    this.pushMessage({
+      role: "system",
+      text: `\uB4DC\uB798\uADF8 \uCCA8\uBD80 \uCD94\uAC00\uB428: ${attachments.length}\uAC1C (\uD604\uC7AC ${this.pendingAttachments.length}/${LOCAL_QA_MAX_ATTACHMENTS})`,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  }
+  async handleChatPaste(event) {
+    var _a, _b, _c;
+    const dataTransfer = event.clipboardData;
+    if (!dataTransfer) {
+      return;
+    }
+    const hasFilePayload = Array.from((_a = dataTransfer.items) != null ? _a : []).some((item) => item.kind === "file") || ((_c = (_b = dataTransfer.files) == null ? void 0 : _b.length) != null ? _c : 0) > 0;
+    if (!hasFilePayload) {
+      return;
+    }
+    event.preventDefault();
+    const attachments = await this.collectAttachmentsFromClipboard(dataTransfer);
+    if (attachments.length === 0) {
+      new import_obsidian4.Notice("\uBD99\uC5EC\uB123\uC740 \uB370\uC774\uD130\uC5D0\uC11C \uCCA8\uBD80 \uAC00\uB2A5\uD55C \uD30C\uC77C/\uC774\uBBF8\uC9C0\uB97C \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+      return;
+    }
+    this.mergePendingAttachments(attachments);
+    this.pushMessage({
+      role: "system",
+      text: `\uBD99\uC5EC\uB123\uAE30 \uCCA8\uBD80 \uCD94\uAC00\uB428: ${attachments.length}\uAC1C (\uD604\uC7AC ${this.pendingAttachments.length}/${LOCAL_QA_MAX_ATTACHMENTS})`,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
   }
   formatTime(iso) {
     const date = new Date(iso);
@@ -2579,11 +4104,232 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       this.renderMessages();
     }, delayMs);
   }
+  getVaultBasePathForChatView() {
+    const adapter = this.app.vault.adapter;
+    if (typeof adapter.getBasePath !== "function") {
+      return null;
+    }
+    const base = adapter.getBasePath();
+    if (!base || typeof base !== "string") {
+      return null;
+    }
+    return nodePath.resolve(base);
+  }
+  resolveVisibleMarkdownFile() {
+    const active = this.app.workspace.getActiveFile();
+    if (active instanceof import_obsidian4.TFile && active.extension === "md") {
+      return active;
+    }
+    const activeLeaf = this.app.workspace.activeLeaf;
+    if ((activeLeaf == null ? void 0 : activeLeaf.view) instanceof import_obsidian4.MarkdownView) {
+      const file = activeLeaf.view.file;
+      if (file instanceof import_obsidian4.TFile && file.extension === "md") {
+        return file;
+      }
+    }
+    return null;
+  }
+  decodeChatLinkValue(raw) {
+    const trimmed = (raw != null ? raw : "").trim();
+    if (!trimmed) {
+      return "";
+    }
+    try {
+      return decodeURIComponent(trimmed);
+    } catch (e) {
+      return trimmed;
+    }
+  }
+  resolveVaultFileFromChatLink(raw) {
+    const decoded = this.decodeChatLinkValue(raw);
+    if (!decoded || /^https?:\/\//i.test(decoded)) {
+      return null;
+    }
+    let candidate = decoded;
+    if (/^file:\/\//i.test(candidate)) {
+      candidate = candidate.replace(/^file:\/\//i, "");
+    }
+    candidate = candidate.trim();
+    if (!candidate) {
+      return null;
+    }
+    const normalized = (0, import_obsidian4.normalizePath)(candidate);
+    const direct = this.app.vault.getAbstractFileByPath(normalized);
+    if (direct instanceof import_obsidian4.TFile) {
+      return direct;
+    }
+    if (!normalized.toLowerCase().endsWith(".md")) {
+      const withMd = this.app.vault.getAbstractFileByPath(`${normalized}.md`);
+      if (withMd instanceof import_obsidian4.TFile) {
+        return withMd;
+      }
+    }
+    const vaultBase = this.getVaultBasePathForChatView();
+    if (vaultBase && (nodePath.isAbsolute(candidate) || /^[A-Za-z]:[\\/]/.test(candidate))) {
+      const absolute = nodePath.resolve(candidate);
+      const relative2 = nodePath.relative(vaultBase, absolute);
+      if (relative2 && !relative2.startsWith("..") && !nodePath.isAbsolute(relative2)) {
+        const vaultPath = (0, import_obsidian4.normalizePath)(relative2);
+        const fromAbsolute = this.app.vault.getAbstractFileByPath(vaultPath);
+        if (fromAbsolute instanceof import_obsidian4.TFile) {
+          return fromAbsolute;
+        }
+      }
+    }
+    return null;
+  }
+  buildFileUrlFromAbsolutePath(rawPath) {
+    const absolute = nodePath.resolve(rawPath);
+    if (!absolute) {
+      return null;
+    }
+    const segments = absolute.split(nodePath.sep).map((segment) => encodeURIComponent(segment));
+    if (/^[A-Za-z]:[\\/]/.test(absolute)) {
+      return `file:///${segments.join("/")}`;
+    }
+    return `file://${segments.join("/")}`;
+  }
+  async openLinkWithDesktopShell(url) {
+    var _a, _b;
+    try {
+      const win = window;
+      const electron = typeof win.require === "function" ? win.require("electron") : null;
+      if ((_a = electron == null ? void 0 : electron.shell) == null ? void 0 : _a.openExternal) {
+        await electron.shell.openExternal(url);
+        return true;
+      }
+      if (((_b = electron == null ? void 0 : electron.shell) == null ? void 0 : _b.openPath) && /^file:\/\//i.test(url)) {
+        const path = decodeURIComponent(url.replace(/^file:\/\//i, ""));
+        const result = await electron.shell.openPath(path);
+        return !result;
+      }
+      window.open(url, "_blank");
+      return true;
+    } catch (e) {
+      try {
+        window.open(url, "_blank");
+        return true;
+      } catch (e2) {
+        return false;
+      }
+    }
+  }
+  async tryOpenExternalFromChatLink(raw) {
+    const decoded = this.decodeChatLinkValue(raw);
+    if (!decoded) {
+      return false;
+    }
+    try {
+      if (/^https?:\/\//i.test(decoded)) {
+        return await this.openLinkWithDesktopShell(decoded);
+      }
+      let pathLike = decoded;
+      if (/^file:\/\//i.test(pathLike)) {
+        pathLike = pathLike.replace(/^file:\/\//i, "");
+      }
+      pathLike = pathLike.trim();
+      if (!pathLike) {
+        return false;
+      }
+      if (!(nodePath.isAbsolute(pathLike) || /^[A-Za-z]:[\\/]/.test(pathLike))) {
+        return false;
+      }
+      const fileUrl = this.buildFileUrlFromAbsolutePath(pathLike);
+      if (!fileUrl) {
+        return false;
+      }
+      return await this.openLinkWithDesktopShell(fileUrl);
+    } catch (e) {
+      return false;
+    }
+  }
+  bindChatMarkdownLinkHandlers(container) {
+    container.addEventListener("click", (event) => {
+      var _a, _b, _c;
+      const target = event.target;
+      const anchor = target == null ? void 0 : target.closest("a");
+      if (!(anchor instanceof HTMLAnchorElement)) {
+        const image = target == null ? void 0 : target.closest("img");
+        if (!(image instanceof HTMLImageElement)) {
+          return;
+        }
+        const src = ((_a = image.getAttribute("src")) != null ? _a : "").trim();
+        if (!src) {
+          return;
+        }
+        const internalImageFile = this.resolveVaultFileFromChatLink(src);
+        const shouldInterceptImage = internalImageFile instanceof import_obsidian4.TFile || /^https?:\/\//i.test(src) || /^file:\/\//i.test(src) || nodePath.isAbsolute(src) || /^[A-Za-z]:[\\/]/.test(src);
+        if (!shouldInterceptImage) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        void (async () => {
+          if (internalImageFile instanceof import_obsidian4.TFile) {
+            await this.app.workspace.getLeaf(true).openFile(internalImageFile);
+            return;
+          }
+          await this.tryOpenExternalFromChatLink(src);
+        })();
+        return;
+      }
+      const candidates = [
+        (_b = anchor.getAttribute("href")) != null ? _b : "",
+        (_c = anchor.textContent) != null ? _c : ""
+      ].map((item) => item.trim()).filter((item) => item.length > 0);
+      if (candidates.length === 0) {
+        return;
+      }
+      const shouldIntercept = candidates.some((candidate) => {
+        const decoded = this.decodeChatLinkValue(candidate);
+        if (!decoded || decoded === "#") {
+          return false;
+        }
+        if (/^https?:\/\//i.test(decoded) || /^file:\/\//i.test(decoded) || nodePath.isAbsolute(decoded) || /^[A-Za-z]:[\\/]/.test(decoded)) {
+          return true;
+        }
+        return this.resolveVaultFileFromChatLink(decoded) instanceof import_obsidian4.TFile;
+      });
+      if (!shouldIntercept) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const openInternal = async () => {
+        for (const candidate of candidates) {
+          const file = this.resolveVaultFileFromChatLink(candidate);
+          if (!(file instanceof import_obsidian4.TFile)) {
+            continue;
+          }
+          await this.app.workspace.getLeaf(true).openFile(file);
+          return true;
+        }
+        return false;
+      };
+      const openExternalPath = async () => {
+        for (const candidate of candidates) {
+          if (await this.tryOpenExternalFromChatLink(candidate)) {
+            return true;
+          }
+        }
+        return false;
+      };
+      void (async () => {
+        if (await openInternal()) {
+          return;
+        }
+        if (await openExternalPath()) {
+          return;
+        }
+      })();
+    });
+  }
   renderMarkdownBody(container, markdown, sourcePath, version) {
     container.empty();
     void import_obsidian4.MarkdownRenderer.renderMarkdown(markdown, container, sourcePath, this).catch(() => {
       container.setText(markdown);
     }).finally(() => {
+      this.bindChatMarkdownLinkHandlers(container);
       if (version === this.renderVersion) {
         this.threadEl.scrollTop = this.threadEl.scrollHeight;
       }
@@ -2593,8 +4339,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     var _a, _b;
     const timeline = (_a = message.timeline) != null ? _a : [];
     const latest = timeline.length > 0 ? timeline[timeline.length - 1] : void 0;
-    const panel = parent.createDiv({ cls: "auto-linker-chat-thinking-panel" });
-    const head = panel.createDiv({ cls: "auto-linker-chat-thinking-head" });
+    const panel = parent.createEl("details", { cls: "auto-linker-chat-thinking-panel" });
+    panel.open = false;
+    const head = panel.createEl("summary", { cls: "auto-linker-chat-thinking-head" });
     const summaryText = latest ? `Thinking timeline \xB7 ${timeline.length} events \xB7 ${this.formatThinkingStage(latest.stage)}` : "Thinking timeline";
     head.createDiv({
       text: summaryText,
@@ -2730,21 +4477,50 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   renderSourceLink(parent, source) {
     const row = parent.createDiv({ cls: "auto-linker-chat-source-row" });
-    const link = row.createEl("a", {
-      text: source.path,
-      href: "#",
-      cls: "auto-linker-chat-source-link"
-    });
-    link.setAttr("title", source.path);
-    link.onclick = async (event) => {
-      event.preventDefault();
-      const target = this.app.vault.getAbstractFileByPath(source.path);
-      if (target instanceof import_obsidian4.TFile) {
+    const sourcePath = source.path.trim();
+    const isAttachmentVirtual = sourcePath.startsWith("[ATTACHMENT-");
+    const virtualLabel = isAttachmentVirtual ? sourcePath.replace(/^\[ATTACHMENT-[^\]]+\]\s*/, "").trim() : "";
+    const fallbackTarget = isAttachmentVirtual ? this.resolveVaultFileFromChatLink(virtualLabel) : null;
+    const target = !isAttachmentVirtual ? this.app.vault.getAbstractFileByPath(sourcePath) : fallbackTarget;
+    const canOpenExternal = /^https?:\/\//i.test(sourcePath) || /^file:\/\//i.test(sourcePath) || nodePath.isAbsolute(sourcePath) || /^[A-Za-z]:[\\/]/.test(sourcePath) || isAttachmentVirtual && (/^https?:\/\//i.test(virtualLabel) || /^file:\/\//i.test(virtualLabel) || nodePath.isAbsolute(virtualLabel) || /^[A-Za-z]:[\\/]/.test(virtualLabel));
+    const externalPath = isAttachmentVirtual ? virtualLabel : sourcePath;
+    if (target instanceof import_obsidian4.TFile) {
+      const link = row.createEl("a", {
+        text: sourcePath,
+        href: "#",
+        cls: "auto-linker-chat-source-link"
+      });
+      link.setAttr("title", sourcePath);
+      link.onclick = async (event) => {
+        event.preventDefault();
         await this.app.workspace.getLeaf(true).openFile(target);
-      } else {
-        new import_obsidian4.Notice(`Source not found: ${source.path}`, 5e3);
-      }
-    };
+      };
+    } else if (canOpenExternal) {
+      const link = row.createEl("a", {
+        text: sourcePath,
+        href: "#",
+        cls: "auto-linker-chat-source-link"
+      });
+      link.setAttr("title", sourcePath);
+      link.onclick = async (event) => {
+        event.preventDefault();
+        const opened = await this.tryOpenExternalFromChatLink(externalPath);
+        if (!opened) {
+          new import_obsidian4.Notice(`Source not found: ${externalPath}`, 5e3);
+        }
+      };
+    } else {
+      const text = row.createEl("span", {
+        text: sourcePath,
+        cls: "auto-linker-chat-source-link"
+      });
+      text.setAttr(
+        "title",
+        isAttachmentVirtual ? "\uAC00\uC0C1 \uCCA8\uBD80 \uCD9C\uCC98\uC785\uB2C8\uB2E4. \uC808\uB300\uACBD\uB85C/\uBCFC\uD2B8 \uACBD\uB85C\uAC00 \uD3EC\uD568\uB418\uBA74 \uD074\uB9AD \uC5F4\uAE30\uAC00 \uAC00\uB2A5\uD569\uB2C8\uB2E4." : `Source not found: ${sourcePath}`
+      );
+      text.style.opacity = "0.82";
+      text.style.cursor = "default";
+    }
     row.createEl("span", {
       text: formatSimilarity(source.similarity),
       cls: "auto-linker-chat-source-similarity"
@@ -2768,6 +4544,19 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       });
       if (message.role === "thinking") {
         this.renderThinkingCard(box, message);
+        continue;
+      }
+      if (message.role === "system") {
+        const panel = box.createEl("details", { cls: "auto-linker-chat-system-panel" });
+        panel.open = false;
+        const summary = panel.createEl("summary", { cls: "auto-linker-chat-system-head" });
+        summary.createEl("strong", { text: "System / \uC2DC\uC2A4\uD15C" });
+        summary.createEl("small", {
+          text: this.formatTime(message.timestamp),
+          cls: "auto-linker-chat-message-time"
+        });
+        const body2 = panel.createDiv({ cls: "auto-linker-chat-message-body" });
+        body2.setText(message.text);
         continue;
       }
       const head = box.createDiv({ cls: "auto-linker-chat-message-head" });
@@ -2822,50 +4611,106 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   async refreshScopeLabel() {
     const fileCount = this.plugin.getSelectedFilesForQa().length;
     const folderCount = this.plugin.getSelectedFolderPathsForQa().length;
+    const attachmentCount = this.pendingAttachments.length;
     const role = this.plugin.getQaRolePresetForQa();
-    const roleLabel = getQaRolePresetLabel(role);
+    const presetLabel = this.plugin.getQaPresetProfileLabelForQa();
+    const conversationMode = this.plugin.getQaConversationModeLabelForQa();
     const model = this.plugin.getQaModelLabelForQa(role);
-    const embedding = this.plugin.getQaEmbeddingModelForQa();
     const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "auto / \uC790\uB3D9" : "manual / \uC218\uB3D9";
-    const pipeline = getQaPipelinePresetLabel(this.plugin.getQaPipelinePresetForQa());
-    const roleModels = this.plugin.getQaRoleModelSummaryForQa();
-    const chatFolder = this.plugin.getChatTranscriptRootPathForQa() || "(not set / \uBBF8\uC124\uC815)";
-    this.scopeEl.setText(
-      `Scope / \uBC94\uC704: files=${fileCount}, folders=${folderCount} | role=${roleLabel} | QA=${model} | embedding=${embedding || "(not set / \uBBF8\uC124\uC815)"} | pipeline=${pipeline} | role-models=${roleModels} | sync=${syncMode} | chats=${chatFolder}`
-    );
+    const fullSummary = `Scope / \uBC94\uC704: files=${fileCount}, folders=${folderCount}, attachments=${attachmentCount}`;
+    const runtimeSummary = `convo=${conversationMode} | preset=${presetLabel} | QA=${model} | sync=${syncMode}`;
+    this.scopeEl.empty();
+    this.scopeEl.setAttr("title", fullSummary);
+    this.scopeEl.createDiv({
+      cls: "auto-linker-chat-scope-counts",
+      text: `\uD30C\uC77C(Files): ${fileCount} / \uD3F4\uB354(Folders): ${folderCount} / \uCCA8\uBD80 \uD30C\uC77C(Attach): ${attachmentCount}`
+    });
+    if (this.runtimeSummaryEl) {
+      this.runtimeSummaryEl.setText(runtimeSummary);
+      this.runtimeSummaryEl.setAttr("title", runtimeSummary);
+    }
   }
-  async submitQuestion() {
-    var _a, _b, _c;
-    if (this.running) {
+  async refreshActiveFileStatus() {
+    if (!this.activeFileStatusEl || !this.contentEl.isConnected) {
       return;
     }
-    const question = this.inputEl.value.trim();
+    this.activeFileStatusEl.empty();
+    const active = this.resolveVisibleMarkdownFile();
+    if (!(active instanceof import_obsidian4.TFile) || active.extension !== "md") {
+      this.activeFileStatusEl.addClass("is-empty");
+      this.activeFileStatusEl.setText("Open file / \uC5F4\uB824\uC788\uB294 \uBB38\uC11C: \uC5C6\uC74C");
+      return;
+    }
+    this.lastKnownOpenMarkdownPath = active.path;
+    this.activeFileStatusEl.removeClass("is-empty");
+    const chip = this.activeFileStatusEl.createDiv({
+      cls: "auto-linker-chat-active-file-chip"
+    });
+    chip.addClass("is-current");
+    chip.createSpan({
+      cls: "auto-linker-chat-active-file-label",
+      text: "Open file"
+    });
+    chip.createSpan({
+      cls: "auto-linker-chat-active-file-name",
+      text: `@${active.basename}`
+    });
+    chip.setAttr("title", active.path);
+  }
+  async submitQuestion(preloadedTurn) {
+    var _a, _b, _c, _d, _e, _f;
+    if (this.running) {
+      if (!preloadedTurn) {
+        this.preemptRunningTurnWithCurrentInput();
+      }
+      return;
+    }
+    this.stopRequested = false;
+    const question = ((_a = preloadedTurn == null ? void 0 : preloadedTurn.question) != null ? _a : this.inputEl.value).trim();
     if (!question) {
       new import_obsidian4.Notice("Question is empty. / \uC9C8\uBB38\uC774 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4.");
       return;
     }
     const selectedFiles = this.plugin.getSelectedFilesForQa();
-    if (selectedFiles.length === 0) {
+    const qaContextEnabled = this.plugin.isQaContextEnabledForQa();
+    const attachmentsForTurn = (_b = preloadedTurn == null ? void 0 : preloadedTurn.attachments) != null ? _b : this.consumePendingAttachments();
+    const hasPendingAttachments = attachmentsForTurn.length > 0;
+    const openFileForTurn = this.resolveVisibleMarkdownFile();
+    const openFilePathForTurn = (_c = preloadedTurn == null ? void 0 : preloadedTurn.openFilePath) != null ? _c : qaContextEnabled && openFileForTurn instanceof import_obsidian4.TFile && openFileForTurn.extension === "md" ? openFileForTurn.path : void 0;
+    if (!qaContextEnabled && !hasPendingAttachments) {
       this.pushMessage({
         role: "system",
-        text: "\uC120\uD0DD\uB41C \uB178\uD2B8\uAC00 \uC5C6\uC5B4 \uC120\uD0DD \uCC3D\uC744 \uC5FD\uB2C8\uB2E4.",
+        text: "QA \uCEE8\uD14D\uC2A4\uD2B8 OFF \uC0C1\uD0DC\uC785\uB2C8\uB2E4. \uC120\uD0DD \uB178\uD2B8 \uB9AC\uD2B8\uB9AC\uBC8C \uC5C6\uC774 \uC77C\uBC18 \uCC44\uD305\uC73C\uB85C \uC9C4\uD589\uD569\uB2C8\uB2E4.",
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
-      await this.plugin.openSelectionForQa();
-      await this.refreshScopeLabel();
-      return;
+    } else if (selectedFiles.length === 0 && !hasPendingAttachments) {
+      this.pushMessage({
+        role: "system",
+        text: openFilePathForTurn ? `\uC120\uD0DD \uB178\uD2B8/\uCCA8\uBD80\uAC00 \uC5C6\uC5B4 \uD604\uC7AC \uC5F4\uB9B0 \uBB38\uC11C\uB97C \uC6B0\uC120 \uCEE8\uD14D\uC2A4\uD2B8\uB85C \uC0AC\uC6A9\uD569\uB2C8\uB2E4: ${openFilePathForTurn}` : "\uC120\uD0DD \uB178\uD2B8/\uCCA8\uBD80 \uC5C6\uC774 \uC77C\uBC18 \uB300\uD654\uB97C \uC9C4\uD589\uD569\uB2C8\uB2E4. \uD544\uC694\uD558\uBA74 \uB178\uD2B8\uB97C \uC120\uD0DD\uD558\uAC70\uB098 \uCCA8\uBD80\uB97C \uCD94\uAC00\uD558\uC138\uC694.",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
+    if (attachmentsForTurn.length > 0) {
+      this.pushMessage({
+        role: "system",
+        text: `\uC774\uBC88 \uC9C8\uBB38\uC5D0 \uCCA8\uBD80 ${attachmentsForTurn.length}\uAC1C\uB97C \uD3EC\uD568\uD569\uB2C8\uB2E4.`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
     }
     const parsedTopK = Number.parseInt(this.topKInput.value, 10);
     const topK = Number.isFinite(parsedTopK) && parsedTopK >= 1 ? Math.min(15, parsedTopK) : this.plugin.settings.qaTopK;
-    this.inputEl.value = "";
+    if (!preloadedTurn) {
+      this.inputEl.value = "";
+    }
     this.pushMessage({
       role: "user",
       text: question,
       timestamp: (/* @__PURE__ */ new Date()).toISOString()
     });
     this.running = true;
-    this.sendButton.disabled = true;
+    this.refreshSendButtonState();
     this.stopButton.disabled = false;
+    this.stopRequested = false;
     const abortController = new AbortController();
     this.activeRequestController = abortController;
     const thinkingMessage = {
@@ -2931,6 +4776,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         topK,
         this.buildHistoryTurns(),
         (token) => {
+          if (abortController.signal.aborted || this.stopRequested) {
+            return;
+          }
           rawResponse += token;
           const parsed = splitThinkingBlocks(rawResponse);
           const draft2 = this.messages[draftIndex];
@@ -2948,6 +4796,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           }
         },
         (event) => {
+          if (abortController.signal.aborted || this.stopRequested) {
+            return;
+          }
           if (event.thinkingChunk) {
             modelThinking += event.thinkingChunk;
             if (!thinkingStreamAnnounced) {
@@ -2964,7 +4815,11 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           }
           pushTimelineEvent(event);
         },
-        abortController.signal
+        abortController.signal,
+        attachmentsForTurn,
+        {
+          openFilePath: openFilePathForTurn
+        }
       );
       const draft = this.messages[draftIndex];
       if (draft && draft.role === "assistant") {
@@ -3008,8 +4863,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       const thinking = this.messages[thinkingIndex];
       if (thinking && thinking.role === "thinking") {
-        const hasTimeline = ((_b = (_a = thinking.timeline) == null ? void 0 : _a.length) != null ? _b : 0) > 0;
-        const hasThinkingText = Boolean((_c = thinking.thinkingDetails) == null ? void 0 : _c.trim());
+        const hasTimeline = ((_e = (_d = thinking.timeline) == null ? void 0 : _d.length) != null ? _e : 0) > 0;
+        const hasThinkingText = Boolean((_f = thinking.thinkingDetails) == null ? void 0 : _f.trim());
         if (!hasTimeline && !hasThinkingText) {
           this.messages.splice(thinkingIndex, 1);
         } else {
@@ -3020,6 +4875,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       this.renderMessages();
     } catch (error) {
+      const preemptPending = this.pendingPreemptTurn !== null;
+      if (attachmentsForTurn.length > 0 && (!this.plugin.isAbortError(error) || !preemptPending)) {
+        this.mergePendingAttachments(attachmentsForTurn);
+      }
       const cancelled = this.plugin.isAbortError(error);
       const message = cancelled ? "\uC694\uCCAD\uC774 \uC911\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4." : error instanceof Error ? error.message : "Unknown local QA error";
       const draft = this.messages[draftIndex];
@@ -3039,7 +4898,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       this.pushMessage({
         role: "system",
-        text: cancelled ? `\uC911\uC9C0: ${message}` : `\uC624\uB958: ${message}`,
+        text: cancelled ? preemptPending ? "steer \uC804\uD658\uC744 \uC704\uD574 \uC774\uC804 \uC751\uB2F5\uC744 \uC911\uC9C0\uD588\uC2B5\uB2C8\uB2E4." : `\uC911\uC9C0: ${message}` : `\uC624\uB958: ${message}`,
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
       if (!cancelled) {
@@ -3047,14 +4906,23 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
     } finally {
       this.running = false;
-      this.sendButton.disabled = false;
+      this.stopRequested = false;
+      this.refreshSendButtonState();
       this.stopButton.disabled = true;
       this.activeRequestController = null;
       if (this.streamRenderTimer !== null) {
         window.clearTimeout(this.streamRenderTimer);
         this.streamRenderTimer = null;
       }
+      await this.refreshScopeLabel();
       this.inputEl.focus();
+      const preemptTurn = this.pendingPreemptTurn;
+      this.pendingPreemptTurn = null;
+      if (preemptTurn) {
+        await this.submitQuestion(preemptTurn);
+      } else {
+        void this.drainQueuedTurns();
+      }
     }
   }
 };
@@ -3068,6 +4936,19 @@ var SETTINGS_HEADER_KO_MAP = {
   MOC: "MOC"
 };
 var SETTINGS_NAME_KO_MAP = {
+  "Settings view mode": "\uC124\uC815 \uBCF4\uAE30 \uBAA8\uB4DC",
+  "Settings UI language": "\uC124\uC815 UI \uC5B8\uC5B4",
+  "Plugin mission": "\uD50C\uB7EC\uADF8\uC778 \uBAA9\uC801",
+  "Quick one-click setup": "\uBE60\uB978 \uC6D0\uD074\uB9AD \uC124\uC815",
+  "Conversation mode (chat runtime)": "\uB300\uD654 \uBAA8\uB4DC(\uCC44\uD305 \uB7F0\uD0C0\uC784)",
+  "Mode behavior summary": "\uBAA8\uB4DC \uB3D9\uC791 \uC694\uC57D",
+  "Quick custom profile slots": "\uBE60\uB978 \uCEE4\uC2A4\uD140 \uD504\uB85C\uD544 \uC2AC\uB86F",
+  "Quick model pickers": "\uBE60\uB978 \uBAA8\uB378 \uC120\uD0DD\uAE30",
+  "One-click local presets": "\uC6D0\uD074\uB9AD \uB85C\uCEEC \uD504\uB9AC\uC14B",
+  "Local AI readiness": "\uB85C\uCEEC AI \uC900\uBE44 \uC0C1\uD0DC",
+  "Open preset guide": "\uD504\uB9AC\uC14B \uAC00\uC774\uB4DC \uC5F4\uAE30",
+  "Guide actions": "\uAC00\uC774\uB4DC \uB3D9\uC791",
+  "Need advanced options?": "\uACE0\uAE09 \uC124\uC815\uC774 \uD544\uC694\uD55C\uAC00\uC694?",
   Provider: "\uC81C\uACF5\uC790",
   "Ollama base URL": "Ollama \uAE30\uBCF8 URL",
   "Ollama detected model picker": "Ollama \uAC10\uC9C0 \uBAA8\uB378 \uC120\uD0DD\uAE30",
@@ -3084,12 +4965,16 @@ var SETTINGS_NAME_KO_MAP = {
   "Anthropic API key": "Anthropic API \uD0A4",
   "Gemini model": "Gemini \uBAA8\uB378",
   "Gemini API key": "Gemini API \uD0A4",
+  "Analyzed depth mode": "\uBD84\uC11D \uAE4A\uC774 \uBAA8\uB4DC",
+  "Analyzed runtime estimate": "\uBD84\uC11D \uC608\uC0C1 \uC2DC\uAC04",
+  "Analyzed scope snapshot": "\uBD84\uC11D \uBC94\uC704 \uC2A4\uB0C5\uC0F7",
   "Suggestion mode (recommended)": "\uC81C\uC548 \uBAA8\uB4DC(\uAD8C\uC7A5)",
   "Show reasons for each field": "\uAC01 \uD544\uB4DC \uADFC\uAC70 \uD45C\uC2DC",
   "Show progress notices": "\uC9C4\uD589 \uC54C\uB9BC \uD45C\uC2DC",
   "Analyze tags": "\uD0DC\uADF8 \uBD84\uC11D",
   "Analyze topic": "\uC8FC\uC81C \uBD84\uC11D",
   "Analyze linked": "\uC5F0\uACB0 \uB178\uD2B8 \uBD84\uC11D",
+  "Force all-to-all linked (deterministic)": "\uC120\uD0DD \uB178\uD2B8 \uC804\uCCB4 \uC0C1\uD638 linked \uAC15\uC81C(\uACB0\uC815\uC801)",
   "Analyze index": "\uC778\uB371\uC2A4 \uBD84\uC11D",
   "Max tags": "\uCD5C\uB300 \uD0DC\uADF8 \uC218",
   "Max linked": "\uCD5C\uB300 linked \uC218",
@@ -3120,8 +5005,33 @@ var SETTINGS_NAME_KO_MAP = {
   "Role system prompt editor": "\uC5ED\uD560 \uC2DC\uC2A4\uD15C \uD504\uB86C\uD504\uD2B8 \uD3B8\uC9D1\uAE30",
   "Prefer Ollama /api/chat (with fallback)": "Ollama /api/chat \uC6B0\uC120(\uD3F4\uBC31 \uD3EC\uD568)",
   "Chat transcript folder path": "\uCC44\uD305 \uAE30\uB85D \uD3F4\uB354 \uACBD\uB85C",
+  "Attachment ingest folder path": "\uCCA8\uBD80 \uBBF8\uB7EC\uB9C1 \uD3F4\uB354 \uACBD\uB85C",
+  "Use QA context in chat": "\uCC44\uD305\uC5D0\uC11C QA \uCEE8\uD14D\uC2A4\uD2B8 \uC0AC\uC6A9",
+  "Parser mode": "\uD30C\uC11C \uBAA8\uB4DC",
+  "Parser tool readiness": "\uD30C\uC11C \uB3C4\uAD6C \uC900\uBE44 \uC0C1\uD0DC",
   "Auto-sync chat thread": "\uCC44\uD305 \uC2A4\uB808\uB4DC \uC790\uB3D9 \uB3D9\uAE30\uD654",
+  "PDF attachments in chat": "\uCC44\uD305 PDF \uCCA8\uBD80",
+  "Allow PDF attachments in chat (experimental)": "\uCC44\uD305 PDF \uCCA8\uBD80 \uD5C8\uC6A9(\uC2E4\uD5D8)",
+  "Enable agent tool mode (experimental)": "\uC5D0\uC774\uC804\uD2B8 \uB3C4\uAD6C \uBAA8\uB4DC \uC0AC\uC6A9(\uC2E4\uD5D8)",
+  "Require approval before tool execution": "\uB3C4\uAD6C \uC2E4\uD589 \uC804 \uC2B9\uC778 \uD544\uC694",
+  "Allow shell tool (danger)": "\uC178 \uB3C4\uAD6C \uD5C8\uC6A9(\uC704\uD5D8)",
+  "Agent shell full access (danger)": "\uC5D0\uC774\uC804\uD2B8 \uC178 \uC804\uCCB4 \uC811\uADFC(\uC704\uD5D8)",
+  "Shell tool timeout (seconds)": "\uC178 \uB3C4\uAD6C \uD0C0\uC784\uC544\uC6C3(\uCD08)",
+  "Shell tool default cwd (vault-relative, optional)": "\uC178 \uB3C4\uAD6C \uAE30\uBCF8 \uC791\uC5C5 \uD3F4\uB354(vault-relative, \uC120\uD0DD)",
+  "Agent path allowlist (absolute, comma/newline)": "\uC5D0\uC774\uC804\uD2B8 \uACBD\uB85C \uD5C8\uC6A9\uBAA9\uB85D(\uC808\uB300\uACBD\uB85C, \uC27C\uD45C/\uC904\uBC14\uAFC8)",
+  "Balanced preset base model": "Balanced \uD504\uB9AC\uC14B \uAE30\uBCF8 \uBAA8\uB378",
+  "Balanced preset vision model": "Balanced \uD504\uB9AC\uC14B \uBE44\uC804 \uBAA8\uB378",
+  "Balanced preset embedding model": "Balanced \uD504\uB9AC\uC14B \uC784\uBCA0\uB529 \uBAA8\uB378",
+  "Pro preset base model": "Pro \uD504\uB9AC\uC14B \uAE30\uBCF8 \uBAA8\uB378",
+  "Pro preset vision model": "Pro \uD504\uB9AC\uC14B \uBE44\uC804 \uBAA8\uB378",
+  "Pro preset embedding model": "Pro \uD504\uB9AC\uC14B \uC784\uBCA0\uB529 \uBAA8\uB378",
+  "Quality+ preset base model": "Quality+ \uD504\uB9AC\uC14B \uAE30\uBCF8 \uBAA8\uB378",
+  "Quality+ preset vision model": "Quality+ \uD504\uB9AC\uC14B \uBE44\uC804 \uBAA8\uB378",
+  "Quality+ preset embedding model": "Quality+ \uD504\uB9AC\uC14B \uC784\uBCA0\uB529 \uBAA8\uB378",
+  "Preset override warning summary": "\uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uACBD\uACE0 \uC694\uC57D",
+  "Agent role model health check": "\uC5D0\uC774\uC804\uD2B8 \uC5ED\uD560 \uBAA8\uB378 \uC0C1\uD0DC \uC810\uAC80",
   "Allow non-local Q&A endpoint (danger)": "\uB85C\uCEEC \uC678 Q&A \uC5D4\uB4DC\uD3EC\uC778\uD2B8 \uD5C8\uC6A9(\uC704\uD5D8)",
+  "Allowed outbound hosts (non-local Q&A)": "\uD5C8\uC6A9 \uC678\uBD80 \uD638\uC2A4\uD2B8(\uBE44\uB85C\uCEEC Q&A)",
   "Remove legacy AI-prefixed keys": "\uB808\uAC70\uC2DC AI \uC811\uB450 \uD0A4 \uC81C\uAC70",
   "Enable cleanup rules during apply": "\uC801\uC6A9 \uC2DC \uC815\uB9AC \uADDC\uCE59 \uC0AC\uC6A9",
   "Cleanup exact keys": "\uC815\uB9AC \uC815\uD655 \uD0A4",
@@ -3141,14 +5051,28 @@ var SETTINGS_NAME_KO_MAP = {
   "MOC file path": "MOC \uD30C\uC77C \uACBD\uB85C"
 };
 var SETTINGS_DESC_KO_MAP = {
+  "Simple shows essentials only. Full shows all advanced controls without removing features.": "Simple\uC740 \uD575\uC2EC \uC635\uC158\uB9CC \uBCF4\uC774\uACE0, Full\uC740 \uBAA8\uB4E0 \uACE0\uAE09 \uC635\uC158\uC744 \uD45C\uC2DC\uD569\uB2C8\uB2E4(\uAE30\uB2A5\uC740 \uC81C\uAC70\uB418\uC9C0 \uC54A\uC74C).",
+  "Choose language style used in setting labels/descriptions across all tabs.": "\uBAA8\uB4E0 \uD0ED\uC758 \uC124\uC815 \uB77C\uBCA8/\uC124\uBA85\uC5D0 \uC0AC\uC6A9\uD560 \uC5B8\uC5B4 \uD45C\uC2DC \uBC29\uC2DD\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4.",
+  "1) Auto-link notes for graph-based second-brain insight. 2) Secure local AI chat/generation grounded in your notes and attachments.": "1) \uB178\uD2B8 linked \uC790\uB3D9\uD654\uB85C \uADF8\uB798\uD504 \uAE30\uBC18 \uC81C2\uC758 \uB1CC/\uC778\uC0AC\uC774\uD2B8\uB97C \uC9C0\uC6D0\uD569\uB2C8\uB2E4. 2) \uB178\uD2B8\xB7\uCCA8\uBD80 \uAE30\uBC18 \uB85C\uCEEC AI \uCC44\uD305/\uC0DD\uC131\uC744 \uBCF4\uC548 \uC6B0\uC120\uC73C\uB85C \uC81C\uACF5\uD569\uB2C8\uB2E4.",
+  "Fast, balanced, and quality presets for local usage.": "\uB85C\uCEEC \uC0AC\uC6A9 \uAE30\uC900\uC73C\uB85C \uC18D\uB3C4/\uADE0\uD615/\uD488\uC9C8 \uD504\uB9AC\uC14B\uC744 \uC6D0\uD074\uB9AD \uC801\uC6A9\uD569\uB2C8\uB2E4.",
+  "Ask/Plan/Agent/Orchestration \uBAA8\uB4DC\uB97C \uC120\uD0DD\uD558\uBA74 \uC5ED\uD560/\uD30C\uC774\uD504\uB77C\uC778/\uC5D0\uC774\uC804\uD2B8 \uB3C4\uAD6C \uAE30\uBCF8\uAC12\uC744 \uC989\uC2DC \uC7AC\uBC30\uCE58\uD569\uB2C8\uB2E4.": "Ask/Plan/Agent/Orchestration \uBAA8\uB4DC\uB97C \uC120\uD0DD\uD558\uBA74 \uC5ED\uD560/\uD30C\uC774\uD504\uB77C\uC778/\uC5D0\uC774\uC804\uD2B8 \uB3C4\uAD6C \uAE30\uBCF8\uAC12\uC744 \uC989\uC2DC \uC7AC\uBC30\uCE58\uD569\uB2C8\uB2E4.",
+  "Fast/Balanced/Quality+ presets with automatic local model detection and role assignment.": "Fast/Balanced/Quality+\uB97C \uB204\uB974\uBA74 \uB85C\uCEEC \uBAA8\uB378\uC744 \uC790\uB3D9 \uAC10\uC9C0\uD558\uACE0 \uAE30\uBCF8/\uC5ED\uD560 \uBAA8\uB378 \uBC30\uCE58\uB97C \uC790\uB3D9 \uC801\uC6A9\uD569\uB2C8\uB2E4.",
+  "Flash/Pro presets with automatic local model detection and role assignment.": "Flash/Pro\uB97C \uB204\uB974\uBA74 \uB85C\uCEEC \uBAA8\uB378\uC744 \uC790\uB3D9 \uAC10\uC9C0\uD558\uACE0 \uAE30\uBCF8/\uC5ED\uD560 \uBAA8\uB378 \uBC30\uCE58\uB97C \uC790\uB3D9 \uC801\uC6A9\uD569\uB2C8\uB2E4.",
+  "See what each preset changes and which local models are recommended.": "\uAC01 \uD504\uB9AC\uC14B\uC5D0\uC11C \uBC14\uB00C\uB294 \uC124\uC815\uACFC \uAD8C\uC7A5 \uB85C\uCEEC \uBAA8\uB378 \uAD6C\uC131\uC744 \uD655\uC778\uD569\uB2C8\uB2E4.",
+  "Refresh local detection or return to Quick tab.": "\uB85C\uCEEC \uAC10\uC9C0\uB97C \uC0C8\uB85C\uACE0\uCE68\uD558\uAC70\uB098 Quick \uD0ED\uC73C\uB85C \uB3CC\uC544\uAC11\uB2C8\uB2E4.",
+  "Switch to Full once to access all expert controls. Features are unchanged.": "\uC804\uBB38\uAC00\uC6A9 \uC804\uCCB4 \uC81C\uC5B4\uAC00 \uD544\uC694\uD558\uBA74 Full\uB85C \uC804\uD658\uD558\uC138\uC694. \uAE30\uB2A5\uC740 \uB3D9\uC77C\uD558\uAC8C \uC720\uC9C0\uB429\uB2C8\uB2E4.",
+  "Return to Simple to focus on essentials.": "\uD575\uC2EC \uD56D\uBAA9 \uC911\uC2EC\uC73C\uB85C \uBCF4\uB824\uBA74 Simple\uB85C \uB3CC\uC544\uAC11\uB2C8\uB2E4.",
   "Choose AI provider. Local providers are recommended first.": "AI \uC81C\uACF5\uC790\uB97C \uC120\uD0DD\uD569\uB2C8\uB2E4. \uB85C\uCEEC \uC81C\uACF5\uC790\uB97C \uC6B0\uC120 \uAD8C\uC7A5\uD569\uB2C8\uB2E4.",
   "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for analysis.": "\uAC10\uC9C0\uB41C \uBAA8\uB378 \uC911\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. (\uCD94\uCC9C)=\uAD8C\uC7A5, (\uBD88\uAC00)=\uBD84\uC11D \uBD80\uC801\uD569",
   "Manual override if you want a custom model name.": "\uC0AC\uC6A9\uC790 \uC9C0\uC815 \uBAA8\uB378\uBA85\uC744 \uC9C1\uC811 \uC785\uB825\uD560 \uB54C \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Detect local models and auto-choose recommended when current is missing.": "\uB85C\uCEEC \uBAA8\uB378\uC744 \uAC10\uC9C0\uD574 \uD604\uC7AC \uBAA8\uB378\uC774 \uC5C6\uC73C\uBA74 \uAD8C\uC7A5 \uBAA8\uB378\uC744 \uC790\uB3D9 \uC120\uD0DD\uD569\uB2C8\uB2E4.",
   "Analyze first, preview changes, and apply only when approved.": "\uBA3C\uC800 \uBD84\uC11D\uD558\uACE0 \uBCC0\uACBD \uBBF8\uB9AC\uBCF4\uAE30\uB97C \uD655\uC778\uD55C \uB4A4 \uC2B9\uC778 \uC2DC\uC5D0\uB9CC \uC801\uC6A9\uD569\uB2C8\uB2E4.",
+  "When enabled, linked field includes all selected notes for each note (except self). maxLinked is ignored in this mode.": "\uCF1C\uBA74 \uAC01 \uB178\uD2B8\uC758 linked\uC5D0 \uC120\uD0DD\uB41C \uBAA8\uB4E0 \uB178\uD2B8(\uC790\uAE30 \uC790\uC2E0 \uC81C\uC678)\uB97C \uB123\uC2B5\uB2C8\uB2E4. \uC774 \uBAA8\uB4DC\uC5D0\uC11C\uB294 maxLinked\uB97C \uBB34\uC2DC\uD569\uB2C8\uB2E4.",
   "In addition to persistent progress modal, show short notices.": "\uACE0\uC815 \uC9C4\uD589 \uBAA8\uB2EC \uC678\uC5D0\uB3C4 \uC9E7\uC740 \uC54C\uB9BC\uC744 \uD45C\uC2DC\uD569\uB2C8\uB2E4.",
+  "Quick: changed-notes \uC911\uC2EC + semantic off. Detailed: semantic on + \uC804\uCCB4 \uBC94\uC704 \uAE30\uBC18 \uBD84\uC11D.": "Quick\uC740 \uBCC0\uACBD \uB178\uD2B8 \uC911\uC2EC+semantic off, Detailed\uB294 semantic on+\uC804\uCCB4 \uBC94\uC704 \uAE30\uBC18 \uBD84\uC11D\uC785\uB2C8\uB2E4.",
   "Use local Ollama embeddings to rank likely related notes before AI linked suggestion.": "AI linked \uC81C\uC548 \uC804\uC5D0 \uB85C\uCEEC Ollama \uC784\uBCA0\uB529\uC73C\uB85C \uAD00\uB828 \uAC00\uB2A5 \uB178\uD2B8\uB97C \uC6B0\uC120 \uC815\uB82C\uD569\uB2C8\uB2E4.",
   "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for embeddings.": "\uAC10\uC9C0\uB41C \uBAA8\uB378 \uC911\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. (\uCD94\uCC9C)=\uAD8C\uC7A5, (\uBD88\uAC00)=\uC784\uBCA0\uB529 \uBD80\uC801\uD569",
+  "Choose among embedding-capable detected models. (\uCD94\uCC9C)=recommended.": "\uC784\uBCA0\uB529 \uAC00\uB2A5\uD55C \uAC10\uC9C0 \uBAA8\uB378 \uC911\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. (\uCD94\uCC9C)=\uAD8C\uC7A5",
   "Manual override if you want a custom embedding model name.": "\uC0AC\uC6A9\uC790 \uC9C0\uC815 \uC784\uBCA0\uB529 \uBAA8\uB378\uBA85\uC744 \uC9C1\uC811 \uC785\uB825\uD560 \uB54C \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Range: 0.0 to 1.0": "\uBC94\uC704: 0.0 ~ 1.0",
   "Trim note text before embedding to keep local runs fast.": "\uB85C\uCEEC \uC2E4\uD589 \uC131\uB2A5\uC744 \uC704\uD574 \uC784\uBCA0\uB529 \uC804 \uB178\uD2B8 \uD14D\uC2A4\uD2B8 \uAE38\uC774\uB97C \uC81C\uD55C\uD569\uB2C8\uB2E4.",
@@ -3159,14 +5083,37 @@ var SETTINGS_DESC_KO_MAP = {
   "Auto-fill role model fields from detected models when values are missing or legacy-uniform.": "\uAC12\uC774 \uBE44\uC5B4 \uC788\uAC70\uB098 \uAE30\uC874\uCC98\uB7FC \uB3D9\uC77C \uBAA8\uB378\uB85C\uB9CC \uCC44\uC6CC\uC9C4 \uACBD\uC6B0, \uAC10\uC9C0 \uBAA8\uB378 \uAE30\uBC18 \uAD8C\uC7A5\uAC12\uC73C\uB85C \uC5ED\uD560\uBCC4 \uD544\uB4DC\uB97C \uC790\uB3D9 \uCC44\uC6C1\uB2C8\uB2E4.",
   "Calculate role-specific recommended models from detected list and apply.": "\uAC10\uC9C0\uB41C \uBAA8\uB378 \uBAA9\uB85D\uC5D0\uC11C \uC5ED\uD560\uBCC4 \uAD8C\uC7A5 \uBAA8\uB378\uC744 \uACC4\uC0B0\uD574 \uC989\uC2DC \uC801\uC6A9\uD569\uB2C8\uB2E4.",
   "Optional role-specific model. Empty uses Q&A model as fallback.": "\uC5ED\uD560 \uC804\uC6A9 \uBAA8\uB378(\uC120\uD0DD)\uC785\uB2C8\uB2E4. \uBE44\uC6B0\uBA74 Q&A \uBAA8\uB378\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
-  "Prefer vision-capable models for Ask (vision). Chat UI is text-first; image handling depends on host input support.": "Ask(\uBE44\uC804)\uC740 \uBE44\uC804 \uAC00\uB2A5\uD55C \uBAA8\uB378\uC744 \uC6B0\uC120 \uAD8C\uC7A5\uD569\uB2C8\uB2E4. \uCC44\uD305 UI\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC774\uBA70 \uC774\uBBF8\uC9C0 \uCC98\uB9AC\uB294 \uD638\uC2A4\uD2B8 \uC785\uB825 \uC9C0\uC6D0\uC5D0 \uB530\uB77C \uB2EC\uB77C\uC9D1\uB2C8\uB2E4.",
-  "Used when role preset is Ask (vision). Text-only for now, image input support is planned.": "Ask(\uBE44\uC804) \uD504\uB9AC\uC14B\uC5D0\uC11C \uC0AC\uC6A9\uD569\uB2C8\uB2E4. \uD604\uC7AC\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC774\uBA70 \uC774\uBBF8\uC9C0 \uC785\uB825 \uC9C0\uC6D0\uC740 \uCD94\uD6C4 \uD655\uC7A5 \uC608\uC815\uC785\uB2C8\uB2E4.",
+  "Prefer vision-capable models for Ask (vision). Chat supports image attachments (drop/upload/paste).": "Ask(\uBE44\uC804)\uC740 \uBE44\uC804 \uAC00\uB2A5\uD55C \uBAA8\uB378\uC744 \uC6B0\uC120 \uAD8C\uC7A5\uD569\uB2C8\uB2E4. \uCC44\uD305\uC740 \uC774\uBBF8\uC9C0 \uCCA8\uBD80(\uB4DC\uB798\uADF8/\uC5C5\uB85C\uB4DC/\uBD99\uC5EC\uB123\uAE30)\uB97C \uC9C0\uC6D0\uD569\uB2C8\uB2E4.",
   "Reserved for image-generation workflows. Current chat UI is text-first.": "\uC774\uBBF8\uC9C0 \uC0DD\uC131 \uC6CC\uD06C\uD50C\uB85C\uC6A9 \uC608\uC57D \uBAA8\uB378\uC785\uB2C8\uB2E4. \uD604\uC7AC \uCC44\uD305 UI\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC785\uB2C8\uB2E4.",
   "Add extra system instructions per role agent. Empty keeps built-in role prompt only.": "\uC5ED\uD560\uBCC4 \uC5D0\uC774\uC804\uD2B8\uC5D0 \uCD94\uAC00 \uC2DC\uC2A4\uD15C \uC9C0\uC2DC\uB97C \uB123\uC2B5\uB2C8\uB2E4. \uBE44\uC6B0\uBA74 \uAE30\uBCF8 \uC5ED\uD560 \uD504\uB86C\uD504\uD2B8\uB9CC \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Use role-based chat first, then fallback to /api/generate when unavailable.": "\uC5ED\uD560 \uAE30\uBC18 /api/chat\uC744 \uC6B0\uC120 \uC0AC\uC6A9\uD558\uACE0, \uBD88\uAC00\uD558\uBA74 /api/generate\uB85C \uD3F4\uBC31\uD569\uB2C8\uB2E4.",
   "Vault-relative path for saving chat transcripts.": "\uCC44\uD305 \uAE30\uB85D \uC800\uC7A5\uC6A9 vault-relative \uACBD\uB85C\uC785\uB2C8\uB2E4.",
+  "Vault-relative folder where external attachments are mirrored for stable source links.": "\uC678\uBD80 \uCCA8\uBD80\uB97C \uC548\uC815\uC801\uC778 \uCD9C\uCC98 \uB9C1\uD06C\uB85C \uC5F4\uAE30 \uC704\uD574 vault \uB0B4\uBD80\uB85C \uBBF8\uB7EC\uB9C1\uD558\uB294 \uD3F4\uB354 \uACBD\uB85C\uC785\uB2C8\uB2E4.",
+  "When disabled, chat runs in general mode without selected-note retrieval context.": "\uBE44\uD65C\uC131\uD654\uD558\uBA74 \uC120\uD0DD \uB178\uD2B8 \uB9AC\uD2B8\uB9AC\uBC8C \uC5C6\uC774 \uC77C\uBC18 \uCC44\uD305 \uBAA8\uB4DC\uB85C \uB3D9\uC791\uD569\uB2C8\uB2E4.",
+  "Fast: lightweight parsing. Detailed: OCR and deeper parser chain for difficult files.": "Fast\uB294 \uACBD\uB7C9 \uD30C\uC11C, Detailed\uB294 OCR/\uC2EC\uD654 \uCCB4\uC778\uC744 \uC801\uADF9 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "When enabled, the current chat thread is continuously saved and updated as messages change.": "\uD65C\uC131\uD654\uD558\uBA74 \uD604\uC7AC \uCC44\uD305 \uC2A4\uB808\uB4DC\uB97C \uBA54\uC2DC\uC9C0 \uBCC0\uACBD\uC5D0 \uB9DE\uCDB0 \uACC4\uC18D \uC800\uC7A5/\uB3D9\uAE30\uD654\uD569\uB2C8\uB2E4.",
+  "When enabled, PDF files can be attached in chat. Current mode keeps metadata/label context and routes to vision role for safer handling.": "\uD65C\uC131\uD654\uD558\uBA74 \uCC44\uD305\uC5D0\uC11C PDF \uCCA8\uBD80\uB97C \uD5C8\uC6A9\uD569\uB2C8\uB2E4. \uD604\uC7AC\uB294 \uBA54\uD0C0\uB370\uC774\uD130/\uB77C\uBCA8 \uC911\uC2EC \uCEE8\uD14D\uC2A4\uD2B8\uB85C \uCC98\uB9AC\uD558\uBA70 \uBE44\uC804 \uC5ED\uD560\uB85C \uC6B0\uC120 \uB77C\uC6B0\uD305\uD569\uB2C8\uB2E4.",
+  "Shows all preset override fields currently marked with warning (\u26A0) in one place.": "\u26A0 \uACBD\uACE0\uAC00 \uBD99\uC740 \uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uD544\uB4DC\uB97C \uD55C \uACF3\uC5D0\uC11C \uBAA8\uC544 \uBCF4\uC5EC\uC90D\uB2C8\uB2E4.",
+  "Quick diagnostic for role-model auto assignment and unavailable role mappings.": "\uC5ED\uD560 \uBAA8\uB378 \uC790\uB3D9 \uBC30\uCE58\uC640 \uBD88\uAC00 \uB9E4\uD551\uC744 \uBE60\uB974\uAC8C \uC810\uAC80\uD569\uB2C8\uB2E4.",
+  "Allow model-proposed actions (read/write/list/shell) from chat responses via auto-link-actions JSON block.": "\uCC44\uD305 \uC751\uB2F5\uC758 auto-link-actions JSON \uBE14\uB85D\uC744 \uD1B5\uD574 \uBAA8\uB378 \uC81C\uC548 \uC561\uC158(\uC77D\uAE30/\uC4F0\uAE30/\uBAA9\uB85D/\uC178)\uC744 \uD5C8\uC6A9\uD569\uB2C8\uB2E4.",
+  "Recommended. If enabled, proposed actions are queued and run only after user sends '\uC2B9\uC778' or '/approve'.": "\uAD8C\uC7A5 \uC124\uC815\uC785\uB2C8\uB2E4. \uCF1C\uBA74 \uC81C\uC548\uB41C \uC561\uC158\uC744 \uB300\uAE30\uC5F4\uC5D0 \uB450\uACE0 \uC0AC\uC6A9\uC790\uAC00 '\uC2B9\uC778' \uB610\uB294 '/approve' \uC785\uB825 \uC2DC\uC5D0\uB9CC \uC2E4\uD589\uD569\uB2C8\uB2E4.",
+  "Allows run_shell actions via local terminal command execution. Keep off unless absolutely needed.": "\uB85C\uCEEC \uD130\uBBF8\uB110 \uBA85\uB839 \uC2E4\uD589 \uAE30\uBC18 run_shell \uC561\uC158\uC744 \uD5C8\uC6A9\uD569\uB2C8\uB2E4. \uAF2D \uD544\uC694\uD560 \uB54C\uB9CC \uCF1C\uC138\uC694.",
+  "If enabled, run_shell and agent file actions(read/write/list) can use any absolute path (allowlist bypass).": "\uD65C\uC131\uD654\uD558\uBA74 run_shell\uACFC \uC5D0\uC774\uC804\uD2B8 \uD30C\uC77C \uC561\uC158(read/write/list)\uC774 \uC784\uC758\uC758 \uC808\uB300\uACBD\uB85C\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4(allowlist \uC6B0\uD68C).",
+  "Per command timeout for run_shell actions.": "run_shell \uC561\uC158\uC758 \uBA85\uB839\uBCC4 \uC81C\uD55C \uC2DC\uAC04\uC785\uB2C8\uB2E4.",
+  "Example: '.' for vault root, 'Projects' for a subfolder. Empty means vault root.": "\uC608: vault \uB8E8\uD2B8\uB294 '.', \uD558\uC704 \uD3F4\uB354\uB294 'Projects'. \uBE44\uC6CC\uB450\uBA74 vault \uB8E8\uD2B8\uB97C \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Shell tool absolute cwd allowlist. Default: (empty, set explicitly if needed)": "Shell \uB3C4\uAD6C\uC758 \uC808\uB300\uACBD\uB85C \uC791\uC5C5 \uD3F4\uB354 \uD5C8\uC6A9 \uBAA9\uB85D\uC785\uB2C8\uB2E4. \uAE30\uBCF8\uAC12: (\uBE44\uC5B4 \uC788\uC74C, \uD544\uC694 \uC2DC \uC9C1\uC811 \uC124\uC815)",
+  "Absolute path allowlist for run_shell cwd and agent file actions(read/write/list) when full access is OFF. Default: (empty, vault-only)": "full access OFF\uC77C \uB54C run_shell cwd\uC640 \uC5D0\uC774\uC804\uD2B8 \uD30C\uC77C \uC561\uC158(read/write/list)\uC5D0 \uC0AC\uC6A9\uD560 \uC808\uB300\uACBD\uB85C \uD5C8\uC6A9 \uBAA9\uB85D\uC785\uB2C8\uB2E4. \uAE30\uBCF8\uAC12: (\uBE44\uC5B4 \uC788\uC74C, vault \uC804\uC6A9)",
+  "Optional manual base-model override for Balanced preset.": "Balanced \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uAE30\uBCF8 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
+  "Optional manual vision-model override for Balanced preset.": "Balanced \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uBE44\uC804 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
+  "Optional manual embedding-model override for Balanced preset.": "Balanced \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uC784\uBCA0\uB529 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
+  "Optional manual base-model override for Pro preset.": "Pro \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uAE30\uBCF8 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
+  "Optional manual vision-model override for Pro preset.": "Pro \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uBE44\uC804 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
+  "Optional manual embedding-model override for Pro preset.": "Pro \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uC784\uBCA0\uB529 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
+  "Optional manual base-model override for Quality+ preset.": "Quality+ \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uAE30\uBCF8 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
+  "Optional manual vision-model override for Quality+ preset.": "Quality+ \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uBE44\uC804 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
+  "Optional manual embedding-model override for Quality+ preset.": "Quality+ \uD504\uB9AC\uC14B \uC801\uC6A9 \uC2DC \uC784\uBCA0\uB529 \uBAA8\uB378\uC744 \uC218\uB3D9\uC73C\uB85C \uB36E\uC5B4\uC501\uB2C8\uB2E4(\uC120\uD0DD).",
   "Off by default. Keep disabled to prevent note data leaving localhost.": "\uAE30\uBCF8\uAC12\uC740 \uAEBC\uC9D0\uC785\uB2C8\uB2E4. \uB178\uD2B8 \uB370\uC774\uD130\uAC00 localhost \uBC16\uC73C\uB85C \uB098\uAC00\uC9C0 \uC54A\uB3C4\uB85D \uBE44\uD65C\uC131 \uC0C1\uD0DC\uB97C \uAD8C\uC7A5\uD569\uB2C8\uB2E4.",
+  "Comma/newline-separated host allowlist used when non-local endpoint is enabled. Example: api.openai.com, api.anthropic.com": "\uBE44\uB85C\uCEEC \uC5D4\uB4DC\uD3EC\uC778\uD2B8\uB97C \uC0AC\uC6A9\uD560 \uB54C \uC801\uC6A9\uD560 \uD638\uC2A4\uD2B8 \uD5C8\uC6A9 \uBAA9\uB85D\uC785\uB2C8\uB2E4(\uC27C\uD45C/\uC904\uBC14\uAFC8 \uAD6C\uBD84). \uC608: api.openai.com, api.anthropic.com",
   "If enabled, removes only legacy keys like ai_*/autolinker_* while preserving other existing keys (including linter date fields).": "\uD65C\uC131\uD654\uD558\uBA74 ai_*/autolinker_* \uAC19\uC740 \uB808\uAC70\uC2DC \uD0A4\uB9CC \uC81C\uAC70\uD558\uACE0, \uB2E4\uB978 \uAE30\uC874 \uD0A4(\uB9B0\uD130 \uB0A0\uC9DC \uD544\uB4DC \uD3EC\uD568)\uB294 \uC720\uC9C0\uD569\uB2C8\uB2E4.",
   "When applying AI suggestions, also remove frontmatter keys by rules below.": "AI \uC81C\uC548 \uC801\uC6A9 \uC2DC \uC544\uB798 \uADDC\uCE59\uC5D0 \uB530\uB77C frontmatter \uD0A4\uB3C4 \uD568\uAED8 \uC815\uB9AC\uD569\uB2C8\uB2E4.",
   "Comma/newline separated keys. Example: related, linked_context": "\uC27C\uD45C/\uC904\uBC14\uAFC8\uC73C\uB85C \uAD6C\uBD84\uD55C \uD0A4 \uBAA9\uB85D\uC785\uB2C8\uB2E4. \uC608: related, linked_context",
@@ -3183,18 +5130,6 @@ var SETTINGS_DESC_KO_MAP = {
   "Keep only latest N backups (old backups are deleted automatically).": "\uCD5C\uC2E0 N\uAC1C \uBC31\uC5C5\uB9CC \uC720\uC9C0\uD569\uB2C8\uB2E4(\uC624\uB798\uB41C \uBC31\uC5C5\uC740 \uC790\uB3D9 \uC0AD\uC81C).",
   "Vault-relative markdown path.": "vault-relative \uB9C8\uD06C\uB2E4\uC6B4 \uACBD\uB85C\uC785\uB2C8\uB2E4."
 };
-function toKoreanBilingualLabel(originalText, translationMap) {
-  var _a;
-  const normalized = (_a = originalText == null ? void 0 : originalText.trim()) != null ? _a : "";
-  if (!normalized || normalized.includes(" / ")) {
-    return null;
-  }
-  const translated = translationMap[normalized];
-  if (!translated) {
-    return null;
-  }
-  return `${normalized} / ${translated}`;
-}
 function toKoreanBilingualParts(originalText, translationMap) {
   var _a;
   const normalized = (_a = originalText == null ? void 0 : originalText.trim()) != null ? _a : "";
@@ -3206,6 +5141,23 @@ function toKoreanBilingualParts(originalText, translationMap) {
     return null;
   }
   return { en: normalized, ko: translated };
+}
+function splitInlineBilingualText(originalText) {
+  var _a, _b;
+  const normalized = (_a = originalText == null ? void 0 : originalText.trim()) != null ? _a : "";
+  if (!normalized || !normalized.includes(" / ")) {
+    return null;
+  }
+  const parts = normalized.split(" / ");
+  if (parts.length < 2) {
+    return null;
+  }
+  const en = ((_b = parts[0]) != null ? _b : "").trim();
+  const ko = parts.slice(1).join(" / ").trim();
+  if (!en || !ko) {
+    return null;
+  }
+  return { en, ko };
 }
 var ROLE_MODEL_FALLBACK_VALUE = "__fallback__";
 var ROLE_MODEL_SETTING_CONFIGS = [
@@ -3219,7 +5171,7 @@ var ROLE_MODEL_SETTING_CONFIGS = [
     key: "qaAskVisionModel",
     role: "ask_vision",
     name: "Ask model (vision)",
-    description: "Prefer vision-capable models for Ask (vision). Chat UI is text-first; image handling depends on host input support."
+    description: "Prefer vision-capable models for Ask (vision). Chat supports image attachments (drop/upload/paste)."
   },
   {
     key: "qaImageGeneratorModel",
@@ -3254,7 +5206,7 @@ var ROLE_MODEL_SETTING_CONFIGS = [
 ];
 var CODER_MODEL_REGEX = /(coder|code|codellama|codestral|starcoder|deepseek-coder)/i;
 var SAFEGUARD_MODEL_REGEX = /(guard|safeguard|safety|llama-guard)/i;
-var VISION_MODEL_REGEX = /(vision|llava|bakllava|moondream|qwen.*vl|pixtral|internvl)/i;
+var VISION_MODEL_REGEX = /(vision|llava|bakllava|moondream|qwen.*vl|pixtral|internvl|minicpm[-_]?v|florence|gemma3)/i;
 var IMAGE_GENERATOR_MODEL_REGEX = /(flux|sdxl|stable[-_ ]?diffusion|diffusion|imagegen|image-gen)/i;
 var GENERAL_TEXT_MODEL_REGEX = /(qwen|llama|gpt-oss|gemma|mistral|devstral|phi|deepseek|yi)/i;
 var LARGE_MODEL_SIZE_REGEX = /:(12|14|20|24|27|30|32|34|70)b\b/i;
@@ -3273,8 +5225,8 @@ function isOllamaModelAllowedForQaRole(role, modelName) {
   if (!trimmed) {
     return false;
   }
-  if (role === "ask_vision") {
-    return isOllamaModelAnalyzable(trimmed) || VISION_MODEL_REGEX.test(trimmed.toLowerCase());
+  if (role === "ask_vision" || role === "image_generator") {
+    return VISION_MODEL_REGEX.test(trimmed.toLowerCase());
   }
   return isOllamaModelAnalyzable(trimmed);
 }
@@ -3327,6 +5279,9 @@ function scoreRoleModel(role, modelName) {
       } else {
         score -= 10;
       }
+      if (/llama3\.2-vision/.test(lower)) {
+        score += 14;
+      }
       if (isCoder) {
         score -= 8;
       }
@@ -3348,6 +5303,9 @@ function scoreRoleModel(role, modelName) {
       score += isGeneral ? 28 : 15;
       if (isImageGenerator) {
         score += 8;
+      }
+      if (/llama3\.2-vision/.test(lower)) {
+        score += 10;
       }
       if (isCoder || isSafeguard) {
         score -= 10;
@@ -3449,7 +5407,7 @@ function buildRoleSpecificOllamaModelOptions(role, models) {
       return {
         model,
         status: "unavailable",
-        reason: role === "ask_vision" ? "Not suitable for Ask (vision) role." : "Not suitable for current text-based role pipeline."
+        reason: role === "ask_vision" || role === "image_generator" ? "Not suitable for vision/image role." : "Not suitable for current text-based role pipeline."
       };
     }
     if (recommended && model === recommended) {
@@ -3462,7 +5420,7 @@ function buildRoleSpecificOllamaModelOptions(role, models) {
     return {
       model,
       status: "available",
-      reason: role === "ask_vision" && VISION_MODEL_REGEX.test(model.toLowerCase()) ? "Available vision-capable model for Ask (vision)." : "Available text-capable model."
+      reason: (role === "ask_vision" || role === "image_generator") && VISION_MODEL_REGEX.test(model.toLowerCase()) ? "Available vision-capable model for multimodal role." : "Available text-capable model."
     };
   });
   const weight = (status) => {
@@ -3517,17 +5475,41 @@ var QA_PIPELINE_PRESET_OPTIONS = [
     label: "Legacy auto (\uAE30\uC874 \uC790\uB3D9 \uADDC\uCE59)"
   }
 ];
-function getQaRolePresetLabel(value) {
-  var _a;
-  const found = QA_ROLE_PRESET_OPTIONS.find((option) => option.value === value);
-  return (_a = found == null ? void 0 : found.label) != null ? _a : value;
-}
 function getQaPipelinePresetLabel(value) {
   var _a;
   const found = QA_PIPELINE_PRESET_OPTIONS.find((option) => option.value === value);
   return (_a = found == null ? void 0 : found.label) != null ? _a : value;
 }
-var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab {
+var QA_QUICK_CUSTOM_SLOT_CONFIGS = [
+  { key: "qaQuickCustomProfileSlot1", label: "\uCEE4\uC2A4\uD140 1" },
+  { key: "qaQuickCustomProfileSlot2", label: "\uCEE4\uC2A4\uD140 2" },
+  { key: "qaQuickCustomProfileSlot3", label: "\uCEE4\uC2A4\uD140 3" }
+];
+var QA_CONVERSATION_MODE_OPTIONS = [
+  { value: "ask", label: "Ask" },
+  { value: "plan", label: "Plan" },
+  { value: "agent", label: "Agent" },
+  { value: "orchestration", label: "Orchestration" }
+];
+function getQaLocalPresetProfileLabel(value) {
+  switch (value) {
+    case "fast_local":
+      return "Flash";
+    case "balanced_local":
+      return "Pro";
+    case "quality_local":
+      return "Pro";
+    case "custom":
+    default:
+      return "Custom";
+  }
+}
+function getQaConversationModeLabel(value) {
+  var _a;
+  const found = QA_CONVERSATION_MODE_OPTIONS.find((option) => option.value === value);
+  return (_a = found == null ? void 0 : found.label) != null ? _a : "Ask";
+}
+var _KnowledgeWeaverSettingTab = class _KnowledgeWeaverSettingTab extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.rolePromptEditorTarget = "ask";
@@ -3539,15 +5521,22 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
   }
   addRoleModelPickerSetting(containerEl, config, roleOptions) {
     const currentValue = this.plugin.settings[config.key].trim();
-    new import_obsidian4.Setting(containerEl).setName(config.name).setDesc(config.description).addDropdown((dropdown) => {
+    const compatibleOptions = roleOptions.filter((option) => option.status !== "unavailable");
+    const hasCompatible = compatibleOptions.length > 0;
+    const currentUnavailable = currentValue.length > 0 && !roleOptions.some((option) => option.model === currentValue && option.status !== "unavailable");
+    const setting = new import_obsidian4.Setting(containerEl).setName(config.name).setDesc(
+      hasCompatible ? currentUnavailable ? `${config.description}
+\u26A0 \uD604\uC7AC \uC120\uD0DD \uBAA8\uB378 '${currentValue}'\uC740(\uB294) \uC774 \uC5ED\uD560\uC5D0\uC11C \uBD88\uAC00\uC785\uB2C8\uB2E4. \uD3F4\uBC31 \uB610\uB294 \uAD8C\uC7A5 \uBAA8\uB378\uB85C \uBCC0\uACBD\uD558\uC138\uC694.` : config.description : `${config.description}
+\u26A0 \uD604\uC7AC \uAC10\uC9C0\uB41C \uD638\uD658 \uBAA8\uB378\uC774 \uC5C6\uC5B4 \uC774 \uC5ED\uD560\uC740 \uC2E4\uD589 \uBD88\uAC00 \uC0C1\uD0DC\uC785\uB2C8\uB2E4.`
+    ).addDropdown((dropdown) => {
       dropdown.addOption(
         ROLE_MODEL_FALLBACK_VALUE,
         "Use Q&A model fallback / Q&A \uBAA8\uB378 \uD3F4\uBC31"
       );
-      for (const option of roleOptions) {
+      for (const option of compatibleOptions) {
         dropdown.addOption(option.model, this.formatDetectedModelLabel(option));
       }
-      const selected = currentValue && roleOptions.some((option) => option.model === currentValue) ? currentValue : ROLE_MODEL_FALLBACK_VALUE;
+      const selected = currentValue && compatibleOptions.some((option) => option.model === currentValue) ? currentValue : ROLE_MODEL_FALLBACK_VALUE;
       dropdown.setValue(selected);
       dropdown.onChange(async (value) => {
         const chosen = roleOptions.find((option) => option.model === value);
@@ -3560,16 +5549,738 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
         this.display();
       });
+      if (!hasCompatible) {
+        dropdown.setDisabled(true);
+      }
     });
+    if (!hasCompatible) {
+      setting.settingEl.addClass("auto-linker-setting-unavailable-model");
+      const link = config.role === "ask_vision" || config.role === "image_generator" ? "https://ollama.com/library/qwen2.5vl" : "https://ollama.com/library/qwen3";
+      setting.addButton(
+        (button) => button.setButtonText("\uCD94\uCC9C \uBAA8\uB378 \uB9C1\uD06C").onClick(() => {
+          window.open(link);
+        })
+      ).addExtraButton(
+        (button) => button.setIcon("alert-triangle").setTooltip("\uAC10\uC9C0\uB41C \uD638\uD658 \uBAA8\uB378\uC774 \uC5C6\uC5B4 \uD574\uB2F9 \uC5ED\uD560\uC744 \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.")
+      );
+    }
+  }
+  getPresetModelAvailabilityInfo(kind, modelName, presetHint) {
+    var _a, _b, _c, _d, _e, _f;
+    const current = modelName.trim();
+    if (kind === "embedding") {
+      const options2 = this.plugin.getEmbeddingModelOptions();
+      const detected2 = options2.map((option) => option.model);
+      const recommended2 = (_b = (_a = options2.find((option) => option.status === "recommended")) == null ? void 0 : _a.model) != null ? _b : "";
+      const available2 = !current || detected2.includes(current);
+      if (!current) {
+        return {
+          available: true,
+          note: `\uD604\uC7AC \uBE44\uC5B4 \uC788\uC74C. \uAD8C\uC7A5 \uC784\uBCA0\uB529 \uBAA8\uB378: ${recommended2 || "(none / \uC5C6\uC74C)"}`,
+          recommended: recommended2,
+          link: "https://ollama.com/library/nomic-embed-text",
+          detectedCount: detected2.length
+        };
+      }
+      return {
+        available: available2,
+        note: available2 ? `\uD604\uC7AC \uBAA8\uB378 \uAC10\uC9C0\uB428: ${current}` : `\u26A0 \uD604\uC7AC \uBAA8\uB378 '${current}'\uC774(\uAC00) \uAC10\uC9C0 \uBAA9\uB85D\uC5D0 \uC5C6\uC2B5\uB2C8\uB2E4. \uC2E4\uD589 \uC2DC \uD3F4\uBC31/\uC131\uB2A5 \uC800\uD558\uAC00 \uBC1C\uC0DD\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.`,
+        recommended: recommended2,
+        link: "https://ollama.com/library/nomic-embed-text",
+        detectedCount: detected2.length
+      };
+    }
+    const options = this.plugin.getOllamaModelOptions();
+    const filtered = kind === "vision" ? options.filter((option) => VISION_MODEL_REGEX.test(option.model.toLowerCase())) : options;
+    const detected = filtered.map((option) => option.model);
+    const recommendedFromPreset = presetHint ? this.plugin.getRecommendedPresetOverrideModelForQa(presetHint, kind) : "";
+    const recommended = recommendedFromPreset || (kind === "vision" ? ((_c = filtered.find((option) => option.status === "recommended")) == null ? void 0 : _c.model) || ((_d = filtered.find((option) => option.status === "available")) == null ? void 0 : _d.model) || "" : ((_e = filtered.find((option) => option.status === "recommended")) == null ? void 0 : _e.model) || ((_f = options.find((option) => option.status === "recommended")) == null ? void 0 : _f.model) || "");
+    const available = !current || detected.includes(current);
+    const link = kind === "vision" ? "https://ollama.com/library/qwen2.5vl" : "https://ollama.com/library/qwen3";
+    if (kind === "vision" && detected.length === 0) {
+      return {
+        available: false,
+        note: "\u26A0 \uAC10\uC9C0\uB41C \uBE44\uC804 \uBAA8\uB378\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. Ask(vision) \uC5ED\uD560 \uBC0F \uC774\uBBF8\uC9C0/PDF \uAE30\uBC18 \uCC98\uB9AC\uB294 \uD604\uC7AC \uD65C\uC6A9 \uBD88\uAC00\uC785\uB2C8\uB2E4.",
+        recommended: "",
+        link,
+        detectedCount: 0
+      };
+    }
+    if (!current) {
+      return {
+        available: true,
+        note: `\uD604\uC7AC \uBE44\uC5B4 \uC788\uC74C. \uAD8C\uC7A5 \uBAA8\uB378: ${recommended || "(none / \uC5C6\uC74C)"}`,
+        recommended,
+        link,
+        detectedCount: detected.length
+      };
+    }
+    return {
+      available,
+      note: available ? `\uD604\uC7AC \uBAA8\uB378 \uAC10\uC9C0\uB428: ${current}` : `\u26A0 \uD604\uC7AC \uBAA8\uB378 '${current}'\uC774(\uAC00) \uAC10\uC9C0 \uBAA9\uB85D\uC5D0 \uC5C6\uC2B5\uB2C8\uB2E4. \uC2E4\uD589 \uC2DC \uD3F4\uBC31/\uC131\uB2A5 \uC800\uD558\uAC00 \uBC1C\uC0DD\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.`,
+      recommended,
+      link,
+      detectedCount: detected.length
+    };
+  }
+  addPresetProfileModelSetting(containerEl, config) {
+    const current = this.plugin.settings[config.key].trim();
+    const availability = this.getPresetModelAvailabilityInfo(config.kind, current, config.preset);
+    const showModelGuideLink = !availability.available || !availability.recommended || availability.detectedCount === 0;
+    const setting = new import_obsidian4.Setting(containerEl).setName(config.name).setDesc(`${config.description}
+${availability.note}`).addText(
+      (text) => text.setPlaceholder(config.placeholder).setValue(current).onChange(async (value) => {
+        this.plugin.settings[config.key] = value.trim();
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
+    if (showModelGuideLink) {
+      setting.addButton(
+        (button) => button.setButtonText("\uCD94\uCC9C \uBAA8\uB378 \uB9C1\uD06C").onClick(async () => {
+          window.open(availability.link);
+        })
+      );
+    }
+    if (availability.recommended) {
+      setting.addButton(
+        (button) => button.setButtonText("\uAD8C\uC7A5\uAC12").onClick(async () => {
+          this.plugin.settings[config.key] = availability.recommended;
+          await this.plugin.saveSettings();
+          this.display();
+        })
+      );
+    }
+    if (!availability.available || config.kind === "vision" && availability.detectedCount === 0) {
+      setting.settingEl.addClass("auto-linker-setting-unavailable-model");
+      setting.addExtraButton(
+        (button) => button.setIcon("alert-triangle").setTooltip(
+          config.kind === "vision" && availability.detectedCount === 0 ? "\uBE44\uC804 \uBAA8\uB378\uC774 \uAC10\uC9C0\uB418\uC9C0 \uC54A\uC544 \uD574\uB2F9 \uD504\uB9AC\uC14B \uBE44\uC804 \uACBD\uB85C\uB97C \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." : "\uAC10\uC9C0\uB418\uC9C0 \uC54A\uC740 \uBAA8\uB378\uC785\uB2C8\uB2E4. \uC124\uCE58/\uC774\uB984 \uD655\uC778\uC774 \uD544\uC694\uD569\uB2C8\uB2E4."
+        )
+      );
+    }
+  }
+  collectPresetOverrideWarnings() {
+    const checks = [
+      { name: "Pro base", key: "qaBalancedPresetBaseModel", kind: "text" },
+      { name: "Pro vision", key: "qaBalancedPresetVisionModel", kind: "vision" },
+      { name: "Pro embedding", key: "qaBalancedPresetEmbeddingModel", kind: "embedding" }
+    ];
+    const warnings = [];
+    for (const check of checks) {
+      const value = this.plugin.settings[check.key].trim();
+      if (!value) {
+        continue;
+      }
+      const availability = this.getPresetModelAvailabilityInfo(
+        check.kind,
+        value,
+        "balanced_local"
+      );
+      if (!availability.available) {
+        warnings.push({
+          name: check.name,
+          note: availability.note,
+          link: availability.link
+        });
+      }
+    }
+    return warnings;
+  }
+  getRoleModelHealthSummary() {
+    const unavailable = [];
+    const blockedRoles = [];
+    for (const config of ROLE_MODEL_SETTING_CONFIGS) {
+      const options = this.plugin.getRoleModelOptionsForQa(config.role);
+      const hasCompatible = options.some((option) => option.status !== "unavailable");
+      if (!hasCompatible) {
+        blockedRoles.push(config.name);
+      }
+      const selected = this.plugin.settings[config.key].trim();
+      if (!selected) {
+        continue;
+      }
+      if (!isOllamaModelAllowedForQaRole(config.role, selected)) {
+        unavailable.push(`${config.name}=${selected}`);
+      }
+    }
+    const parts = [];
+    if (blockedRoles.length > 0) {
+      parts.push(`\uD65C\uC6A9 \uBD88\uAC00 \uC5ED\uD560 ${blockedRoles.length}\uAC1C: ${blockedRoles.join(", ")}`);
+    }
+    if (unavailable.length > 0) {
+      parts.push(`\uBD88\uAC00 \uB9E4\uD551 ${unavailable.length}\uAC1C: ${unavailable.join(", ")}`);
+    }
+    if (parts.length === 0) {
+      parts.push("\uC5ED\uD560 \uBAA8\uB378 \uB9E4\uD551 \uC0C1\uD0DC \uC815\uC0C1(\uBD88\uAC00 \uD56D\uBAA9 \uC5C6\uC74C).");
+    }
+    return { unavailable, blockedRoles, summary: parts.join(" | ") };
+  }
+  getVaultFolderOptionsForShellCwd() {
+    const seen = /* @__PURE__ */ new Set();
+    const folders = this.app.vault.getAllLoadedFiles().filter((entry) => entry instanceof import_obsidian4.TFolder).map((folder) => (0, import_obsidian4.normalizePath)(folder.path)).filter((path) => path.length > 0 && path !== "/").sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" }));
+    const unique = [];
+    for (const folderPath of folders) {
+      if (seen.has(folderPath)) {
+        continue;
+      }
+      seen.add(folderPath);
+      unique.push(folderPath);
+    }
+    return unique;
+  }
+  splitGuideLines(rawText) {
+    return (rawText != null ? rawText : "").split(/\n|\|/g).map((line) => line.trim()).filter((line) => line.length > 0);
+  }
+  addViewModeAndPresetControls(containerEl) {
+    const quickModelSetting = new import_obsidian4.Setting(containerEl).setName("Quick model pickers").setDesc("\uAC10\uC9C0\uB41C Ollama/\uC784\uBCA0\uB529 \uBAA8\uB378\uC744 \uBE60\uB974\uAC8C \uC120\uD0DD\uD569\uB2C8\uB2E4.").addDropdown((dropdown) => {
+      const options = this.plugin.getOllamaModelOptions();
+      const current = this.plugin.settings.qaOllamaModel.trim() || this.plugin.settings.ollamaModel.trim();
+      dropdown.addOption("", "Ollama \uD14D\uC2A4\uD2B8 \uBAA8\uB378(\uAC10\uC9C0\uAC12 \uC120\uD0DD)");
+      for (const option of options) {
+        dropdown.addOption(option.model, this.formatDetectedModelLabel(option));
+      }
+      dropdown.setValue(current);
+      dropdown.onChange(async (value) => {
+        const model = value.trim();
+        this.plugin.settings.ollamaModel = model;
+        await this.plugin.setQaModelOverrideForQa(model);
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    }).addDropdown((dropdown) => {
+      const options = this.plugin.getEmbeddingModelOptions().filter((option) => option.status !== "unavailable");
+      const current = this.plugin.settings.semanticOllamaModel.trim();
+      dropdown.addOption("", "Embedding \uBAA8\uB378(\uAC10\uC9C0\uAC12 \uC120\uD0DD)");
+      for (const option of options) {
+        const suffix = option.status === "recommended" ? " (\uCD94\uCC9C)" : "";
+        dropdown.addOption(option.model, `${option.model}${suffix}`);
+      }
+      dropdown.setValue(current);
+      dropdown.onChange(async (value) => {
+        this.plugin.settings.semanticOllamaModel = value.trim();
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    });
+    quickModelSetting.settingEl.addClass("auto-linker-settings-quick");
+    const detectedModels = this.plugin.getOllamaModelOptions();
+    const localReadySummary = detectedModels.length > 0 ? `Detected ${detectedModels.length} local model(s).` : "No local Ollama model detected yet. Start Ollama and pull models.";
+    const readinessSetting = new import_obsidian4.Setting(containerEl).setName("Local AI readiness").setDesc(localReadySummary).addButton(
+      (button) => button.setButtonText("Refresh").onClick(async () => {
+        await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
+        await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText("\uCEF4\uD4E8\uD130 \uC0AC\uC591 \uBCF4\uAE30").onClick(async () => {
+        new import_obsidian4.Notice(this.plugin.getHardwareCapabilitySummaryForQa(), 7e3);
+      })
+    );
+    readinessSetting.settingEl.addClass("auto-linker-settings-quick");
+  }
+  addChatPresetControls(containerEl) {
+    const applyPreset = async (preset) => {
+      const summary = await this.plugin.applyOneClickLocalPresetForQa(preset);
+      new import_obsidian4.Notice(summary, 6500);
+      this.display();
+    };
+    new import_obsidian4.Setting(containerEl).setName("One-click local presets").setDesc("Flash/Pro presets with automatic local model detection and role assignment.").addButton(
+      (button) => button.setButtonText("Flash").onClick(async () => {
+        await applyPreset("fast_local");
+      })
+    ).addButton(
+      (button) => button.setButtonText("Pro").setCta().onClick(async () => {
+        await applyPreset("balanced_local");
+      })
+    );
+    for (const slot of QA_QUICK_CUSTOM_SLOT_CONFIGS) {
+      new import_obsidian4.Setting(containerEl).setName(`Quick custom profile slots \xB7 ${slot.label}`).setDesc(this.plugin.getQaQuickCustomProfileSlotSummary(slot.key)).addButton(
+        (button) => button.setButtonText("\uD604\uC7AC\uAC12 \uC800\uC7A5").onClick(async () => {
+          const summary = await this.plugin.saveQaQuickCustomProfileSlot(
+            slot.key,
+            `${slot.label} (${(/* @__PURE__ */ new Date()).toLocaleString()})`
+          );
+          new import_obsidian4.Notice(summary, 6e3);
+          this.display();
+        })
+      ).addButton(
+        (button) => button.setButtonText("\uC801\uC6A9").setCta().onClick(async () => {
+          try {
+            const summary = await this.plugin.applyQaQuickCustomProfileSlot(slot.key);
+            new import_obsidian4.Notice(summary, 6e3);
+            this.display();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "\uCEE4\uC2A4\uD140 \uD504\uB85C\uD544\uC744 \uC801\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.";
+            new import_obsidian4.Notice(message, 6e3);
+          }
+        })
+      );
+    }
+  }
+  addSettingsTabSwitcher(containerEl) {
+    const row = containerEl.createDiv({ cls: "auto-linker-settings-tab-row" });
+    const mode = this.plugin.settings.settingsUiLanguage;
+    for (const tab of _KnowledgeWeaverSettingTab.TAB_OPTIONS) {
+      const label = mode === "en" ? tab.en : mode === "ko" ? tab.ko : `${tab.en} / ${tab.ko}`;
+      const button = row.createEl("button", { text: label });
+      button.addClass("auto-linker-settings-tab-btn");
+      if (this.plugin.settings.settingsActiveTab === tab.key) {
+        button.addClass("is-active");
+      }
+      button.onclick = async () => {
+        if (this.plugin.settings.settingsActiveTab === tab.key) {
+          return;
+        }
+        this.plugin.settings.settingsActiveTab = tab.key;
+        await this.plugin.saveSettings();
+        this.display();
+      };
+    }
+  }
+  addSettingsLanguageControl(containerEl) {
+    const languageSetting = new import_obsidian4.Setting(containerEl).setName("Settings UI language").setDesc("Choose language style used in setting labels/descriptions across all tabs.").addDropdown(
+      (dropdown) => dropdown.addOption("ko", "[KO] \uD55C\uAD6D\uC5B4").addOption("en", "[EN] English").addOption("bilingual", "[KO/EN] Bilingual").setValue(this.plugin.settings.settingsUiLanguage).onChange(async (value) => {
+        const next = value === "en" || value === "bilingual" ? value : "ko";
+        this.plugin.settings.settingsUiLanguage = next;
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
+    languageSetting.settingEl.addClass("auto-linker-settings-quick");
+  }
+  isSectionVisibleForTab(sectionTitle, tab) {
+    if (tab === "advanced") {
+      return true;
+    }
+    if (tab === "guide") {
+      return false;
+    }
+    switch (tab) {
+      case "quick":
+        return sectionTitle === "__prelude" || sectionTitle === "Local provider config" || sectionTitle === "Cloud provider config" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
+      case "analyzed":
+        return sectionTitle === "Behavior" || sectionTitle === "Semantic linking (Ollama embeddings)" || sectionTitle === "Property cleanup" || sectionTitle === "Selection and backup" || sectionTitle === "MOC";
+      case "models":
+        return sectionTitle === "__prelude" || sectionTitle === "Local provider config" || sectionTitle === "Cloud provider config" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
+      case "chat":
+        return sectionTitle === "__prelude" || sectionTitle === "Behavior" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
+      default:
+        return true;
+    }
+  }
+  settingNameStartsWithPrefixes(name, prefixes) {
+    return prefixes.some(
+      (prefix) => name.startsWith(prefix)
+    );
+  }
+  isSettingVisibleForTab(name, tab) {
+    if (name.startsWith("Settings UI language")) {
+      return true;
+    }
+    switch (tab) {
+      case "quick":
+        return this.settingNameStartsWithPrefixes(
+          name,
+          _KnowledgeWeaverSettingTab.QUICK_TAB_VISIBLE_NAME_PREFIXES
+        );
+      case "analyzed":
+        return this.settingNameStartsWithPrefixes(
+          name,
+          _KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES
+        );
+      case "models":
+        return this.settingNameStartsWithPrefixes(
+          name,
+          _KnowledgeWeaverSettingTab.MODELS_TAB_VISIBLE_NAME_PREFIXES
+        );
+      case "chat":
+        return this.settingNameStartsWithPrefixes(
+          name,
+          _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES
+        );
+      case "advanced":
+        return this.settingNameStartsWithPrefixes(
+          name,
+          _KnowledgeWeaverSettingTab.ADVANCED_TAB_VISIBLE_NAME_PREFIXES
+        );
+      case "orchestration":
+      case "skills":
+      case "parser":
+      case "guide":
+        return false;
+      default:
+        return true;
+    }
+  }
+  applySettingsTabVisibility(containerEl) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const activeTab = this.plugin.settings.settingsActiveTab;
+    if (activeTab === "guide") {
+      return;
+    }
+    let currentSection = "__prelude";
+    for (const child of Array.from(containerEl.children)) {
+      if (!(child instanceof HTMLElement)) {
+        continue;
+      }
+      if (child.tagName === "H2" || child.classList.contains("auto-linker-settings-tab-row") || child.classList.contains("auto-linker-settings-mode-note")) {
+        continue;
+      }
+      if (child.tagName === "P" && !child.classList.contains("setting-item")) {
+        continue;
+      }
+      if (child.tagName === "H3") {
+        currentSection = ((_a = child.textContent) != null ? _a : "").trim();
+        const visible = this.isSectionVisibleForTab(currentSection, activeTab);
+        child.classList.toggle("auto-linker-hidden-tab", !visible);
+        continue;
+      }
+      let shouldHide = !this.isSectionVisibleForTab(currentSection, activeTab);
+      if (!shouldHide && child.classList.contains("setting-item")) {
+        const name = (_d = (_c = (_b = child.querySelector(".setting-item-name")) == null ? void 0 : _b.textContent) == null ? void 0 : _c.trim()) != null ? _d : "";
+        if (name && !this.isSettingVisibleForTab(name, activeTab)) {
+          shouldHide = true;
+        }
+      } else if (shouldHide && child.classList.contains("setting-item")) {
+        const name = (_g = (_f = (_e = child.querySelector(".setting-item-name")) == null ? void 0 : _e.textContent) == null ? void 0 : _f.trim()) != null ? _g : "";
+        if (name.startsWith("Settings UI language")) {
+          shouldHide = false;
+        }
+      }
+      if (shouldHide) {
+        child.classList.add("auto-linker-hidden-tab");
+      }
+    }
+  }
+  hideEmptySettingSections(containerEl) {
+    const children = Array.from(containerEl.children).filter(
+      (child) => child instanceof HTMLElement
+    );
+    for (let i = 0; i < children.length; i += 1) {
+      const child = children[i];
+      if (child.tagName !== "H3") {
+        continue;
+      }
+      let hasVisibleSetting = false;
+      for (let j = i + 1; j < children.length; j += 1) {
+        const candidate = children[j];
+        if (candidate.tagName === "H3") {
+          break;
+        }
+        if (!candidate.classList.contains("setting-item")) {
+          continue;
+        }
+        if (!candidate.classList.contains("auto-linker-hidden-tab") && !candidate.classList.contains("auto-linker-hidden-simple")) {
+          hasVisibleSetting = true;
+          break;
+        }
+      }
+      child.classList.toggle("auto-linker-hidden-tab", !hasVisibleSetting);
+    }
+  }
+  isSimpleEssentialSettingName(name) {
+    return _KnowledgeWeaverSettingTab.SIMPLE_VISIBLE_NAME_PREFIXES.some(
+      (prefix) => name.startsWith(prefix)
+    );
+  }
+  applyCompactSettingsVisibility(containerEl) {
+    var _a, _b, _c, _d;
+    if (this.plugin.settings.settingsViewMode !== "simple") {
+      return;
+    }
+    if (this.plugin.settings.settingsActiveTab !== "quick") {
+      return;
+    }
+    let hideSection = false;
+    for (const child of Array.from(containerEl.children)) {
+      if (child.tagName === "H3") {
+        const title = ((_a = child.textContent) != null ? _a : "").trim();
+        hideSection = _KnowledgeWeaverSettingTab.SIMPLE_HIDDEN_SECTION_TITLES.has(title);
+        child.toggleClass("auto-linker-hidden-simple", hideSection);
+        continue;
+      }
+      if (hideSection) {
+        child.classList.add("auto-linker-hidden-simple");
+      }
+    }
+    const items = containerEl.querySelectorAll(".setting-item");
+    for (const item of Array.from(items)) {
+      const name = (_d = (_c = (_b = item.querySelector(".setting-item-name")) == null ? void 0 : _b.textContent) == null ? void 0 : _c.trim()) != null ? _d : "";
+      if (!name) {
+        continue;
+      }
+      const hiddenByKeyword = _KnowledgeWeaverSettingTab.SIMPLE_HIDDEN_NAME_KEYWORDS.some(
+        (keyword) => name.includes(keyword)
+      );
+      const hiddenByNonEssential = !this.isSimpleEssentialSettingName(name);
+      const shouldHide = hiddenByKeyword || hiddenByNonEssential;
+      if (shouldHide) {
+        item.classList.add("auto-linker-hidden-simple");
+      }
+    }
+  }
+  renderGuideTab(containerEl) {
+    containerEl.createEl("h3", { text: "Quick preset guide / \uBE60\uB978 \uC124\uC815 \uAC00\uC774\uB4DC" });
+    containerEl.createEl("p", {
+      text: [
+        "One-click presets detect local models first.",
+        "Then they auto-assign base/role/embedding models by preset + hardware capability."
+      ].join("\n"),
+      cls: "auto-linker-settings-guide-note auto-linker-settings-guide-preline"
+    });
+    const detectedModels = this.plugin.getOllamaModelOptions();
+    const hardwareSummary = this.plugin.getHardwareCapabilitySummaryForQa();
+    const readiness = containerEl.createDiv({ cls: "auto-linker-settings-guide-card" });
+    readiness.createEl("strong", {
+      text: detectedModels.length > 0 ? `Local AI ready: ${detectedModels.length} model(s) detected` : "Local AI not ready: no Ollama model detected"
+    });
+    const readinessLines = detectedModels.length > 0 ? this.splitGuideLines(this.plugin.getOllamaDetectionSummary()) : [
+      "Install/start Ollama.",
+      "Pull at least one text model + one vision model + one embedding model."
+    ];
+    const hardwareLines = this.splitGuideLines(hardwareSummary);
+    const readinessList = readiness.createEl("ul", {
+      cls: "auto-linker-settings-guide-list auto-linker-settings-guide-card-list"
+    });
+    for (const line of [...readinessLines, ...hardwareLines]) {
+      readinessList.createEl("li", { text: line });
+    }
+    containerEl.createEl("h3", { text: "When to use each preset / \uD504\uB9AC\uC14B \uC120\uD0DD \uAE30\uC900" });
+    const presetList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    presetList.createEl("li", {
+      text: "Flash: \uBB38\uC11C 1~20\uAC1C \uAE30\uBC18 \uBE60\uB978 \uC870\uD68C/\uC694\uC57D. Role/Pipeline\uC744 \uACBD\uB7C9 \uACE0\uC815\uD574 \uC9C0\uC5F0\uC744 \uCD5C\uC18C\uD654\uD569\uB2C8\uB2E4."
+    });
+    presetList.createEl("li", {
+      text: "Pro: \uC218\uC2ED~\uC218\uBC31\uAC1C \uBB38\uC11C \uBD84\uC11D/\uC778\uC0AC\uC774\uD2B8/\uCD08\uC548 \uC791\uC131. Orchestrator/Safeguard \uC911\uC2EC\uC73C\uB85C \uD488\uC9C8\uACFC \uC18D\uB3C4\uB97C \uADE0\uD615\uD654\uD569\uB2C8\uB2E4."
+    });
+    presetList.createEl("li", {
+      text: "\uB85C\uCEEC \uBAA8\uB378\uC774 \uAC10\uC9C0\uB418\uC9C0 \uC54A\uC73C\uBA74 \uD504\uB9AC\uC14B\uC740 \uBCF4\uC548/\uB3D9\uC791 \uAE30\uBCF8\uAC12\uB9CC \uC801\uC6A9\uD558\uACE0 \uAE30\uC874 Provider\uB97C \uC720\uC9C0\uD569\uB2C8\uB2E4."
+    });
+    containerEl.createEl("h3", { text: "Chat shortcut reference / \uCC44\uD305 \uB2E8\uCD95\uD0A4 \uC548\uB0B4" });
+    const shortcutList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    shortcutList.createEl("li", {
+      text: "Enter: \uC804\uC1A1"
+    });
+    shortcutList.createEl("li", {
+      text: "Shift+Enter: \uC904\uBC14\uAFC8"
+    });
+    shortcutList.createEl("li", {
+      text: "Ctrl/Cmd+V: \uC774\uBBF8\uC9C0/\uD14D\uC2A4\uD2B8/PDF \uCCA8\uBD80 \uBD99\uC5EC\uB123\uAE30"
+    });
+    shortcutList.createEl("li", {
+      text: "\uC911\uC9C0 \uBC84\uD2BC(Stop): \uC2A4\uD2B8\uB9AC\uBC0D/\uB9AC\uD2B8\uB9AC\uBC8C/\uD6C4\uCC98\uB9AC \uC989\uC2DC \uC911\uB2E8"
+    });
+    containerEl.createEl("h3", { text: "Agent external-path policy / \uC5D0\uC774\uC804\uD2B8 \uC678\uBD80 \uACBD\uB85C \uC815\uCC45" });
+    const securityGuideList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    securityGuideList.createEl("li", {
+      text: "\uAE30\uBCF8\uAC12\uC740 \uBCF4\uC218\uC801(vault \uBC94\uC704)\uC785\uB2C8\uB2E4. \uC678\uBD80 \uC808\uB300\uACBD\uB85C \uC811\uADFC\uC740 allowlist \uB610\uB294 full access \uC870\uAC74\uC5D0\uC11C\uB9CC \uD5C8\uC6A9\uB429\uB2C8\uB2E4."
+    });
+    securityGuideList.createEl("li", {
+      text: "full access\uB97C \uCF1C\uAE30 \uC804\uC5D0\uB294 allowlist \uACBD\uB85C\uB97C \uBA3C\uC800 \uC9C0\uC815\uD558\uACE0, \uD544\uC694\uD55C \uCD5C\uC18C \uBC94\uC704\uB9CC \uB4F1\uB85D\uD558\uC138\uC694."
+    });
+    securityGuideList.createEl("li", {
+      text: "\uC2DC\uC2A4\uD15C \uD504\uB86C\uD504\uD2B8\uC5D0 '\uC678\uBD80 \uACBD\uB85C \uC811\uADFC \uC2DC \uBC18\uB4DC\uC2DC \uD5C8\uC6A9 \uACBD\uB85C/\uC2B9\uC778 \uC870\uAC74/\uB85C\uADF8 \uAE30\uB85D' \uADDC\uCE59\uC744 \uBA85\uC2DC\uD558\uBA74 \uC815\uCC45 \uCDA9\uB3CC\uC744 \uC904\uC77C \uC218 \uC788\uC2B5\uB2C8\uB2E4."
+    });
+    securityGuideList.createEl("li", {
+      text: "\uC0C1\uC138 \uC815\uCC45\uC740 README\uC758 \uBCF4\uC548 \uC8FC\uC758\uC0AC\uD56D \uC139\uC158\uC744 \uCC38\uACE0\uD558\uC138\uC694."
+    });
+    containerEl.createEl("h3", { text: "PDF parsing notes / PDF \uD30C\uC2F1 \uACE0\uB824\uC0AC\uD56D" });
+    const pdfGuideList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    pdfGuideList.createEl("li", {
+      text: "PDF\uB294 pdftotext -> OCR(tesseract/pdftoppm) -> fallback \uCCB4\uC778\uC73C\uB85C \uBCF8\uBB38 \uCD94\uCD9C\uC744 \uC2DC\uB3C4\uD569\uB2C8\uB2E4."
+    });
+    pdfGuideList.createEl("li", {
+      text: "\uC774\uBBF8\uC9C0 \uCCA8\uBD80\uB3C4 OCR \uD30C\uC11C\uB97C \uD1B5\uD574 \uD14D\uC2A4\uD2B8\uB97C \uBCF4\uAC15\uD569\uB2C8\uB2E4. \uB2E8, \uD45C/\uC218\uC2DD/\uC2A4\uCE94\uC740 \uC624\uC778\uC2DD \uAC00\uB2A5\uC131\uC774 \uC788\uC5B4 \uD575\uC2EC \uAD6C\uAC04 \uD14D\uC2A4\uD2B8 \uBC1C\uCDCC\uB97C \uD568\uAED8 \uCCA8\uBD80\uD558\uC138\uC694."
+    });
+    pdfGuideList.createEl("li", {
+      text: "\uCD9C\uCC98 \uC815\uD655\uC131\uC774 \uC911\uC694\uD55C \uC791\uC5C5(\uD3C9\uAC00\uACC4\uD68D/\uBC95\uC801 \uBB38\uC11C)\uC740 PDF \uC6D0\uBB38 \uD398\uC774\uC9C0 \uBC88\uD638\uB97C \uD568\uAED8 \uC694\uAD6C\uD558\uB3C4\uB85D \uD504\uB86C\uD504\uD2B8\uB97C \uACE0\uC815\uD558\uC138\uC694."
+    });
+    pdfGuideList.createEl("li", {
+      text: "\uC0C1\uC138 \uC6B4\uC601 \uD301\uC740 README\uC758 \uBB38\uC81C \uD574\uACB0 \uC139\uC158\uC744 \uCC38\uACE0\uD558\uC138\uC694."
+    });
+    containerEl.createEl("h3", { text: "Reference models by tier / \uD2F0\uC5B4\uBCC4 \uCC38\uACE0 \uBAA8\uB378" });
+    const modelList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    modelList.createEl("li", {
+      text: "Flash tier text: qwen3:8b / llama3.1:8b / gemma3:4b"
+    });
+    modelList.createEl("li", {
+      text: "Pro tier text: qwen3:14b / gpt-oss:20b / qwen3:30b (\uD658\uACBD \uC758\uC874)"
+    });
+    modelList.createEl("li", {
+      text: "Vision: qwen2.5vl \uACC4\uC5F4, llava \uACC4\uC5F4"
+    });
+    modelList.createEl("li", {
+      text: "Embedding: nomic-embed-text, bge-m3, mxbai-embed-large, e5/gte \uACC4\uC5F4"
+    });
+    containerEl.createEl("pre", {
+      cls: "auto-linker-settings-guide-code",
+      text: [
+        "ollama pull qwen3:8b",
+        "ollama pull qwen3:14b",
+        "ollama pull qwen2.5vl:7b",
+        "ollama pull nomic-embed-text"
+      ].join("\n")
+    });
+    containerEl.createEl("h3", { text: "Official references / \uACF5\uC2DD \uCC38\uACE0" });
+    const refList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const references = [
+      "https://ollama.com/library/qwen3",
+      "https://ollama.com/library/qwen2.5vl",
+      "https://ollama.com/library/nomic-embed-text",
+      "https://docs.ollama.com/api/chat",
+      "https://docs.ollama.com/api/generate"
+    ];
+    for (const url of references) {
+      const item = refList.createEl("li");
+      item.createEl("a", { text: url, href: url });
+    }
+    containerEl.createEl("h3", { text: "Preset warning snapshot / \uD504\uB9AC\uC14B \uACBD\uACE0 \uC2A4\uB0C5\uC0F7" });
+    const warningList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const warnings = this.collectPresetOverrideWarnings();
+    if (warnings.length === 0) {
+      warningList.createEl("li", { text: "\uD604\uC7AC \uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uACBD\uACE0(\u26A0) \uC5C6\uC74C" });
+    } else {
+      for (const warning of warnings) {
+        warningList.createEl("li", {
+          text: `${warning.name}: ${warning.note}`
+        });
+      }
+    }
+    warningList.createEl("li", {
+      text: "\uB9B4\uB9AC\uC988 \uC804\uC5D0\uB294 \uACBD\uACE0(\u26A0)\uAC00 \uBD99\uC740 \uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uD544\uB4DC\uB97C \uC6B0\uC120 \uD655\uC778\uD558\uC138\uC694."
+    });
+    warningList.createEl("li", {
+      text: "\uD504\uB9AC\uC14B \uAE30\uBCF8\uAC12\uC740 Settings > Quick/Models \uD0ED\uC758 \uD604\uC7AC \uD45C\uC2DC\uAC12\uC744 \uAE30\uC900\uC73C\uB85C \uAC80\uD1A0\uD558\uC138\uC694."
+    });
+    new import_obsidian4.Setting(containerEl).setName("Guide actions").setDesc("Refresh local detection or return to Quick tab.").addButton(
+      (button) => button.setButtonText("Refresh detection").setCta().onClick(async () => {
+        await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
+        await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Go Quick").onClick(async () => {
+        this.plugin.settings.settingsActiveTab = "quick";
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
+  }
+  renderOrchestrationTab(containerEl) {
+    containerEl.createEl("h3", { text: "Orchestration controls / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158 \uC81C\uC5B4" });
+    containerEl.createEl("p", {
+      cls: "auto-linker-settings-guide-note",
+      text: "\uB0B4\uBD80 \uBB38\uC11C \uBCF4\uD638\uB97C \uC6B0\uC120\uD558\uBA70, \uC678\uBD80 \uC5F0\uACB0\uC740 allowlist \uAE30\uBC18\uC73C\uB85C \uC81C\uD55C\uB41C \uC0C1\uD0DC\uC5D0\uC11C\uB9CC \uC2E4\uD589\uD558\uC138\uC694."
+    });
+    new import_obsidian4.Setting(containerEl).setName("Conversation mode (chat runtime)").setDesc("\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158 \uC911\uC2EC\uC73C\uB85C \uBAA8\uB4DC\uB97C \uACE0\uC815\uD558\uACE0 \uD30C\uC774\uD504\uB77C\uC778 \uAE30\uBCF8\uAC12\uC744 \uB9DE\uCDA5\uB2C8\uB2E4.").addButton(
+      (button) => button.setButtonText("Orchestration \uBAA8\uB4DC \uC801\uC6A9").setCta().onClick(async () => {
+        await this.plugin.setQaConversationModeForQa("orchestration");
+        this.display();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Allowed outbound hosts (non-local Q&A)").setDesc("\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158\uC5D0\uC11C \uC678\uBD80 \uC5D4\uB4DC\uD3EC\uC778\uD2B8\uB97C \uC4F8 \uB54C \uD5C8\uC6A9 \uD638\uC2A4\uD2B8\uB97C \uBA85\uC2DC\uD569\uB2C8\uB2E4.").addTextArea(
+      (area) => area.setPlaceholder("api.openai.com\napi.anthropic.com").setValue(this.plugin.settings.qaAllowedOutboundHosts).onChange(async (value) => {
+        this.plugin.settings.qaAllowedOutboundHosts = value;
+        await this.plugin.saveSettings();
+      })
+    );
+  }
+  renderSkillsTab(containerEl) {
+    containerEl.createEl("h3", { text: "Skills manager (beta) / \uC2A4\uD0AC \uAD00\uB9AC(\uBCA0\uD0C0)" });
+    containerEl.createEl("p", {
+      cls: "auto-linker-settings-guide-note",
+      text: "\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158\uC73C\uB85C \uC0DD\uC131\uD55C \uC2A4\uD0AC \uBB38\uC11C\uB97C \uB0B4\uBD80/\uC678\uBD80 \uACBD\uB85C\uC5D0\uC11C \uAD00\uB9AC\uD558\uAE30 \uC704\uD55C \uC900\uBE44 \uD0ED\uC785\uB2C8\uB2E4."
+    });
+    new import_obsidian4.Setting(containerEl).setName("Agent path allowlist (absolute, comma/newline)").setDesc("Skills \uB85C\uB529/\uC2E4\uD589\uC5D0 \uD5C8\uC6A9\uD560 \uC808\uB300\uACBD\uB85C\uB97C \uAD00\uB9AC\uD569\uB2C8\uB2E4.").addTextArea(
+      (area) => area.setPlaceholder("/absolute/path/project\n/absolute/path/project/skills").setValue(this.plugin.settings.qaAgentPathAllowlist).onChange(async (value) => {
+        this.plugin.settings.qaAgentPathAllowlist = value;
+        await this.plugin.saveSettings();
+      })
+    );
+  }
+  renderParserTab(containerEl) {
+    containerEl.createEl("h3", { text: "Parser pipeline / \uD30C\uC11C \uD30C\uC774\uD504\uB77C\uC778" });
+    containerEl.createEl("p", {
+      cls: "auto-linker-settings-guide-note",
+      text: "PDF/\uC774\uBBF8\uC9C0 \uD30C\uC11C\uB97C \uC911\uC2EC\uC73C\uB85C \uCCA8\uBD80 \uCEE8\uD14D\uC2A4\uD2B8 \uD488\uC9C8\uC744 \uB192\uC785\uB2C8\uB2E4. excel/hwp\uB294 \uD604\uC7AC \uBBF8\uB9AC\uBCF4\uAE30 \uC218\uC900\uC774\uBA70 \uCD94\uD6C4 \uD655\uC7A5\uB429\uB2C8\uB2E4."
+    });
+    new import_obsidian4.Setting(containerEl).setName("Parser mode").setDesc("Fast\uB294 \uACBD\uB7C9 \uD30C\uC11C, Detailed\uB294 OCR \uD398\uC774\uC9C0 \uD655\uC7A5\uACFC \uAE34 \uD14D\uC2A4\uD2B8 \uCD94\uCD9C\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.").addDropdown(
+      (dropdown) => dropdown.addOption("fast", "Fast / \uBE60\uB978 \uD30C\uC11C").addOption("detailed", "Detailed / \uC0C1\uC138 \uD30C\uC11C").setValue(this.plugin.settings.qaParserMode).onChange(async (value) => {
+        this.plugin.settings.qaParserMode = value === "detailed" ? "detailed" : "fast";
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("PDF attachments in chat").setDesc("\uAE30\uBCF8 ON\uC785\uB2C8\uB2E4. PDF\uB294 pdftotext -> OCR -> fallback \uCCB4\uC778\uC73C\uB85C \uC790\uB3D9 \uCC98\uB9AC\uB429\uB2C8\uB2E4.");
+    new import_obsidian4.Setting(containerEl).setName("Parser tool readiness").setDesc(this.plugin.getParserToolReadinessSummaryForQa()).addButton(
+      (button) => button.setButtonText("Refresh / \uC810\uAC80").onClick(async () => {
+        await this.plugin.refreshParserToolReadinessForQa(true);
+        this.display();
+      })
+    );
+    const parserList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    parserList.createEl("li", {
+      text: "PDF: pdftotext(\uD14D\uC2A4\uD2B8 \uCD94\uCD9C) + pdftoppm/tesseract(OCR) + fallback"
+    });
+    parserList.createEl("li", {
+      text: "Image: tesseract OCR + \uC6D0\uBCF8 \uC774\uBBF8\uC9C0 \uCEE8\uD14D\uC2A4\uD2B8"
+    });
+    parserList.createEl("li", {
+      text: "Excel/HWP: \uD604\uC7AC \uAE30\uBCF8 \uBBF8\uC9C0\uC6D0(\uD14D\uC2A4\uD2B8 \uBCC0\uD658\uBCF8 \uCCA8\uBD80 \uAD8C\uC7A5)"
+    });
+    for (const line of this.plugin.getParserToolReadinessLinesForQa()) {
+      parserList.createEl("li", { text: line });
+    }
+    new import_obsidian4.Setting(containerEl).setName("Attachment ingest folder path").setDesc("\uC678\uBD80 \uCCA8\uBD80\uB97C vault \uB0B4\uBD80\uB85C \uBBF8\uB7EC\uB9C1\uD560 \uACBD\uB85C\uC785\uB2C8\uB2E4.").addText(
+      (text) => text.setPlaceholder("Auto Link Ingest").setValue(this.plugin.settings.qaAttachmentIngestRootPath).onChange(async (value) => {
+        this.plugin.settings.qaAttachmentIngestRootPath = (0, import_obsidian4.normalizePath)(
+          value.trim() || DEFAULT_SETTINGS.qaAttachmentIngestRootPath
+        );
+        await this.plugin.saveSettings();
+      })
+    );
   }
   display() {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("auto-linker-settings-tab");
-    containerEl.createEl("h2", { text: "Auto Link Settings / Auto Link \uC124\uC815" });
-    containerEl.createEl("p", {
-      text: "Language docs / \uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)"
+    this.addSettingsLanguageControl(containerEl);
+    const uiMode = this.plugin.settings.settingsUiLanguage;
+    containerEl.createEl("h2", {
+      text: uiMode === "en" ? "Auto Link Settings" : uiMode === "ko" ? "Auto Link \uC124\uC815" : "Auto Link Settings / Auto Link \uC124\uC815"
     });
+    containerEl.createEl("p", {
+      text: uiMode === "en" ? "Language docs: README.md (EN) | README_KO.md (KO)" : uiMode === "ko" ? "\uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)" : "Language docs / \uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)"
+    });
+    this.addSettingsTabSwitcher(containerEl);
+    const activeTab = this.plugin.settings.settingsActiveTab;
+    if (activeTab === "quick") {
+      this.addViewModeAndPresetControls(containerEl);
+    }
+    if (activeTab === "chat") {
+      this.addChatPresetControls(containerEl);
+    }
+    if (activeTab === "orchestration") {
+      this.renderOrchestrationTab(containerEl);
+      this.applyBilingualSettingsLabels(containerEl);
+      return;
+    }
+    if (activeTab === "skills") {
+      this.renderSkillsTab(containerEl);
+      this.applyBilingualSettingsLabels(containerEl);
+      return;
+    }
+    if (activeTab === "parser") {
+      this.renderParserTab(containerEl);
+      this.applyBilingualSettingsLabels(containerEl);
+      return;
+    }
+    if (activeTab === "guide") {
+      this.renderGuideTab(containerEl);
+      this.applyBilingualSettingsLabels(containerEl);
+      return;
+    }
     new import_obsidian4.Setting(containerEl).setName("Provider").setDesc("Choose AI provider. Local providers are recommended first.").addDropdown(
       (dropdown) => dropdown.addOption("ollama", "Ollama (local / \uB85C\uCEEC)").addOption("lmstudio", "LM Studio (local / \uB85C\uCEEC)").addOption("openai", "OpenAI / Codex").addOption("anthropic", "Claude / \uD074\uB85C\uB4DC").addOption("gemini", "Gemini / \uC81C\uBBF8\uB098\uC774").setValue(this.plugin.settings.provider).onChange(async (value) => {
         this.plugin.settings.provider = value;
@@ -3701,6 +6412,36 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     containerEl.createEl("h3", { text: "Behavior" });
+    const analyzedDepthMode = this.plugin.settings.semanticLinkingEnabled || !this.plugin.settings.analysisOnlyChangedNotes ? "detailed" : "quick";
+    new import_obsidian4.Setting(containerEl).setName("Analyzed depth mode").setDesc(
+      "Quick: changed-notes \uC911\uC2EC + semantic off. Detailed: semantic on + \uC804\uCCB4 \uBC94\uC704 \uAE30\uBC18 \uBD84\uC11D."
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("quick", "Quick / \uBE60\uB978 \uBD84\uC11D").addOption("detailed", "Detailed / \uC0C1\uC138 \uBD84\uC11D").setValue(analyzedDepthMode).onChange(async (value) => {
+        const quickMode = value === "quick";
+        this.plugin.settings.analysisOnlyChangedNotes = quickMode;
+        this.plugin.settings.semanticLinkingEnabled = !quickMode;
+        this.plugin.settings.includeReasons = !quickMode;
+        this.plugin.settings.qaTopK = quickMode ? Math.min(this.plugin.settings.qaTopK, 4) : Math.max(this.plugin.settings.qaTopK, 6);
+        this.plugin.settings.semanticTopK = quickMode ? Math.min(this.plugin.settings.semanticTopK, 16) : Math.max(this.plugin.settings.semanticTopK, 28);
+        this.plugin.settings.qaAlwaysDetailedAnswer = !quickMode;
+        this.plugin.settings.qaMaxContextChars = quickMode ? Math.min(this.plugin.settings.qaMaxContextChars, 12e3) : Math.max(this.plugin.settings.qaMaxContextChars, 18e3);
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
+    const analyzedSelectedFiles = this.plugin.getSelectedFilesForQa().length;
+    const analyzedEmbeddingModel = this.plugin.settings.semanticOllamaModel.trim() || "(none)";
+    const analyzedQuickSec = Math.max(1, analyzedSelectedFiles) * 0.45;
+    const analyzedDetailedSec = Math.max(1, analyzedSelectedFiles) * 1.15;
+    new import_obsidian4.Setting(containerEl).setName("Analyzed runtime estimate").setDesc(
+      [
+        `\uC120\uD0DD \uD30C\uC77C: ${analyzedSelectedFiles}\uAC1C`,
+        `\uC784\uBCA0\uB529 \uBAA8\uB378: ${analyzedEmbeddingModel}`,
+        `Quick \uC608\uC0C1: \uC57D ${analyzedQuickSec.toFixed(1)}\uCD08 + \uBAA8\uB378 \uC751\uB2F5 \uC2DC\uAC04`,
+        `Detailed \uC608\uC0C1: \uC57D ${analyzedDetailedSec.toFixed(1)}\uCD08 + \uBAA8\uB378 \uC751\uB2F5 \uC2DC\uAC04`
+      ].join(" | ")
+    );
+    new import_obsidian4.Setting(containerEl).setName("Analyzed scope snapshot").setDesc(this.plugin.getAnalyzedScopeSnapshotSummaryForQa());
     new import_obsidian4.Setting(containerEl).setName("Suggestion mode (recommended)").setDesc("Analyze first, preview changes, and apply only when approved.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.suggestionMode).onChange(async (value) => {
         this.plugin.settings.suggestionMode = value;
@@ -3796,17 +6537,17 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         });
       })
     );
-    const embeddingOptions = this.plugin.getEmbeddingModelOptions();
+    const embeddingOptions = this.plugin.getEmbeddingModelOptions().filter((option) => option.status !== "unavailable");
     new import_obsidian4.Setting(containerEl).setName("Embedding detected model picker").setDesc(
-      "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for embeddings."
+      "Choose among embedding-capable detected models. (\uCD94\uCC9C)=recommended."
     ).addDropdown((dropdown) => {
       var _a, _b;
       if (embeddingOptions.length === 0) {
-        dropdown.addOption("", "(No models detected)");
+        dropdown.addOption("", "(No embedding models detected)");
         dropdown.setValue("");
       } else {
         for (const option of embeddingOptions) {
-          const suffix = option.status === "recommended" ? " (\uCD94\uCC9C)" : option.status === "unavailable" ? " (\uBD88\uAC00)" : "";
+          const suffix = option.status === "recommended" ? " (\uCD94\uCC9C)" : "";
           dropdown.addOption(option.model, `${option.model}${suffix}`);
         }
         const current = this.plugin.settings.semanticOllamaModel;
@@ -3822,9 +6563,6 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         }
         this.plugin.settings.semanticOllamaModel = value;
         await this.plugin.saveSettings();
-        if (!isOllamaModelEmbeddingCapable(value)) {
-          new import_obsidian4.Notice(`Selected model is marked as (\uBD88\uAC00): ${value}`, 4500);
-        }
         this.display();
       });
     }).addButton(
@@ -3833,11 +6571,6 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
           notify: true,
           autoApply: true
         });
-        this.display();
-      })
-    ).addButton(
-      (button) => button.setButtonText("Use recommended / \uAD8C\uC7A5\uAC12 \uC0AC\uC6A9").onClick(async () => {
-        await this.plugin.applyRecommendedEmbeddingModel(true);
         this.display();
       })
     );
@@ -3856,7 +6589,9 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Embedding detection summary").setDesc(this.plugin.getEmbeddingDetectionSummary());
-    new import_obsidian4.Setting(containerEl).setName("Semantic top-k candidates").addText(
+    new import_obsidian4.Setting(containerEl).setName("Semantic top-k candidates").setDesc(
+      "\uC9C8\uBB38\uACFC \uAD00\uB828 \uC788\uC744 \uAC00\uB2A5\uC131\uC774 \uB192\uC740 \uD6C4\uBCF4 \uBB38\uC11C\uB97C \uBA87 \uAC1C\uAE4C\uC9C0 \uBCFC\uC9C0 \uC815\uD569\uB2C8\uB2E4. \uAC12\uC744 \uC62C\uB9AC\uBA74 \uADFC\uAC70 \uD6C4\uBCF4\uAC00 \uB298\uACE0, \uC18D\uB3C4\uB294 \uB290\uB824\uC9C8 \uC218 \uC788\uC2B5\uB2C8\uB2E4."
+    ).addText(
       (text) => text.setPlaceholder("24").setValue(String(this.plugin.settings.semanticTopK)).onChange(async (value) => {
         this.plugin.settings.semanticTopK = parsePositiveInt(
           value,
@@ -3865,7 +6600,9 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Semantic min similarity").setDesc("Range: 0.0 to 1.0").addText(
+    new import_obsidian4.Setting(containerEl).setName("Semantic min similarity").setDesc(
+      "\uAD00\uB828\uB3C4 \uCD5C\uC18C \uAE30\uC900\uC785\uB2C8\uB2E4(0.0~1.0). \uB0AE\uCD94\uBA74 \uB354 \uB9CE\uC740 \uBB38\uC11C\uAC00 \uD3EC\uD568\uB418\uACE0, \uB192\uC774\uBA74 \uB354 \uC5C4\uACA9\uD558\uAC8C \uAC78\uB7EC\uC9D1\uB2C8\uB2E4."
+    ).addText(
       (text) => text.setPlaceholder("0.25").setValue(String(this.plugin.settings.semanticMinSimilarity)).onChange(async (value) => {
         const parsed = Number.parseFloat(value);
         if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
@@ -3874,7 +6611,9 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         }
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Semantic source max chars").setDesc("Trim note text before embedding to keep local runs fast.").addText(
+    new import_obsidian4.Setting(containerEl).setName("Semantic source max chars").setDesc(
+      "\uC784\uBCA0\uB529 \uC804\uC5D0 \uAC01 \uBB38\uC11C\uC5D0\uC11C \uC0AC\uC6A9\uD560 \uCD5C\uB300 \uAE00\uC790 \uC218\uC785\uB2C8\uB2E4. \uC904\uC774\uBA74 \uBE60\uB974\uACE0, \uB298\uB9AC\uBA74 \uBB38\uB9E5 \uC815\uBCF4\uAC00 \uB9CE\uC544\uC9D1\uB2C8\uB2E4."
+    ).addText(
       (text) => text.setPlaceholder("5000").setValue(String(this.plugin.settings.semanticMaxChars)).onChange(async (value) => {
         this.plugin.settings.semanticMaxChars = parsePositiveInt(
           value,
@@ -3892,8 +6631,7 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
     );
     new import_obsidian4.Setting(containerEl).setName("Q&A model").setDesc("Leave empty to use main analysis model.").addText(
       (text) => text.setPlaceholder("qwen2.5:7b").setValue(this.plugin.settings.qaOllamaModel).onChange(async (value) => {
-        this.plugin.settings.qaOllamaModel = value.trim();
-        await this.plugin.saveSettings();
+        await this.plugin.setQaModelOverrideForQa(value.trim());
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Prefer Ollama /api/chat (with fallback)").setDesc("Use role-based chat first, then fallback to /api/generate when unavailable.").addToggle(
@@ -3952,20 +6690,52 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         dropdown.addOption(option.value, option.label);
       }
       dropdown.setValue(this.plugin.settings.qaRolePreset).onChange(async (value) => {
-        this.plugin.settings.qaRolePreset = value;
-        await this.plugin.saveSettings();
+        await this.plugin.setQaRolePresetForQa(value);
       });
     });
-    new import_obsidian4.Setting(containerEl).setName("Q&A pipeline preset").setDesc("Select execution pipeline for post-generation passes.").addDropdown((dropdown) => {
+    new import_obsidian4.Setting(containerEl).setName("Q&A pipeline preset").setDesc("Select execution pipeline for post-generation passes. / \uB2F5\uBCC0 \uD6C4\uCC98\uB9AC \uD30C\uC774\uD504\uB77C\uC778\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4.").addDropdown((dropdown) => {
       for (const option of QA_PIPELINE_PRESET_OPTIONS) {
         dropdown.addOption(option.value, option.label);
       }
       dropdown.setValue(this.plugin.settings.qaPipelinePreset).onChange(async (value) => {
-        this.plugin.settings.qaPipelinePreset = value;
-        await this.plugin.saveSettings();
+        await this.plugin.setQaPipelinePresetForQa(value);
         this.display();
       });
     });
+    this.addPresetProfileModelSetting(containerEl, {
+      name: "Pro preset base model",
+      description: "Optional manual base-model override for Pro preset.",
+      key: "qaBalancedPresetBaseModel",
+      kind: "text",
+      placeholder: "qwen3:14b",
+      preset: "balanced_local"
+    });
+    this.addPresetProfileModelSetting(containerEl, {
+      name: "Pro preset vision model",
+      description: "Optional manual vision-model override for Pro preset.",
+      key: "qaBalancedPresetVisionModel",
+      kind: "vision",
+      placeholder: "qwen2.5vl:7b",
+      preset: "balanced_local"
+    });
+    this.addPresetProfileModelSetting(containerEl, {
+      name: "Pro preset embedding model",
+      description: "Optional manual embedding-model override for Pro preset.",
+      key: "qaBalancedPresetEmbeddingModel",
+      kind: "embedding",
+      placeholder: "nomic-embed-text",
+      preset: "balanced_local"
+    });
+    const presetWarnings = this.collectPresetOverrideWarnings();
+    new import_obsidian4.Setting(containerEl).setName("Preset override warning summary").setDesc(
+      presetWarnings.length > 0 ? presetWarnings.map((item) => `- ${item.name}: ${item.note}`).join("\n") : "\uD604\uC7AC \uAC10\uC9C0\uB41C \uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uACBD\uACE0(\u26A0)\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4."
+    ).addButton(
+      (button) => button.setButtonText("Guide\uC5D0\uC11C \uBCF4\uAE30").onClick(async () => {
+        this.plugin.settings.settingsActiveTab = "guide";
+        await this.plugin.saveSettings();
+        this.display();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Role model detection controls").setDesc(
       "Refresh local model detection manually, then choose role-specific models below."
     ).addButton(
@@ -3995,6 +6765,20 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Role recommendation summary").setDesc(this.plugin.getRoleModelRecommendationSummaryForQa());
+    const health = this.getRoleModelHealthSummary();
+    new import_obsidian4.Setting(containerEl).setName("Agent role model health check").setDesc(
+      [
+        health.summary,
+        `\uC790\uB3D9 \uBC30\uCE58: ${this.plugin.settings.qaRoleModelAutoPickEnabled ? "ON" : "OFF"}`,
+        `\uD604\uC7AC \uC5ED\uD560 \uBAA8\uB378: ${this.plugin.getQaRoleModelSummaryForQa()}`
+      ].join("\n")
+    ).addButton(
+      (button) => button.setButtonText("Run health check now").onClick(async () => {
+        await this.plugin.refreshOllamaDetection({ notify: false, autoApply: true });
+        await this.plugin.applyRecommendedRoleModelsForQa(true, false);
+        this.display();
+      })
+    );
     for (const config of ROLE_MODEL_SETTING_CONFIGS) {
       const roleOptions = this.plugin.getRoleModelOptionsForQa(config.role);
       this.addRoleModelPickerSetting(containerEl, config, roleOptions);
@@ -4013,13 +6797,24 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         })
       );
     }
-    new import_obsidian4.Setting(containerEl).setName("Custom system prompt / \uC0AC\uC6A9\uC790 \uC2DC\uC2A4\uD15C \uD504\uB86C\uD504\uD2B8").setDesc("Optional policy/style instructions (e.g., 'Explain with Feynman method in Korean'). / \uC608: \uD55C\uAD6D\uC5B4, \uD30C\uC778\uB9CC\uC2DD \uC124\uBA85").addTextArea(
-      (text) => text.setPlaceholder("Optional. Applied after built-in safety/policy prompt.").setValue(this.plugin.settings.qaCustomSystemPrompt).onChange(async (value) => {
+    const customPromptSetting = new import_obsidian4.Setting(containerEl).setName("Custom system prompt / \uC0AC\uC6A9\uC790 \uC2DC\uC2A4\uD15C \uD504\uB86C\uD504\uD2B8").setDesc(
+      "Optional global policy/style instructions. Beginner default is prefilled and can be restored anytime. / \uC804\uCCB4 \uC5ED\uD560\uC5D0 \uACF5\uD1B5 \uC801\uC6A9\uB418\uB294 \uC9C0\uC2DC\uC785\uB2C8\uB2E4."
+    ).addTextArea((text) => {
+      text.inputEl.addClass("auto-linker-setting-prompt-textarea");
+      text.inputEl.rows = 10;
+      return text.setPlaceholder(DEFAULT_SETTINGS.qaCustomSystemPrompt).setValue(this.plugin.settings.qaCustomSystemPrompt).onChange(async (value) => {
         this.plugin.settings.qaCustomSystemPrompt = value;
         await this.plugin.saveSettings();
+      });
+    }).addButton(
+      (button) => button.setButtonText("Use default / \uAE30\uBCF8\uAC12").onClick(async () => {
+        this.plugin.settings.qaCustomSystemPrompt = DEFAULT_SETTINGS.qaCustomSystemPrompt;
+        await this.plugin.saveSettings();
+        this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Role system prompt editor").setDesc(
+    customPromptSetting.settingEl.addClass("auto-linker-setting-prompt-editor");
+    const rolePromptSetting = new import_obsidian4.Setting(containerEl).setName("Role system prompt editor").setDesc(
       "Add extra system instructions per role agent. Empty keeps built-in role prompt only."
     ).addDropdown((dropdown) => {
       for (const option of QA_ROLE_PRESET_OPTIONS) {
@@ -4029,14 +6824,61 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         this.rolePromptEditorTarget = value;
         this.display();
       });
-    }).addTextArea(
-      (text) => text.setPlaceholder("Optional role-specific system prompt").setValue(this.plugin.getQaRoleSystemPromptForQa(this.rolePromptEditorTarget)).onChange(async (value) => {
+    }).addTextArea((text) => {
+      text.inputEl.addClass("auto-linker-setting-prompt-textarea");
+      text.inputEl.rows = 12;
+      return text.setPlaceholder(
+        this.plugin.getDefaultQaRoleSystemPromptForQa(this.rolePromptEditorTarget)
+      ).setValue(this.plugin.getQaRoleSystemPromptForQa(this.rolePromptEditorTarget)).onChange(async (value) => {
         await this.plugin.setQaRoleSystemPromptForQa(
           this.rolePromptEditorTarget,
           value
         );
+      });
+    }).addButton(
+      (button) => button.setButtonText("Use role default / \uC5ED\uD560 \uAE30\uBCF8\uAC12").onClick(async () => {
+        await this.plugin.setQaRoleSystemPromptForQa(
+          this.rolePromptEditorTarget,
+          this.plugin.getDefaultQaRoleSystemPromptForQa(this.rolePromptEditorTarget)
+        );
+        this.display();
       })
     );
+    rolePromptSetting.settingEl.addClass("auto-linker-setting-prompt-editor");
+    containerEl.createEl("h3", { text: "Advanced scenario examples / \uACE0\uAE09 \uC2DC\uB098\uB9AC\uC624 \uC608\uC2DC" });
+    const advancedExamples = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const exampleFast = advancedExamples.createEl("li");
+    exampleFast.createDiv({ text: "Flash (\uBE60\uB978 \uC9C8\uC758\uC751\uB2F5)" });
+    exampleFast.createEl("small", {
+      text: "ask + lightweight, 1~2\uAC1C \uBB38\uC11C \uC694\uC57D/\uC815\uC758 \uD655\uC778"
+    });
+    exampleFast.createEl("small", {
+      text: "\uAD8C\uC7A5: qwen3:8b / gpt-oss:20b(\uC5EC\uC720 \uC2DC), \uD544\uC694 \uC2DC ask_vision\uC5D0 gemma3 \uACC4\uC5F4"
+    });
+    const examplePro = advancedExamples.createEl("li");
+    examplePro.createDiv({ text: "Pro (\uBB38\uC11C \uBD84\uC11D/\uCD08\uC548)" });
+    examplePro.createEl("small", {
+      text: "orchestrator -> safeguard, \uCCA8\uBD80 \uC6B0\uC120 + \uC120\uD0DD \uB178\uD2B8 \uBCF4\uC870"
+    });
+    examplePro.createEl("small", {
+      text: "\uAD8C\uC7A5: qwen3:14b + nomic-embed-text + qwen2.5vl:7b"
+    });
+    const exampleOrchestration = advancedExamples.createEl("li");
+    exampleOrchestration.createDiv({ text: "Orchestration (\uD504\uB85C\uC81D\uD2B8/\uAC1C\uBC1C)" });
+    exampleOrchestration.createEl("small", {
+      text: "orchestrator -> architect -> coder/debugger -> safeguard"
+    });
+    exampleOrchestration.createEl("small", {
+      text: "\uC608\uC2DC: \uC218\uC5C5\uC6A9 \uC6F9\uC571 \uAC1C\uBC1C(\uD3C9\uAC00\uACC4\uD68D/\uAD50\uC548 \uC790\uB8CC \uAE30\uBC18)\uC5D0\uC11C \uC124\uACC4->\uAD6C\uD604->\uB514\uBC84\uAE45->\uBCF4\uC548 \uC810\uAC80 \uC21C\uC11C"
+    });
+    exampleOrchestration.createEl("small", {
+      text: "\uAD8C\uC7A5: orchestrator/architect=qwen3:30b, coder=qwen3-coder:30b, safeguard=gpt-oss-safeguard:20b"
+    });
+    const exampleOrch = advancedExamples.createEl("li");
+    exampleOrch.createDiv({ text: "Orchestrator \uACB0\uACFC\uBB3C \uC810\uAC80" });
+    exampleOrch.createEl("small", {
+      text: "\uC5ED\uD560 \uC2E4\uD589 \uC694\uC57D\uC5D0 architect/coder/debugger/safeguard\uC758 \uAE30\uC5EC\xB7\uC0B0\uCD9C\uBB3C\xB7\uC870\uC728\xB7\uBBF8\uD574\uACB0 \uC774\uC288\uAC00 \uD3EC\uD568\uB418\uC5B4\uC57C \uD568"
+    });
     new import_obsidian4.Setting(containerEl).setName("Include selection inventory / \uC120\uD0DD \uD30C\uC77C \uC778\uBCA4\uD1A0\uB9AC \uD3EC\uD568").setDesc("For large scopes, include selected-file metadata list to reduce 'insufficient evidence' answers. / \uB300\uADDC\uBAA8 \uC120\uD0DD \uC2DC \uC804\uCCB4 \uD30C\uC77C \uBA54\uD0C0 \uBAA9\uB85D\uC744 \uCEE8\uD14D\uC2A4\uD2B8\uC5D0 \uCD94\uAC00").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.qaIncludeSelectionInventory).onChange(async (value) => {
         this.plugin.settings.qaIncludeSelectionInventory = value;
@@ -4058,6 +6900,14 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Attachment ingest folder path").setDesc("Vault-relative folder where external attachments are mirrored for stable source links.").addText(
+      (text) => text.setPlaceholder("Auto Link Ingest").setValue(this.plugin.settings.qaAttachmentIngestRootPath).onChange(async (value) => {
+        this.plugin.settings.qaAttachmentIngestRootPath = (0, import_obsidian4.normalizePath)(
+          value.trim() || DEFAULT_SETTINGS.qaAttachmentIngestRootPath
+        );
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Auto-sync chat thread").setDesc(
       "When enabled, the current chat thread is continuously saved and updated as messages change."
     ).addToggle(
@@ -4066,9 +6916,113 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("PDF attachments in chat").setDesc("\uAE30\uBCF8 ON\uC785\uB2C8\uB2E4. \uC0C1\uC138 \uD30C\uC11C \uC124\uC815\uC740 Parser \uD0ED\uC5D0\uC11C \uAD00\uB9AC\uD569\uB2C8\uB2E4.");
+    new import_obsidian4.Setting(containerEl).setName("Parser mode").setDesc("Fast\uB294 \uC18D\uB3C4 \uC6B0\uC120, Detailed\uB294 OCR/\uCD94\uCD9C \uD488\uC9C8 \uC6B0\uC120\uC785\uB2C8\uB2E4.").addDropdown(
+      (dropdown) => dropdown.addOption("fast", "Fast").addOption("detailed", "Detailed").setValue(this.plugin.settings.qaParserMode).onChange(async (value) => {
+        this.plugin.settings.qaParserMode = value === "detailed" ? "detailed" : "fast";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Enable agent tool mode (experimental)").setDesc(
+      "Allow model-proposed actions (read/write/list/shell) from chat responses via auto-link-actions JSON block."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaAgentToolModeEnabled).onChange(async (value) => {
+        this.plugin.settings.qaAgentToolModeEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Require approval before tool execution").setDesc(
+      "Recommended. If enabled, proposed actions are queued and run only after user sends '\uC2B9\uC778' or '/approve'."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaAgentRequireApproval).onChange(async (value) => {
+        this.plugin.settings.qaAgentRequireApproval = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Allow shell tool (danger)").setDesc(
+      "Allows run_shell actions via local terminal command execution. Keep off unless absolutely needed."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaAgentAllowShellTool).onChange(async (value) => {
+        this.plugin.settings.qaAgentAllowShellTool = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Agent shell full access (danger)").setDesc(
+      "If enabled, run_shell and agent file actions(read/write/list) can use any absolute path (allowlist bypass)."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaAgentShellFullAccess).onChange(async (value) => {
+        this.plugin.settings.qaAgentShellFullAccess = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Shell tool timeout (seconds)").setDesc("run_shell \uBA85\uB839 1\uD68C\uB2F9 \uCD5C\uB300 \uC2E4\uD589 \uC2DC\uAC04(\uCD08)\uC785\uB2C8\uB2E4. \uBB34\uD55C \uB300\uAE30 \uBC29\uC9C0\uC6A9 \uC548\uC804\uC7A5\uCE58\uC785\uB2C8\uB2E4.").addText(
+      (text) => text.setPlaceholder("20").setValue(String(this.plugin.settings.qaAgentShellTimeoutSec)).onChange(async (value) => {
+        this.plugin.settings.qaAgentShellTimeoutSec = Math.max(
+          3,
+          Math.min(
+            300,
+            parsePositiveInt(value, this.plugin.settings.qaAgentShellTimeoutSec)
+          )
+        );
+        await this.plugin.saveSettings();
+        text.setValue(String(this.plugin.settings.qaAgentShellTimeoutSec));
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Shell tool default cwd (vault-relative, optional)").setDesc(
+      "Pick a vault folder from dropdown for run_shell default start location. This is separate from absolute allowlist rules. / run_shell \uAE30\uBCF8 \uC2DC\uC791 \uD3F4\uB354\uB97C vault \uB4DC\uB86D\uB2E4\uC6B4\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. \uC808\uB300\uACBD\uB85C allowlist\uC640\uB294 \uBCC4\uAC1C\uC785\uB2C8\uB2E4."
+    ).addDropdown((dropdown) => {
+      const folderOptions = this.getVaultFolderOptionsForShellCwd();
+      const optionValues = /* @__PURE__ */ new Set();
+      dropdown.addOption("", ". (Vault root / vault \uB8E8\uD2B8)");
+      optionValues.add("");
+      for (const folder of folderOptions) {
+        dropdown.addOption(folder, folder);
+        optionValues.add(folder);
+      }
+      const current = this.plugin.settings.qaAgentShellCwdPath.trim();
+      const isAbsoluteCurrent = current.startsWith("/") || /^[A-Za-z]:/.test(current);
+      if (current && !optionValues.has(current)) {
+        const customLabel = isAbsoluteCurrent ? `${current} (absolute custom / \uC808\uB300\uACBD\uB85C \uC0AC\uC6A9\uC790\uAC12)` : `${current} (custom / \uC0AC\uC6A9\uC790\uAC12)`;
+        dropdown.addOption(current, customLabel);
+      }
+      dropdown.setValue(current);
+      dropdown.onChange(async (value) => {
+        const trimmed = value.trim();
+        try {
+          if (!trimmed) {
+            this.plugin.settings.qaAgentShellCwdPath = "";
+          } else {
+            this.plugin.settings.qaAgentShellCwdPath = this.plugin.sanitizeQaShellCwdPath(trimmed);
+          }
+          await this.plugin.saveSettings();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Invalid shell cwd path";
+          new import_obsidian4.Notice(message, 7e3);
+          this.display();
+        }
+      });
+    }).addButton(
+      (button) => button.setButtonText("Refresh folders / \uD3F4\uB354 \uC0C8\uB85C\uACE0\uCE68").onClick(() => {
+        this.display();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Agent path allowlist (absolute, comma/newline)").setDesc("Absolute path allowlist for run_shell cwd and agent file actions(read/write/list) when full access is OFF. Default: (empty, vault-only)").addTextArea(
+      (text) => text.setPlaceholder("/absolute/path/project,/absolute/path/vault").setValue(this.plugin.settings.qaAgentPathAllowlist).onChange(async (value) => {
+        this.plugin.settings.qaAgentPathAllowlist = value;
+        await this.plugin.saveSettings();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Allow non-local Q&A endpoint (danger)").setDesc("Off by default. Keep disabled to prevent note data leaving localhost.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.qaAllowNonLocalEndpoint).onChange(async (value) => {
         this.plugin.settings.qaAllowNonLocalEndpoint = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Allowed outbound hosts (non-local Q&A)").setDesc(
+      "Comma/newline-separated host allowlist used when non-local endpoint is enabled. Example: api.openai.com, api.anthropic.com"
+    ).addTextArea(
+      (text) => text.setPlaceholder("api.openai.com,api.anthropic.com,generativelanguage.googleapis.com").setValue(this.plugin.settings.qaAllowedOutboundHosts).onChange(async (value) => {
+        this.plugin.settings.qaAllowedOutboundHosts = value;
         await this.plugin.saveSettings();
       })
     );
@@ -4081,7 +7035,9 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     containerEl.createEl("h3", { text: "Property cleanup" });
-    new import_obsidian4.Setting(containerEl).setName("Enable cleanup rules during apply").setDesc("When applying AI suggestions, also remove frontmatter keys by rules below.").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Enable cleanup rules during apply").setDesc(
+      "AI \uC81C\uC548\uC744 \uC801\uC6A9\uD560 \uB54C, \uC544\uB798 \uADDC\uCE59\uC73C\uB85C frontmatter \uD0A4\uB97C \uC790\uB3D9 \uC815\uB9AC\uD569\uB2C8\uB2E4. \uCD08\uBCF4\uC790\uB294 \uBA3C\uC800 dry-run\uC73C\uB85C \uD655\uC778\uC744 \uAD8C\uC7A5\uD569\uB2C8\uB2E4."
+    ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.propertyCleanupEnabled).onChange(async (value) => {
         this.plugin.settings.propertyCleanupEnabled = value;
         await this.plugin.saveSettings();
@@ -4112,9 +7068,11 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Run cleanup command").setDesc(
-      "Use command palette: apply='Cleanup frontmatter properties for selected notes', preview='Dry-run cleanup frontmatter properties for selected notes'."
+      "\uC2E4\uC81C \uC801\uC6A9 \uC804 `Dry-run cleanup...`\uC73C\uB85C \uACB0\uACFC\uB97C \uBA3C\uC800 \uD655\uC778\uD558\uACE0, \uBB38\uC81C \uC5C6\uC744 \uB54C `Cleanup...`\uC744 \uC2E4\uD589\uD558\uC138\uC694."
     );
-    new import_obsidian4.Setting(containerEl).setName("Cleanup dry-run report folder").setDesc("Vault-relative folder for cleanup dry-run report files.").addText(
+    new import_obsidian4.Setting(containerEl).setName("Cleanup dry-run report folder").setDesc(
+      "dry-run \uACB0\uACFC \uB9AC\uD3EC\uD2B8\uB97C \uC800\uC7A5\uD560 \uD3F4\uB354\uC785\uB2C8\uB2E4. \uC2E4\uC81C \uD30C\uC77C \uC218\uC815 \uC5C6\uC774 \uBCC0\uACBD \uC608\uC815 \uD56D\uBAA9\uB9CC \uD655\uC778\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4."
+    ).addText(
       (text) => text.setPlaceholder("Auto Link Reports").setValue(this.plugin.settings.cleanupReportRootPath).onChange(async (value) => {
         this.plugin.settings.cleanupReportRootPath = value.trim();
         await this.plugin.saveSettings();
@@ -4221,20 +7179,69 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
         }
       })
     );
+    this.applySettingsTabVisibility(containerEl);
+    this.applyCompactSettingsVisibility(containerEl);
+    this.hideEmptySettingSections(containerEl);
     this.applyBilingualSettingsLabels(containerEl);
   }
   applyBilingualSettingsLabels(containerEl) {
+    const mode = this.plugin.settings.settingsUiLanguage;
+    if (mode === "en") {
+      const nameEls2 = containerEl.querySelectorAll(".setting-item-name");
+      for (const nameEl of Array.from(nameEls2)) {
+        const inline = splitInlineBilingualText(nameEl.textContent);
+        if (!inline) {
+          continue;
+        }
+        nameEl.removeClass("auto-linker-bilingual-field");
+        nameEl.textContent = inline.en;
+      }
+      const descEls2 = containerEl.querySelectorAll(".setting-item-description");
+      for (const descEl of Array.from(descEls2)) {
+        const inline = splitInlineBilingualText(descEl.textContent);
+        if (!inline) {
+          continue;
+        }
+        descEl.removeClass("auto-linker-bilingual-field");
+        descEl.textContent = inline.en;
+      }
+      const headerEls2 = containerEl.querySelectorAll("h2, h3");
+      for (const headerEl of Array.from(headerEls2)) {
+        const inline = splitInlineBilingualText(headerEl.textContent);
+        if (!inline) {
+          continue;
+        }
+        headerEl.textContent = inline.en;
+      }
+      return;
+    }
     const headerEls = containerEl.querySelectorAll("h2, h3");
     for (const headerEl of Array.from(headerEls)) {
-      const localized = toKoreanBilingualLabel(headerEl.textContent, SETTINGS_HEADER_KO_MAP);
-      if (localized) {
-        headerEl.textContent = localized;
+      const inline = splitInlineBilingualText(headerEl.textContent);
+      if (inline) {
+        headerEl.textContent = mode === "ko" ? inline.ko : `${inline.en} / ${inline.ko}`;
+        continue;
+      }
+      const localized = toKoreanBilingualParts(headerEl.textContent, SETTINGS_HEADER_KO_MAP);
+      if (localized && mode === "ko") {
+        headerEl.textContent = localized.ko;
+      } else if (localized && mode === "bilingual") {
+        headerEl.textContent = `${localized.en} / ${localized.ko}`;
       }
     }
     const nameEls = containerEl.querySelectorAll(".setting-item-name");
     for (const nameEl of Array.from(nameEls)) {
+      const inline = splitInlineBilingualText(nameEl.textContent);
+      if (inline) {
+        nameEl.removeClass("auto-linker-bilingual-field");
+        nameEl.textContent = mode === "ko" ? inline.ko : `${inline.en} / ${inline.ko}`;
+        continue;
+      }
       const localized = toKoreanBilingualParts(nameEl.textContent, SETTINGS_NAME_KO_MAP);
-      if (localized) {
+      if (localized && mode === "ko") {
+        nameEl.removeClass("auto-linker-bilingual-field");
+        nameEl.textContent = localized.ko;
+      } else if (localized && mode === "bilingual") {
         nameEl.empty();
         nameEl.addClass("auto-linker-bilingual-field");
         nameEl.createSpan({
@@ -4249,8 +7256,17 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
     }
     const descEls = containerEl.querySelectorAll(".setting-item-description");
     for (const descEl of Array.from(descEls)) {
+      const inline = splitInlineBilingualText(descEl.textContent);
+      if (inline) {
+        descEl.removeClass("auto-linker-bilingual-field");
+        descEl.textContent = mode === "ko" ? inline.ko : `${inline.en} / ${inline.ko}`;
+        continue;
+      }
       const localized = toKoreanBilingualParts(descEl.textContent, SETTINGS_DESC_KO_MAP);
-      if (localized) {
+      if (localized && mode === "ko") {
+        descEl.removeClass("auto-linker-bilingual-field");
+        descEl.textContent = localized.ko;
+      } else if (localized && mode === "bilingual") {
         descEl.empty();
         descEl.addClass("auto-linker-bilingual-field");
         descEl.createSpan({
@@ -4265,6 +7281,168 @@ var KnowledgeWeaverSettingTab = class extends import_obsidian4.PluginSettingTab 
     }
   }
 };
+_KnowledgeWeaverSettingTab.TAB_OPTIONS = [
+  { key: "quick", en: "Quick", ko: "\uBE60\uB978 \uC124\uC815" },
+  { key: "models", en: "Models", ko: "\uBAA8\uB378" },
+  { key: "analyzed", en: "Analyzed", ko: "\uBD84\uC11D" },
+  { key: "chat", en: "Chat", ko: "\uCC44\uD305" },
+  { key: "advanced", en: "Advanced", ko: "\uACE0\uAE09" },
+  { key: "orchestration", en: "Orchestration", ko: "\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158" },
+  { key: "skills", en: "Skills", ko: "\uC2A4\uD0AC\uC2A4" },
+  { key: "parser", en: "Parser", ko: "\uD30C\uC11C" },
+  { key: "guide", en: "Guide", ko: "\uC124\uBA85" }
+];
+_KnowledgeWeaverSettingTab.QUICK_TAB_VISIBLE_NAME_PREFIXES = [
+  "Settings UI language",
+  "Provider",
+  "Ollama base URL",
+  "Q&A Ollama base URL",
+  "LM Studio base URL",
+  "OpenAI base URL",
+  "Quick model pickers",
+  "Local AI readiness"
+];
+_KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES = [
+  "Analyzed depth mode",
+  "Analyzed runtime estimate",
+  "Analyzed scope snapshot",
+  "Suggestion mode (recommended)",
+  "Show reasons for each field",
+  "Show progress notices",
+  "Analyze tags",
+  "Analyze topic",
+  "Analyze linked",
+  "Force all-to-all linked (deterministic)",
+  "Analyze index",
+  "Max tags",
+  "Max linked",
+  "Analyze changed notes only",
+  "Enable semantic candidate ranking",
+  "Embedding Ollama base URL",
+  "Embedding detected model picker",
+  "Embedding model (manual)",
+  "Auto-pick recommended embedding model",
+  "Embedding detection summary",
+  "Semantic top-k candidates",
+  "Semantic min similarity",
+  "Semantic source max chars",
+  "Remove legacy AI-prefixed keys",
+  "Enable cleanup rules during apply",
+  "Cleanup exact keys",
+  "Pick cleanup keys from selected notes",
+  "Cleanup key prefixes",
+  "Never remove these keys",
+  "Run cleanup command",
+  "Cleanup dry-run report folder",
+  "Sort tags and linked arrays",
+  "Include subfolders for selected folders",
+  "Selection path width percent",
+  "Excluded folder patterns",
+  "Watch folders for new notes",
+  "Watched folders",
+  "Auto-tag active note",
+  "Auto-tag cooldown seconds",
+  "Backup selected notes before apply",
+  "Backup root path",
+  "Backup retention count",
+  "Generate MOC after apply",
+  "MOC file path"
+];
+_KnowledgeWeaverSettingTab.MODELS_TAB_VISIBLE_NAME_PREFIXES = [
+  "Ollama detected model picker",
+  "Ollama model (manual)",
+  "Auto-pick recommended Ollama model",
+  "Ollama detection summary",
+  "LM Studio model",
+  "LM Studio API key (optional)",
+  "OpenAI model",
+  "OpenAI API key",
+  "Anthropic model",
+  "Anthropic API key",
+  "Gemini model",
+  "Gemini API key"
+];
+_KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
+  "Conversation mode (chat runtime)",
+  "One-click local presets",
+  "Quick custom profile slots",
+  "Prefer Ollama /api/chat (with fallback)",
+  "Q&A retrieval top-k",
+  "Q&A max context chars",
+  "Structured answer guard",
+  "Always detailed answers",
+  "Minimum answer chars",
+  "Preferred response language",
+  "Role preset",
+  "Q&A pipeline preset",
+  "Role model detection controls",
+  "Role model detection summary",
+  "Auto-pick recommended role models",
+  "Apply role recommendations now",
+  "Role recommendation summary",
+  "Ask model (text)",
+  "Ask model (vision)",
+  "Image generator model",
+  "Coder model",
+  "Architect model",
+  "Orchestrator model",
+  "Safeguard model",
+  "Pro preset base model",
+  "Pro preset vision model",
+  "Pro preset embedding model",
+  "Chat transcript folder path",
+  "Attachment ingest folder path",
+  "Auto-sync chat thread",
+  "PDF attachments in chat",
+  "Parser mode",
+  "Enable agent tool mode (experimental)",
+  "Require approval before tool execution",
+  "Allow shell tool (danger)",
+  "Agent shell full access (danger)",
+  "Shell tool timeout (seconds)",
+  "Shell tool default cwd (vault-relative, optional)",
+  "Agent path allowlist (absolute, comma/newline)"
+];
+_KnowledgeWeaverSettingTab.ADVANCED_TAB_VISIBLE_NAME_PREFIXES = [
+  "Allow non-local Q&A endpoint (danger)",
+  "Allowed outbound hosts (non-local Q&A)",
+  "Custom system prompt",
+  "Role system prompt editor",
+  "Preset override warning summary",
+  "Agent role model health check",
+  "Include selection inventory",
+  "Inventory max files"
+];
+_KnowledgeWeaverSettingTab.SIMPLE_HIDDEN_SECTION_TITLES = /* @__PURE__ */ new Set([
+  "Cloud provider config",
+  "Semantic linking (Ollama embeddings)",
+  "Property cleanup",
+  "Selection and backup",
+  "MOC"
+]);
+_KnowledgeWeaverSettingTab.SIMPLE_VISIBLE_NAME_PREFIXES = [
+  "Settings UI language",
+  "Plugin mission",
+  "Quick one-click setup",
+  "Conversation mode (chat runtime)",
+  "One-click local presets",
+  "Local AI readiness",
+  "Open preset guide"
+];
+_KnowledgeWeaverSettingTab.SIMPLE_HIDDEN_NAME_KEYWORDS = [
+  "Role model detection",
+  "Role recommendation",
+  "Ask model",
+  "Image generator model",
+  "Coder model",
+  "Architect model",
+  "Orchestrator model",
+  "Safeguard model",
+  "Role system prompt editor",
+  "Custom system prompt",
+  "Inventory max files"
+];
+var KnowledgeWeaverSettingTab = _KnowledgeWeaverSettingTab;
 var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
@@ -4277,9 +7455,16 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.embeddingDetectionSummary = "Embedding model detection has not run yet. Click refresh to detect installed Ollama models.";
     this.analysisCache = null;
     this.analysisCacheDirty = false;
+    this.pendingQaActionPlan = null;
     this.pendingNewNoteWatchPrompts = /* @__PURE__ */ new Set();
     this.autoTagInFlightPaths = /* @__PURE__ */ new Set();
     this.autoTagLastRunByPath = /* @__PURE__ */ new Map();
+    this.parserToolStatus = {
+      pdftotext: false,
+      pdftoppm: false,
+      tesseract: false
+    };
+    this.parserToolSummary = "Parser tool check has not run yet.";
   }
   async onload() {
     await this.loadSettings();
@@ -4290,8 +7475,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       (leaf) => new LocalQAWorkspaceView(leaf, this)
     );
     await this.cleanupLegacyCacheArtifacts();
+    void this.refreshParserToolReadinessForQa(false);
     this.addRibbonIcon("message-square", "Open Auto Link Local Chat", () => {
       void this.openLocalQaWorkspaceView();
+    });
+    this.addRibbonIcon("list-checks", "Open Auto Link Analyzed Track", () => {
+      void this.openAnalyzedTrack();
     });
     this.registerEvent(
       this.app.vault.on("create", (entry) => {
@@ -4315,6 +7504,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       callback: async () => this.openSelectionModal()
     });
     this.addCommand({
+      id: "open-analyzed-track",
+      name: "Open analyzed track (selection + analyzed settings)",
+      callback: async () => this.openAnalyzedTrack()
+    });
+    this.addCommand({
       id: "analyze-target-notes",
       name: "Analyze selected notes (suggestions by default)",
       callback: async () => this.runAnalysis()
@@ -4335,10 +7529,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       id: "clear-target-notes",
       name: "Clear selected target notes/folders",
       callback: async () => {
-        this.settings.targetFilePaths = [];
-        this.settings.targetFolderPaths = [];
-        await this.saveSettings();
-        this.notice("Target file/folder selection cleared.");
+        await this.clearSelectionForQa(true);
       }
     });
     this.addCommand({
@@ -4409,6 +7600,31 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     return this.ollamaDetectionOptions.map((option) => option.model);
   }
+  hasDetectedOllamaModel(modelName) {
+    const target = modelName.trim();
+    if (!target) {
+      return false;
+    }
+    return this.getDetectedOllamaModelNames().includes(target);
+  }
+  resolveDetectedRoleFallbackModel(role) {
+    var _a, _b, _c, _d;
+    const options = this.getRoleModelOptionsForQa(role);
+    const recommended = (_b = (_a = options.find((option) => option.status === "recommended")) == null ? void 0 : _a.model) == null ? void 0 : _b.trim();
+    if (recommended) {
+      return recommended;
+    }
+    const available = (_d = (_c = options.find((option) => option.status !== "unavailable")) == null ? void 0 : _c.model) == null ? void 0 : _d.trim();
+    return available || null;
+  }
+  getRoleModelSettingKey(role) {
+    var _a;
+    if (role === "debugger") {
+      return "qaCoderModel";
+    }
+    const found = ROLE_MODEL_SETTING_CONFIGS.find((config) => config.role === role);
+    return (_a = found == null ? void 0 : found.key) != null ? _a : null;
+  }
   readRoleModelSetting(key) {
     return this.settings[key].trim();
   }
@@ -4450,10 +7666,14 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     for (const config of ROLE_MODEL_SETTING_CONFIGS) {
       const options = this.getRoleModelOptionsForQa(config.role);
       const recommended = (_a = options.find((option) => option.status === "recommended")) == null ? void 0 : _a.model;
+      const current = this.readRoleModelSetting(config.key);
       if (!recommended) {
+        if (current.length > 0 && !isOllamaModelAllowedForQaRole(config.role, current)) {
+          this.writeRoleModelSetting(config.key, "");
+          changed += 1;
+        }
         continue;
       }
-      const current = this.readRoleModelSetting(config.key);
       const currentFound = current.length > 0 && options.some((option) => option.model === current);
       const currentUnavailable = current.length > 0 && !isOllamaModelAllowedForQaRole(config.role, current);
       const shouldApply = forceApply || legacyUniform || current.length === 0 || !currentFound || currentUnavailable;
@@ -4496,11 +7716,67 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     this.app.workspace.revealLeaf(leaf);
   }
+  async openAnalyzedTrack() {
+    var _a, _b;
+    const selectedFiles = this.getSelectedFiles();
+    const folderCounter = /* @__PURE__ */ new Map();
+    for (const file of selectedFiles) {
+      const folder = (0, import_obsidian4.normalizePath)(file.path.split("/").slice(0, -1).join("/")) || "(root)";
+      folderCounter.set(folder, ((_a = folderCounter.get(folder)) != null ? _a : 0) + 1);
+    }
+    const topFolders = [...folderCounter.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 4).map(([folder, count]) => `${folder}(${count})`);
+    const sampleFiles = selectedFiles.slice(0, 4).map((file) => file.path);
+    const cache = await this.loadAnalysisCache();
+    const cacheEntries = Object.keys(cache.entries).length;
+    this.settings.settingsActiveTab = "analyzed";
+    await this.saveSettings();
+    const appWithSetting = this.app;
+    if (typeof ((_b = appWithSetting.setting) == null ? void 0 : _b.open) === "function") {
+      appWithSetting.setting.open();
+      if (typeof appWithSetting.setting.openTabById === "function") {
+        appWithSetting.setting.openTabById(this.manifest.id);
+      }
+    }
+    this.notice(
+      [
+        `Analyzed snapshot: files=${selectedFiles.length}, selectedFolders=${this.settings.targetFolderPaths.length}, cacheEntries=${cacheEntries}`,
+        topFolders.length > 0 ? `Top folders: ${topFolders.join(", ")}` : "Top folders: (none)",
+        sampleFiles.length > 0 ? `Sample files: ${sampleFiles.join(", ")}` : "Sample files: (none)"
+      ].join(" | "),
+      7e3
+    );
+    await this.openSelectionModal();
+  }
+  async refreshOpenQaWorkspaceViews() {
+    const leaves = this.app.workspace.getLeavesOfType(LOCAL_QA_VIEW_TYPE);
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (view instanceof LocalQAWorkspaceView) {
+        await view.refreshFromSettingsForQa();
+      }
+    }
+  }
   getSelectedFilesForQa() {
     return this.getSelectedFiles();
   }
   getSelectedFolderPathsForQa() {
     return [...this.settings.targetFolderPaths];
+  }
+  getAnalyzedScopeSnapshotSummaryForQa() {
+    const files = this.getSelectedFiles();
+    const folderSet = /* @__PURE__ */ new Set();
+    for (const file of files) {
+      const folder = (0, import_obsidian4.normalizePath)(file.path.split("/").slice(0, -1).join("/")) || "(root)";
+      folderSet.add(folder);
+    }
+    const folderCount = folderSet.size;
+    const cacheCount = this.analysisCache ? Object.keys(this.analysisCache.entries).length : 0;
+    return [
+      `\uC120\uD0DD \uD30C\uC77C ${files.length}\uAC1C`,
+      `\uC120\uD0DD \uD3F4\uB354 ${this.settings.targetFolderPaths.length}\uAC1C`,
+      `\uD3EC\uD568 \uD3F4\uB354(\uD655\uC7A5) ${folderCount}\uAC1C`,
+      `\uBD84\uC11D \uCE90\uC2DC \uC5D4\uD2B8\uB9AC ${cacheCount}\uAC1C`
+    ].join(" | ");
   }
   getQaModelOverrideForQa() {
     return this.settings.qaOllamaModel.trim();
@@ -4510,6 +7786,67 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   getQaPipelinePresetForQa() {
     return this.settings.qaPipelinePreset;
+  }
+  getQaPresetProfileForQa() {
+    return this.settings.qaLocalPresetProfile;
+  }
+  getQaPresetProfileLabelForQa() {
+    return getQaLocalPresetProfileLabel(this.settings.qaLocalPresetProfile);
+  }
+  getQaConversationModeForQa() {
+    return this.settings.qaConversationMode;
+  }
+  getQaConversationModeLabelForQa() {
+    return getQaConversationModeLabel(this.settings.qaConversationMode);
+  }
+  getQaConversationModeOptionsForQa() {
+    return QA_CONVERSATION_MODE_OPTIONS;
+  }
+  applyQaConversationModePreset(mode) {
+    this.settings.qaConversationMode = mode;
+    switch (mode) {
+      case "ask":
+        this.settings.qaRolePreset = "ask";
+        this.settings.qaPipelinePreset = "legacy_auto";
+        this.settings.qaAgentToolModeEnabled = false;
+        this.settings.qaOrchestratorEnabled = false;
+        this.settings.qaSafeguardPassEnabled = false;
+        break;
+      case "plan":
+        this.settings.qaRolePreset = "ask";
+        this.settings.qaPipelinePreset = "orchestrator_safeguard";
+        this.settings.qaAgentToolModeEnabled = false;
+        this.settings.qaOrchestratorEnabled = true;
+        this.settings.qaSafeguardPassEnabled = true;
+        this.settings.qaAlwaysDetailedAnswer = true;
+        this.settings.qaMinAnswerChars = Math.max(260, this.settings.qaMinAnswerChars);
+        break;
+      case "agent":
+        this.settings.qaRolePreset = "ask";
+        this.settings.qaPipelinePreset = "legacy_auto";
+        this.settings.qaAgentToolModeEnabled = true;
+        this.settings.qaAgentRequireApproval = true;
+        this.settings.qaOrchestratorEnabled = false;
+        this.settings.qaSafeguardPassEnabled = false;
+        break;
+      case "orchestration":
+        this.settings.qaRolePreset = "orchestrator";
+        this.settings.qaPipelinePreset = "orchestrator_auto_route";
+        this.settings.qaAgentToolModeEnabled = false;
+        this.settings.qaOrchestratorEnabled = true;
+        this.settings.qaSafeguardPassEnabled = true;
+        this.settings.qaAlwaysDetailedAnswer = true;
+        this.settings.qaMinAnswerChars = Math.max(320, this.settings.qaMinAnswerChars);
+        break;
+      default:
+        break;
+    }
+  }
+  async setQaConversationModeForQa(mode) {
+    this.applyQaConversationModePreset(mode);
+    this.settings.qaLocalPresetProfile = "custom";
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
   }
   getQaRolePresetOptionsForQa() {
     return QA_ROLE_PRESET_OPTIONS;
@@ -4524,10 +7861,50 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getQaEmbeddingModelForQa() {
     return this.settings.semanticOllamaModel.trim();
   }
+  getQaParserModeForQa() {
+    return this.settings.qaParserMode === "detailed" ? "detailed" : "fast";
+  }
+  getParserToolReadinessSummaryForQa() {
+    return this.parserToolSummary;
+  }
+  getParserToolReadinessLinesForQa() {
+    const tools = ["pdftotext", "pdftoppm", "tesseract"];
+    return tools.map((tool) => `${tool}: ${this.parserToolStatus[tool] ? "ready" : "missing"}`);
+  }
+  async isShellCommandAvailable(command) {
+    const safe = command.trim();
+    if (!/^[A-Za-z0-9._-]+$/.test(safe)) {
+      return false;
+    }
+    try {
+      await execAsync(`command -v ${safe}`);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  async refreshParserToolReadinessForQa(notify) {
+    const pdftotext = await this.isShellCommandAvailable("pdftotext");
+    const pdftoppm = await this.isShellCommandAvailable("pdftoppm");
+    const tesseract = await this.isShellCommandAvailable("tesseract");
+    this.parserToolStatus = { pdftotext, pdftoppm, tesseract };
+    const coreReady = pdftotext && pdftoppm && tesseract;
+    this.parserToolSummary = [
+      `PDF text: ${pdftotext ? "ready" : "missing"}`,
+      `PDF OCR render: ${pdftoppm ? "ready" : "missing"}`,
+      `OCR engine: ${tesseract ? "ready" : "missing"}`,
+      coreReady ? "Detailed parser chain available." : "Fallback parser mode will be used for missing tools."
+    ].join(" | ");
+    if (notify) {
+      this.notice(this.parserToolSummary, 7e3);
+    }
+    return this.parserToolSummary;
+  }
   getQaRoleModelSummaryForQa() {
     const entries = [
       { role: "ask", short: "ask" },
       { role: "ask_vision", short: "vision" },
+      { role: "image_generator", short: "image" },
       { role: "orchestrator", short: "orch" },
       { role: "architect", short: "arch" },
       { role: "coder", short: "coder" },
@@ -4539,6 +7916,35 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       const status = isOllamaModelAllowedForQaRole(entry.role, model) ? "" : "(\uBD88\uAC00)";
       return `${entry.short}=${model}${status}`;
     }).join(", ");
+  }
+  getQaAgentModeSummaryForQa() {
+    if (!this.settings.qaAgentToolModeEnabled) {
+      return "off";
+    }
+    const parts = [
+      this.settings.qaAgentRequireApproval ? "approval" : "auto",
+      this.settings.qaAgentAllowShellTool ? "shell:on" : "shell:off",
+      this.settings.qaAgentShellFullAccess ? "access:full" : "access:scoped"
+    ];
+    if (this.pendingQaActionPlan) {
+      parts.push(`pending:${this.pendingQaActionPlan.actions.length}`);
+    }
+    return parts.join(",");
+  }
+  isQaContextEnabledForQa() {
+    return this.settings.qaContextInChat;
+  }
+  async setQaContextEnabledForQa(enabled) {
+    this.settings.qaContextInChat = enabled;
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+  }
+  isQaAgentToolModeEnabledForQa() {
+    return this.settings.qaAgentToolModeEnabled;
+  }
+  async setQaAgentToolModeEnabledForQa(enabled) {
+    this.settings.qaAgentToolModeEnabled = enabled;
+    await this.saveSettings();
   }
   getQaRoleSystemPromptForQa(role) {
     switch (role) {
@@ -4558,6 +7964,28 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         return this.settings.qaOrchestratorSystemPrompt;
       case "safeguard":
         return this.settings.qaSafeguardSystemPrompt;
+      default:
+        return "";
+    }
+  }
+  getDefaultQaRoleSystemPromptForQa(role) {
+    switch (role) {
+      case "ask":
+        return DEFAULT_SETTINGS.qaAskSystemPrompt;
+      case "ask_vision":
+        return DEFAULT_SETTINGS.qaAskVisionSystemPrompt;
+      case "image_generator":
+        return DEFAULT_SETTINGS.qaImageGeneratorSystemPrompt;
+      case "coder":
+        return DEFAULT_SETTINGS.qaCoderSystemPrompt;
+      case "debugger":
+        return DEFAULT_SETTINGS.qaDebuggerSystemPrompt;
+      case "architect":
+        return DEFAULT_SETTINGS.qaArchitectSystemPrompt;
+      case "orchestrator":
+        return DEFAULT_SETTINGS.qaOrchestratorSystemPrompt;
+      case "safeguard":
+        return DEFAULT_SETTINGS.qaSafeguardSystemPrompt;
       default:
         return "";
     }
@@ -4605,24 +8033,499 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   async setQaModelOverrideForQa(modelOverride) {
     this.settings.qaOllamaModel = modelOverride.trim();
+    this.settings.qaLocalPresetProfile = "custom";
     await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+  }
+  async applyQaChatModelSelectionForQa(role, modelName) {
+    const next = modelName.trim();
+    this.settings.qaOllamaModel = next;
+    this.settings.qaLocalPresetProfile = "custom";
+    const roleKey = this.getRoleModelSettingKey(role);
+    if (roleKey) {
+      this.settings[roleKey] = next;
+    }
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
   }
   async setQaRolePresetForQa(rolePreset) {
     this.settings.qaRolePreset = rolePreset;
+    this.settings.qaLocalPresetProfile = "custom";
     await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
   }
   async setQaPipelinePresetForQa(pipelinePreset) {
     this.settings.qaPipelinePreset = pipelinePreset;
+    this.settings.qaLocalPresetProfile = "custom";
     await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+  }
+  getPresetRank(preset) {
+    switch (preset) {
+      case "quality_local":
+        return 3;
+      case "balanced_local":
+        return 2;
+      case "fast_local":
+      default:
+        return 1;
+    }
+  }
+  resolveHardwarePresetCeiling() {
+    var _a, _b;
+    const ramGiB = Number((nodeOs.totalmem() / 1024 ** 3).toFixed(1));
+    const cpuThreads = (_b = (_a = nodeOs.cpus()) == null ? void 0 : _a.length) != null ? _b : 0;
+    if (!Number.isFinite(ramGiB) || ramGiB <= 0) {
+      return {
+        ceiling: "balanced_local",
+        ramGiB: 0,
+        cpuThreads,
+        reason: "RAM \uC815\uBCF4\uB97C \uC815\uD655\uD788 \uC77D\uC9C0 \uBABB\uD574 Pro\uAE4C\uC9C0 \uD5C8\uC6A9\uD569\uB2C8\uB2E4."
+      };
+    }
+    if (ramGiB < 16 || cpuThreads < 6) {
+      return {
+        ceiling: "fast_local",
+        ramGiB,
+        cpuThreads,
+        reason: "RAM<16GB \uB610\uB294 CPU \uC2A4\uB808\uB4DC<6 \uC774\uBBC0\uB85C Flash \uAD8C\uC7A5/\uC81C\uD55C\uC785\uB2C8\uB2E4."
+      };
+    }
+    if (ramGiB < 32 || cpuThreads < 10) {
+      return {
+        ceiling: "balanced_local",
+        ramGiB,
+        cpuThreads,
+        reason: "\uC911\uAC04\uAE09 \uC0AC\uC591\uC73C\uB85C Pro\uAE4C\uC9C0 \uC548\uC815\uC801\uC785\uB2C8\uB2E4."
+      };
+    }
+    return {
+      ceiling: "quality_local",
+      ramGiB,
+      cpuThreads,
+      reason: "\uACE0\uC0AC\uC591\uC73C\uB85C Pro(\uD655\uC7A5) \uAD6C\uC131\uC774 \uAD8C\uC7A5\uB429\uB2C8\uB2E4."
+    };
+  }
+  getHardwareCapabilitySummaryForQa() {
+    const profile = this.resolveHardwarePresetCeiling();
+    const ceilingLabel = profile.ceiling === "fast_local" ? "Flash" : "Pro";
+    const ramText = profile.ramGiB > 0 ? `${profile.ramGiB}GB` : "unknown";
+    return `Hardware: RAM=${ramText}, CPU threads=${profile.cpuThreads || "unknown"} | Max preset=${ceilingLabel}. ${profile.reason}`;
+  }
+  clampPresetByHardware(requested) {
+    const profile = this.resolveHardwarePresetCeiling();
+    if (this.getPresetRank(requested) <= this.getPresetRank(profile.ceiling)) {
+      return {
+        effective: requested,
+        note: ""
+      };
+    }
+    const requestedLabel = requested === "fast_local" ? "Flash" : "Pro";
+    const effectiveLabel = profile.ceiling === "fast_local" ? "Flash" : "Pro";
+    return {
+      effective: profile.ceiling,
+      note: `Requested ${requestedLabel}, but hardware limit applied: ${effectiveLabel}. ${profile.reason}`
+    };
+  }
+  scoreModelForPreset(modelName, preset, requireVision) {
+    const lower = modelName.toLowerCase();
+    if (requireVision && !VISION_MODEL_REGEX.test(lower)) {
+      return -1e3;
+    }
+    const sizeB = extractModelSizeBillions(lower);
+    if (sizeB === null) {
+      return requireVision ? 2 : 4;
+    }
+    if (preset === "fast_local") {
+      if (sizeB <= 9) {
+        return 120 - Math.abs(sizeB - 7) * 6;
+      }
+      return 40 - (sizeB - 9) * 8;
+    }
+    if (preset === "balanced_local") {
+      if (sizeB >= 7 && sizeB <= 20) {
+        return 130 - Math.abs(sizeB - 13) * 4;
+      }
+      if (sizeB < 7) {
+        return 70 - (7 - sizeB) * 6;
+      }
+      return 65 - (sizeB - 20) * 5;
+    }
+    if (sizeB >= 20) {
+      return 150 - Math.abs(sizeB - 32) * 2;
+    }
+    return 75 - (20 - sizeB) * 4;
+  }
+  pickPresetModelFromOptions(options, preset, requireVision = false) {
+    var _a, _b;
+    const candidates = options.filter((option) => option.status !== "unavailable").map((option) => ({
+      model: option.model,
+      score: this.scoreModelForPreset(option.model, preset, requireVision) + (option.status === "recommended" ? 8 : 0)
+    })).filter((item) => item.score > -900).sort((a, b) => b.score - a.score || a.model.localeCompare(b.model));
+    return (_b = (_a = candidates[0]) == null ? void 0 : _a.model) != null ? _b : null;
+  }
+  getRecommendedPresetOverrideModelForQa(preset, kind) {
+    var _a, _b, _c, _d;
+    if (kind === "embedding") {
+      const embeddingOptions = this.getEmbeddingModelOptions();
+      return (_b = (_a = embeddingOptions.find((option) => option.status === "recommended")) == null ? void 0 : _a.model) != null ? _b : "";
+    }
+    if (kind === "vision") {
+      const askVisionOptions = this.getRoleModelOptionsForQa("ask_vision");
+      return (_c = this.pickPresetModelFromOptions(askVisionOptions, preset, true)) != null ? _c : "";
+    }
+    const textOptions = this.getOllamaModelOptions();
+    return (_d = this.pickPresetModelFromOptions(textOptions, preset, false)) != null ? _d : "";
+  }
+  applyPresetAwareRoleModels(preset) {
+    const baseModel = this.pickPresetModelFromOptions(this.getOllamaModelOptions(), preset, false) || this.settings.ollamaModel.trim();
+    if (baseModel) {
+      this.settings.ollamaModel = baseModel;
+      this.settings.qaOllamaModel = baseModel;
+    }
+    let roleAssignedCount = 0;
+    let visionModel = "";
+    for (const config of ROLE_MODEL_SETTING_CONFIGS) {
+      const options = this.getRoleModelOptionsForQa(config.role);
+      const selected = this.pickPresetModelFromOptions(
+        options,
+        preset,
+        config.role === "ask_vision"
+      );
+      if (!selected) {
+        continue;
+      }
+      this.writeRoleModelSetting(config.key, selected);
+      roleAssignedCount += 1;
+      if (config.role === "ask_vision") {
+        visionModel = selected;
+      }
+    }
+    if (!visionModel) {
+      this.settings.qaAskVisionModel = "";
+    }
+    return {
+      baseModel: this.settings.ollamaModel.trim(),
+      visionModel,
+      roleAssignedCount
+    };
+  }
+  async applyOneClickLocalPresetForQa(preset) {
+    var _a;
+    const presetClamp = this.clampPresetByHardware(preset);
+    const effectivePreset = presetClamp.effective;
+    const previousProvider = this.settings.provider;
+    this.settings.ollamaBaseUrl = this.settings.ollamaBaseUrl.trim() || DEFAULT_SETTINGS.ollamaBaseUrl;
+    this.settings.qaOllamaBaseUrl = this.settings.qaOllamaBaseUrl.trim() || this.settings.ollamaBaseUrl;
+    this.settings.semanticOllamaBaseUrl = this.settings.semanticOllamaBaseUrl.trim() || this.settings.ollamaBaseUrl;
+    this.settings.qaAllowNonLocalEndpoint = false;
+    this.settings.qaAgentRequireApproval = true;
+    this.settings.qaAgentAllowShellTool = false;
+    this.settings.qaAgentShellFullAccess = false;
+    this.settings.qaPreferChatApi = true;
+    this.settings.qaThreadAutoSyncEnabled = true;
+    this.settings.qaRoleModelAutoPickEnabled = true;
+    this.settings.semanticAutoPickEnabled = true;
+    this.settings.qaLocalPresetProfile = effectivePreset;
+    let summary = "";
+    if (effectivePreset === "fast_local") {
+      this.settings.suggestionMode = true;
+      this.settings.includeReasons = false;
+      this.settings.analysisOnlyChangedNotes = true;
+      this.settings.semanticLinkingEnabled = false;
+      this.settings.qaTopK = 3;
+      this.settings.qaMaxContextChars = 8e3;
+      this.settings.qaStructureGuardEnabled = false;
+      this.settings.qaAlwaysDetailedAnswer = false;
+      this.settings.qaMinAnswerChars = 180;
+      this.settings.qaRolePreset = "ask";
+      this.settings.qaPipelinePreset = "legacy_auto";
+      this.settings.qaConversationMode = "ask";
+      this.settings.qaOrchestratorEnabled = false;
+      this.settings.qaSafeguardPassEnabled = false;
+      this.settings.qaIncludeSelectionInventory = false;
+      this.settings.qaSelectionInventoryMaxFiles = 100;
+      summary = "Flash preset applied: speed-first local mode (lightweight pipeline, short context, concise responses).";
+    } else if (effectivePreset === "quality_local") {
+      this.settings.suggestionMode = true;
+      this.settings.includeReasons = true;
+      this.settings.analysisOnlyChangedNotes = false;
+      this.settings.semanticLinkingEnabled = true;
+      this.settings.semanticTopK = Math.max(this.settings.semanticTopK, 36);
+      this.settings.semanticMinSimilarity = Math.min(this.settings.semanticMinSimilarity, 0.2);
+      this.settings.qaTopK = 8;
+      this.settings.qaMaxContextChars = Math.max(this.settings.qaMaxContextChars, 22e3);
+      this.settings.qaStructureGuardEnabled = true;
+      this.settings.qaAlwaysDetailedAnswer = true;
+      this.settings.qaMinAnswerChars = Math.max(this.settings.qaMinAnswerChars, 650);
+      this.settings.qaRolePreset = "orchestrator";
+      this.settings.qaPipelinePreset = "orchestrator_architect_coder_safeguard";
+      this.settings.qaConversationMode = "orchestration";
+      this.settings.qaOrchestratorEnabled = true;
+      this.settings.qaSafeguardPassEnabled = true;
+      this.settings.qaIncludeSelectionInventory = true;
+      this.settings.qaSelectionInventoryMaxFiles = Math.max(
+        this.settings.qaSelectionInventoryMaxFiles,
+        400
+      );
+      summary = "Legacy Quality+ preset applied: quality-first local mode (semantic on, deep pipeline, extended context).";
+    } else {
+      this.settings.suggestionMode = true;
+      this.settings.includeReasons = true;
+      this.settings.analysisOnlyChangedNotes = false;
+      this.settings.semanticLinkingEnabled = true;
+      this.settings.qaTopK = 5;
+      this.settings.qaMaxContextChars = 12e3;
+      this.settings.qaStructureGuardEnabled = true;
+      this.settings.qaAlwaysDetailedAnswer = true;
+      this.settings.qaMinAnswerChars = 320;
+      this.settings.qaRolePreset = "ask";
+      this.settings.qaPipelinePreset = "orchestrator_safeguard";
+      this.settings.qaConversationMode = "plan";
+      this.settings.qaOrchestratorEnabled = false;
+      this.settings.qaSafeguardPassEnabled = true;
+      this.settings.qaIncludeSelectionInventory = true;
+      this.settings.qaSelectionInventoryMaxFiles = Math.max(
+        this.settings.qaSelectionInventoryMaxFiles,
+        200
+      );
+      summary = "Pro preset applied: balanced local mode (semantic on, moderate context, safe defaults).";
+    }
+    const detected = await this.refreshOllamaDetection({
+      notify: false,
+      autoApply: true
+    });
+    const detectedModels = (_a = detected == null ? void 0 : detected.models) != null ? _a : [];
+    const hasDetectedLocalModels = detectedModels.length > 0;
+    let detectionSummary = "";
+    if (hasDetectedLocalModels) {
+      this.settings.provider = "ollama";
+      const embeddingDetected = await this.refreshEmbeddingModelDetection({
+        notify: false,
+        autoApply: true
+      });
+      const modelLayout = this.applyPresetAwareRoleModels(effectivePreset);
+      if (embeddingDetected == null ? void 0 : embeddingDetected.recommended) {
+        this.settings.semanticOllamaModel = embeddingDetected.recommended;
+      }
+      const manualOverrides = [];
+      if (effectivePreset === "balanced_local") {
+        const baseOverride = this.settings.qaBalancedPresetBaseModel.trim();
+        const visionOverride = this.settings.qaBalancedPresetVisionModel.trim();
+        const embeddingOverride = this.settings.qaBalancedPresetEmbeddingModel.trim();
+        if (baseOverride) {
+          this.settings.ollamaModel = baseOverride;
+          this.settings.qaOllamaModel = baseOverride;
+          manualOverrides.push(`base=${baseOverride}`);
+        }
+        if (visionOverride) {
+          this.settings.qaAskVisionModel = visionOverride;
+          manualOverrides.push(`vision=${visionOverride}`);
+        }
+        if (embeddingOverride) {
+          this.settings.semanticOllamaModel = embeddingOverride;
+          manualOverrides.push(`embedding=${embeddingOverride}`);
+        }
+      } else if (effectivePreset === "quality_local") {
+        const baseOverride = this.settings.qaQualityPresetBaseModel.trim();
+        const visionOverride = this.settings.qaQualityPresetVisionModel.trim();
+        const embeddingOverride = this.settings.qaQualityPresetEmbeddingModel.trim();
+        if (baseOverride) {
+          this.settings.ollamaModel = baseOverride;
+          this.settings.qaOllamaModel = baseOverride;
+          manualOverrides.push(`base=${baseOverride}`);
+        }
+        if (visionOverride) {
+          this.settings.qaAskVisionModel = visionOverride;
+          manualOverrides.push(`vision=${visionOverride}`);
+        }
+        if (embeddingOverride) {
+          this.settings.semanticOllamaModel = embeddingOverride;
+          manualOverrides.push(`embedding=${embeddingOverride}`);
+        }
+      }
+      const visionModel = modelLayout.visionModel || this.resolveVisionModelForImageAttachments();
+      detectionSummary = `Detected ${detectedModels.length} local model(s). Auto-assigned base model=${this.settings.ollamaModel || "(none)"}, embedding=${this.settings.semanticOllamaModel || "(none)"}, vision=${visionModel || "(not detected)"}, role fields=${modelLayout.roleAssignedCount}.` + (manualOverrides.length > 0 ? ` Manual preset overrides: ${manualOverrides.join(", ")}.` : "");
+    } else {
+      this.settings.provider = previousProvider;
+      detectionSummary = "No local model was detected. Provider was kept as-is. Start Ollama and install text/vision/embedding models, then re-run preset.";
+    }
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+    const clampNote = presetClamp.note ? ` ${presetClamp.note}` : "";
+    return `${summary} ${detectionSummary}${clampNote}`.trim();
+  }
+  buildQaQuickCustomProfileSnapshot(label) {
+    return {
+      version: 1,
+      savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      label: label.trim() || "Quick custom profile",
+      settings: {
+        qaLocalPresetProfile: this.settings.qaLocalPresetProfile,
+        ollamaModel: this.settings.ollamaModel,
+        qaOllamaModel: this.settings.qaOllamaModel,
+        semanticOllamaModel: this.settings.semanticOllamaModel,
+        qaAskModel: this.settings.qaAskModel,
+        qaAskVisionModel: this.settings.qaAskVisionModel,
+        qaImageGeneratorModel: this.settings.qaImageGeneratorModel,
+        qaCoderModel: this.settings.qaCoderModel,
+        qaArchitectModel: this.settings.qaArchitectModel,
+        qaOrchestratorModel: this.settings.qaOrchestratorModel,
+        qaSafeguardModel: this.settings.qaSafeguardModel,
+        qaTopK: this.settings.qaTopK,
+        qaMaxContextChars: this.settings.qaMaxContextChars,
+        qaRolePreset: this.settings.qaRolePreset,
+        qaPipelinePreset: this.settings.qaPipelinePreset,
+        qaStructureGuardEnabled: this.settings.qaStructureGuardEnabled,
+        qaAlwaysDetailedAnswer: this.settings.qaAlwaysDetailedAnswer,
+        qaMinAnswerChars: this.settings.qaMinAnswerChars,
+        qaRoleModelAutoPickEnabled: this.settings.qaRoleModelAutoPickEnabled,
+        semanticAutoPickEnabled: this.settings.semanticAutoPickEnabled,
+        qaBalancedPresetBaseModel: this.settings.qaBalancedPresetBaseModel,
+        qaBalancedPresetVisionModel: this.settings.qaBalancedPresetVisionModel,
+        qaBalancedPresetEmbeddingModel: this.settings.qaBalancedPresetEmbeddingModel,
+        qaQualityPresetBaseModel: this.settings.qaQualityPresetBaseModel,
+        qaQualityPresetVisionModel: this.settings.qaQualityPresetVisionModel,
+        qaQualityPresetEmbeddingModel: this.settings.qaQualityPresetEmbeddingModel,
+        qaAttachmentIngestRootPath: this.settings.qaAttachmentIngestRootPath
+      }
+    };
+  }
+  parseQaQuickCustomProfileSlot(raw) {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!parsed || typeof parsed !== "object" || !parsed.settings) {
+        return null;
+      }
+      if (typeof parsed.savedAt !== "string") {
+        return null;
+      }
+      return parsed;
+    } catch (e) {
+      return null;
+    }
+  }
+  getQaQuickCustomProfileSlotSummary(slotKey) {
+    const parsed = this.parseQaQuickCustomProfileSlot(this.settings[slotKey]);
+    if (!parsed) {
+      return "\uC800\uC7A5\uB41C \uD504\uB85C\uD544 \uC5C6\uC74C";
+    }
+    const stamp = parsed.savedAt.replace("T", " ").replace("Z", " UTC");
+    return `${parsed.label || "Custom"} \xB7 ${stamp}`;
+  }
+  async saveQaQuickCustomProfileSlot(slotKey, label) {
+    const snapshot = this.buildQaQuickCustomProfileSnapshot(label);
+    this.settings[slotKey] = JSON.stringify(snapshot);
+    await this.saveSettings();
+    return `${snapshot.label} \uC800\uC7A5 \uC644\uB8CC (${snapshot.savedAt})`;
+  }
+  async applyQaQuickCustomProfileSlot(slotKey) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const parsed = this.parseQaQuickCustomProfileSlot(this.settings[slotKey]);
+    if (!parsed) {
+      throw new Error("\uC800\uC7A5\uB41C \uCEE4\uC2A4\uD140 \uD504\uB85C\uD544\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.");
+    }
+    const next = parsed.settings;
+    const roleValid = QA_ROLE_PRESET_OPTIONS.some((option) => option.value === next.qaRolePreset);
+    const pipelineValid = QA_PIPELINE_PRESET_OPTIONS.some(
+      (option) => option.value === next.qaPipelinePreset
+    );
+    this.settings.qaLocalPresetProfile = next.qaLocalPresetProfile;
+    this.settings.ollamaModel = next.ollamaModel;
+    this.settings.qaOllamaModel = next.qaOllamaModel;
+    this.settings.semanticOllamaModel = next.semanticOllamaModel;
+    this.settings.qaAskModel = next.qaAskModel;
+    this.settings.qaAskVisionModel = next.qaAskVisionModel;
+    this.settings.qaImageGeneratorModel = next.qaImageGeneratorModel;
+    this.settings.qaCoderModel = next.qaCoderModel;
+    this.settings.qaArchitectModel = next.qaArchitectModel;
+    this.settings.qaOrchestratorModel = next.qaOrchestratorModel;
+    this.settings.qaSafeguardModel = next.qaSafeguardModel;
+    this.settings.qaTopK = Math.max(1, Math.min(15, Math.floor(next.qaTopK || this.settings.qaTopK)));
+    this.settings.qaMaxContextChars = Math.max(
+      1200,
+      Math.min(5e4, Math.floor(next.qaMaxContextChars || this.settings.qaMaxContextChars))
+    );
+    if (roleValid) {
+      this.settings.qaRolePreset = next.qaRolePreset;
+    }
+    if (pipelineValid) {
+      this.settings.qaPipelinePreset = next.qaPipelinePreset;
+    }
+    this.settings.qaStructureGuardEnabled = Boolean(next.qaStructureGuardEnabled);
+    this.settings.qaAlwaysDetailedAnswer = Boolean(next.qaAlwaysDetailedAnswer);
+    this.settings.qaMinAnswerChars = Math.max(
+      60,
+      Math.min(3e3, Math.floor(next.qaMinAnswerChars || this.settings.qaMinAnswerChars))
+    );
+    this.settings.qaRoleModelAutoPickEnabled = Boolean(next.qaRoleModelAutoPickEnabled);
+    this.settings.semanticAutoPickEnabled = Boolean(next.semanticAutoPickEnabled);
+    this.settings.qaBalancedPresetBaseModel = (_a = next.qaBalancedPresetBaseModel) != null ? _a : "";
+    this.settings.qaBalancedPresetVisionModel = (_b = next.qaBalancedPresetVisionModel) != null ? _b : "";
+    this.settings.qaBalancedPresetEmbeddingModel = (_c = next.qaBalancedPresetEmbeddingModel) != null ? _c : "";
+    this.settings.qaQualityPresetBaseModel = (_d = next.qaQualityPresetBaseModel) != null ? _d : "";
+    this.settings.qaQualityPresetVisionModel = (_e = next.qaQualityPresetVisionModel) != null ? _e : "";
+    this.settings.qaQualityPresetEmbeddingModel = (_f = next.qaQualityPresetEmbeddingModel) != null ? _f : "";
+    this.settings.qaAttachmentIngestRootPath = (0, import_obsidian4.normalizePath)(
+      ((_g = next.qaAttachmentIngestRootPath) != null ? _g : "").trim() || this.settings.qaAttachmentIngestRootPath || DEFAULT_SETTINGS.qaAttachmentIngestRootPath
+    );
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+    return `${parsed.label || "Custom"} \uD504\uB85C\uD544\uC744 \uC801\uC6A9\uD588\uC2B5\uB2C8\uB2E4.`;
+  }
+  async applyRecommendedQuickSetupForQa() {
+    const presetSummary = await this.applyOneClickLocalPresetForQa("balanced_local");
+    await this.refreshOllamaDetection({ notify: false, autoApply: true });
+    await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+    await this.applyRecommendedRoleModelsForQa(false, true);
+    this.settings.qaLocalPresetProfile = "balanced_local";
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+    return `\uCD94\uCC9C \uC138\uD305 \uC801\uC6A9 \uC644\uB8CC: ${presetSummary}`;
   }
   async openSelectionForQa() {
     await this.openSelectionModal();
+    await this.refreshOpenQaWorkspaceViews();
+  }
+  async clearSelectionForQa(notify) {
+    this.settings.targetFilePaths = [];
+    this.settings.targetFolderPaths = [];
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+    if (notify) {
+      this.notice("Target file/folder selection cleared.");
+    }
   }
   async openCleanupKeyPickerForQa() {
     await this.openCleanupKeyPicker();
   }
   async runCleanupForQa(dryRun) {
     await this.runPropertyCleanup(dryRun);
+  }
+  getAgentShellFolderOptionsForQa() {
+    const out = /* @__PURE__ */ new Set(["."]);
+    const all = this.app.vault.getAllLoadedFiles();
+    for (const entry of all) {
+      if (!(entry instanceof import_obsidian4.TFolder)) {
+        continue;
+      }
+      const normalized = (0, import_obsidian4.normalizePath)(entry.path.trim());
+      if (!normalized || normalized === ".") {
+        continue;
+      }
+      out.add(normalized);
+    }
+    return [...out].sort((a, b) => {
+      const depthDiff = a.split("/").length - b.split("/").length;
+      if (depthDiff !== 0) {
+        return depthDiff;
+      }
+      return a.localeCompare(b);
+    });
   }
   getChatTranscriptRootPathForQa() {
     return this.settings.chatTranscriptRootPath.trim();
@@ -4651,10 +8554,14 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     return normalized;
   }
+  sanitizeVaultFolderPathForQa(rawPath, fallback, label) {
+    return this.resolveSafeFolderPath(rawPath, fallback, label);
+  }
   async setChatTranscriptRootPathForQa(path) {
     const next = this.resolveSafeFolderPath(path, "Auto Link Chats", "Chat transcript");
     this.settings.chatTranscriptRootPath = next;
     await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
   }
   async setBackupRootPathForQa(path) {
     const next = this.resolveSafeFolderPath(path, "Auto Link Backups", "Backup root");
@@ -4703,6 +8610,18 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       throw new Error(`${label} path must end with .md`);
     }
     return normalized;
+  }
+  async allocateTimestampedMocPath(basePath) {
+    const safeBasePath = this.resolveSafeMarkdownPath(basePath, "MOC");
+    const baseWithoutExt = safeBasePath.replace(/\.md$/i, "");
+    const stamp = formatBackupStamp(/* @__PURE__ */ new Date());
+    let outputPath = (0, import_obsidian4.normalizePath)(`${baseWithoutExt}-${stamp}.md`);
+    let suffix = 1;
+    while (await this.app.vault.adapter.exists(outputPath)) {
+      outputPath = (0, import_obsidian4.normalizePath)(`${baseWithoutExt}-${stamp}-${suffix}.md`);
+      suffix += 1;
+    }
+    return outputPath;
   }
   async allocateLocalQaThreadPath(threadId) {
     const folder = this.resolveSafeFolderPath(
@@ -4759,11 +8678,22 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     lines.push("");
     for (const message of messages) {
       if (message.role === "system") {
-        lines.push(`> [System ${message.timestamp}] ${message.text}`);
+        lines.push(`> [!note]- System (${message.timestamp})`);
+        for (const line of message.text.split(/\r?\n/)) {
+          lines.push(`> ${line}`);
+        }
         lines.push("");
         continue;
       }
-      const label = message.role === "assistant" ? "Assistant" : message.role === "thinking" ? "Thinking" : "User";
+      if (message.role === "thinking") {
+        lines.push(`> [!abstract]- Thinking (${message.timestamp})`);
+        for (const line of message.text.split(/\r?\n/)) {
+          lines.push(`> ${line}`);
+        }
+        lines.push("");
+        continue;
+      }
+      const label = message.role === "assistant" ? "Assistant" : "User";
       lines.push(`## ${label} (${message.timestamp})`);
       lines.push(message.text);
       if (message.role === "assistant" && message.sources && message.sources.length > 0) {
@@ -4940,6 +8870,19 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    if (this.settings.settingsViewMode !== "simple" && this.settings.settingsViewMode !== "full") {
+      this.settings.settingsViewMode = DEFAULT_SETTINGS.settingsViewMode;
+    }
+    this.settings.settingsViewMode = "full";
+    if (this.settings.settingsUiLanguage !== "ko" && this.settings.settingsUiLanguage !== "en" && this.settings.settingsUiLanguage !== "bilingual") {
+      this.settings.settingsUiLanguage = DEFAULT_SETTINGS.settingsUiLanguage;
+    }
+    if (this.settings.settingsActiveTab !== "quick" && this.settings.settingsActiveTab !== "analyzed" && this.settings.settingsActiveTab !== "models" && this.settings.settingsActiveTab !== "chat" && this.settings.settingsActiveTab !== "advanced" && this.settings.settingsActiveTab !== "orchestration" && this.settings.settingsActiveTab !== "skills" && this.settings.settingsActiveTab !== "parser" && this.settings.settingsActiveTab !== "guide") {
+      this.settings.settingsActiveTab = DEFAULT_SETTINGS.settingsActiveTab;
+    }
+    if (this.settings.settingsActiveTab === "workflow") {
+      this.settings.settingsActiveTab = "analyzed";
+    }
     if (!Array.isArray(this.settings.targetFilePaths)) {
       this.settings.targetFilePaths = [];
     }
@@ -5006,6 +8949,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
       this.settings.qaAllowNonLocalEndpoint = DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
     }
+    if (typeof this.settings.qaAllowedOutboundHosts !== "string") {
+      this.settings.qaAllowedOutboundHosts = DEFAULT_SETTINGS.qaAllowedOutboundHosts;
+    }
     if (typeof this.settings.qaPreferChatApi !== "boolean") {
       this.settings.qaPreferChatApi = DEFAULT_SETTINGS.qaPreferChatApi;
     }
@@ -5020,6 +8966,22 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (this.settings.qaPreferredResponseLanguage !== "auto" && this.settings.qaPreferredResponseLanguage !== "korean" && this.settings.qaPreferredResponseLanguage !== "english") {
       this.settings.qaPreferredResponseLanguage = DEFAULT_SETTINGS.qaPreferredResponseLanguage;
+    }
+    const presetProfile = this.settings.qaLocalPresetProfile;
+    if (presetProfile !== "fast_local" && presetProfile !== "balanced_local" && presetProfile !== "quality_local" && presetProfile !== "custom") {
+      this.settings.qaLocalPresetProfile = DEFAULT_SETTINGS.qaLocalPresetProfile;
+    }
+    if (this.settings.qaConversationMode !== "ask" && this.settings.qaConversationMode !== "plan" && this.settings.qaConversationMode !== "agent" && this.settings.qaConversationMode !== "orchestration") {
+      this.settings.qaConversationMode = DEFAULT_SETTINGS.qaConversationMode;
+    }
+    if (typeof this.settings.qaQuickCustomProfileSlot1 !== "string") {
+      this.settings.qaQuickCustomProfileSlot1 = DEFAULT_SETTINGS.qaQuickCustomProfileSlot1;
+    }
+    if (typeof this.settings.qaQuickCustomProfileSlot2 !== "string") {
+      this.settings.qaQuickCustomProfileSlot2 = DEFAULT_SETTINGS.qaQuickCustomProfileSlot2;
+    }
+    if (typeof this.settings.qaQuickCustomProfileSlot3 !== "string") {
+      this.settings.qaQuickCustomProfileSlot3 = DEFAULT_SETTINGS.qaQuickCustomProfileSlot3;
     }
     if (typeof this.settings.qaCustomSystemPrompt !== "string") {
       this.settings.qaCustomSystemPrompt = DEFAULT_SETTINGS.qaCustomSystemPrompt;
@@ -5057,6 +9019,24 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaSafeguardModel !== "string") {
       this.settings.qaSafeguardModel = DEFAULT_SETTINGS.qaSafeguardModel;
     }
+    if (typeof this.settings.qaBalancedPresetBaseModel !== "string") {
+      this.settings.qaBalancedPresetBaseModel = DEFAULT_SETTINGS.qaBalancedPresetBaseModel;
+    }
+    if (typeof this.settings.qaBalancedPresetVisionModel !== "string") {
+      this.settings.qaBalancedPresetVisionModel = DEFAULT_SETTINGS.qaBalancedPresetVisionModel;
+    }
+    if (typeof this.settings.qaBalancedPresetEmbeddingModel !== "string") {
+      this.settings.qaBalancedPresetEmbeddingModel = DEFAULT_SETTINGS.qaBalancedPresetEmbeddingModel;
+    }
+    if (typeof this.settings.qaQualityPresetBaseModel !== "string") {
+      this.settings.qaQualityPresetBaseModel = DEFAULT_SETTINGS.qaQualityPresetBaseModel;
+    }
+    if (typeof this.settings.qaQualityPresetVisionModel !== "string") {
+      this.settings.qaQualityPresetVisionModel = DEFAULT_SETTINGS.qaQualityPresetVisionModel;
+    }
+    if (typeof this.settings.qaQualityPresetEmbeddingModel !== "string") {
+      this.settings.qaQualityPresetEmbeddingModel = DEFAULT_SETTINGS.qaQualityPresetEmbeddingModel;
+    }
     if (typeof this.settings.qaAskSystemPrompt !== "string") {
       this.settings.qaAskSystemPrompt = DEFAULT_SETTINGS.qaAskSystemPrompt;
     }
@@ -5081,6 +9061,32 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaSafeguardSystemPrompt !== "string") {
       this.settings.qaSafeguardSystemPrompt = DEFAULT_SETTINGS.qaSafeguardSystemPrompt;
     }
+    const promptFields = [
+      "qaCustomSystemPrompt",
+      "qaAskSystemPrompt",
+      "qaAskVisionSystemPrompt",
+      "qaImageGeneratorSystemPrompt",
+      "qaCoderSystemPrompt",
+      "qaDebuggerSystemPrompt",
+      "qaArchitectSystemPrompt",
+      "qaOrchestratorSystemPrompt",
+      "qaSafeguardSystemPrompt"
+    ];
+    const hasAnyPromptValue = promptFields.some((field) => {
+      const value = this.settings[field];
+      return typeof value === "string" && value.trim().length > 0;
+    });
+    if (!hasAnyPromptValue) {
+      this.settings.qaCustomSystemPrompt = DEFAULT_SETTINGS.qaCustomSystemPrompt;
+      this.settings.qaAskSystemPrompt = DEFAULT_SETTINGS.qaAskSystemPrompt;
+      this.settings.qaAskVisionSystemPrompt = DEFAULT_SETTINGS.qaAskVisionSystemPrompt;
+      this.settings.qaImageGeneratorSystemPrompt = DEFAULT_SETTINGS.qaImageGeneratorSystemPrompt;
+      this.settings.qaCoderSystemPrompt = DEFAULT_SETTINGS.qaCoderSystemPrompt;
+      this.settings.qaDebuggerSystemPrompt = DEFAULT_SETTINGS.qaDebuggerSystemPrompt;
+      this.settings.qaArchitectSystemPrompt = DEFAULT_SETTINGS.qaArchitectSystemPrompt;
+      this.settings.qaOrchestratorSystemPrompt = DEFAULT_SETTINGS.qaOrchestratorSystemPrompt;
+      this.settings.qaSafeguardSystemPrompt = DEFAULT_SETTINGS.qaSafeguardSystemPrompt;
+    }
     if (typeof this.settings.qaRoleModelAutoPickEnabled !== "boolean") {
       this.settings.qaRoleModelAutoPickEnabled = DEFAULT_SETTINGS.qaRoleModelAutoPickEnabled;
     }
@@ -5098,6 +9104,56 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.qaThreadAutoSyncEnabled !== "boolean") {
       this.settings.qaThreadAutoSyncEnabled = DEFAULT_SETTINGS.qaThreadAutoSyncEnabled;
+    }
+    if (typeof this.settings.qaPdfAttachmentEnabled !== "boolean") {
+      this.settings.qaPdfAttachmentEnabled = DEFAULT_SETTINGS.qaPdfAttachmentEnabled;
+    }
+    if (typeof this.settings.qaAgentToolModeEnabled !== "boolean") {
+      this.settings.qaAgentToolModeEnabled = DEFAULT_SETTINGS.qaAgentToolModeEnabled;
+    }
+    if (typeof this.settings.qaAgentRequireApproval !== "boolean") {
+      this.settings.qaAgentRequireApproval = DEFAULT_SETTINGS.qaAgentRequireApproval;
+    }
+    if (typeof this.settings.qaAgentAllowShellTool !== "boolean") {
+      this.settings.qaAgentAllowShellTool = DEFAULT_SETTINGS.qaAgentAllowShellTool;
+    }
+    if (typeof this.settings.qaAgentShellFullAccess !== "boolean") {
+      this.settings.qaAgentShellFullAccess = DEFAULT_SETTINGS.qaAgentShellFullAccess;
+    }
+    if (!Number.isFinite(this.settings.qaAgentShellTimeoutSec)) {
+      this.settings.qaAgentShellTimeoutSec = DEFAULT_SETTINGS.qaAgentShellTimeoutSec;
+    }
+    this.settings.qaAgentShellTimeoutSec = Math.max(
+      3,
+      Math.min(300, Math.floor(this.settings.qaAgentShellTimeoutSec))
+    );
+    if (typeof this.settings.qaAgentShellCwdPath !== "string") {
+      this.settings.qaAgentShellCwdPath = DEFAULT_SETTINGS.qaAgentShellCwdPath;
+    }
+    if (typeof this.settings.qaAgentPathAllowlist !== "string") {
+      this.settings.qaAgentPathAllowlist = DEFAULT_SETTINGS.qaAgentPathAllowlist;
+    }
+    if (typeof this.settings.qaContextInChat !== "boolean") {
+      this.settings.qaContextInChat = DEFAULT_SETTINGS.qaContextInChat;
+    }
+    if (this.settings.qaParserMode !== "fast" && this.settings.qaParserMode !== "detailed") {
+      this.settings.qaParserMode = DEFAULT_SETTINGS.qaParserMode;
+    }
+    this.settings.qaPdfAttachmentEnabled = true;
+    if (typeof this.settings.qaAttachmentIngestRootPath !== "string") {
+      this.settings.qaAttachmentIngestRootPath = DEFAULT_SETTINGS.qaAttachmentIngestRootPath;
+    }
+    this.settings.qaAttachmentIngestRootPath = (0, import_obsidian4.normalizePath)(
+      this.settings.qaAttachmentIngestRootPath.trim() || DEFAULT_SETTINGS.qaAttachmentIngestRootPath
+    );
+    if (this.settings.qaAgentShellCwdPath.trim()) {
+      try {
+        this.settings.qaAgentShellCwdPath = this.sanitizeQaShellCwdPath(
+          this.settings.qaAgentShellCwdPath
+        );
+      } catch (e) {
+        this.settings.qaAgentShellCwdPath = DEFAULT_SETTINGS.qaAgentShellCwdPath;
+      }
     }
     if (typeof this.settings.autoTagActiveNoteEnabled !== "boolean") {
       this.settings.autoTagActiveNoteEnabled = DEFAULT_SETTINGS.autoTagActiveNoteEnabled;
@@ -5210,7 +9266,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   getAnalysisCachePath() {
     return (0, import_obsidian4.normalizePath)(
-      `${this.app.vault.configDir}/plugins/auto-linker/${ANALYSIS_CACHE_FILE}`
+      `${this.app.vault.configDir}/plugins/auto-link/${ANALYSIS_CACHE_FILE}`
     );
   }
   async cleanupLegacyCacheArtifacts() {
@@ -5500,6 +9556,38 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     } catch (e) {
       return false;
     }
+  }
+  parseQaAllowedOutboundHosts() {
+    return this.settings.qaAllowedOutboundHosts.split(/[\n,]/g).map((entry) => entry.trim().toLowerCase()).filter((entry) => entry.length > 0);
+  }
+  isHostAllowedByPolicy(hostname, allowlist) {
+    const host = hostname.trim().toLowerCase();
+    if (!host) {
+      return false;
+    }
+    return allowlist.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+  }
+  validateQaEndpointPolicy(qaBaseUrl) {
+    if (this.isLocalEndpoint(qaBaseUrl)) {
+      return null;
+    }
+    if (!this.settings.qaAllowNonLocalEndpoint) {
+      return "Blocked by security policy: Q&A endpoint must be localhost unless explicitly allowed.";
+    }
+    let parsed;
+    try {
+      parsed = new URL(qaBaseUrl);
+    } catch (e) {
+      return `Blocked by security policy: invalid Q&A endpoint URL (${qaBaseUrl}).`;
+    }
+    const hostAllowlist = this.parseQaAllowedOutboundHosts();
+    if (hostAllowlist.length === 0) {
+      return "Blocked by security policy: non-local endpoint is enabled but outbound host allowlist is empty.";
+    }
+    if (!this.isHostAllowedByPolicy(parsed.hostname, hostAllowlist)) {
+      return `Blocked by security policy: host '${parsed.hostname}' is not in outbound allowlist.`;
+    }
+    return null;
   }
   resolveQaBaseUrl() {
     const qa = this.settings.qaOllamaBaseUrl.trim();
@@ -5823,13 +9911,15 @@ ${segment}` : segment;
     ];
   }
   buildLocalQaSourceContext(sourceBlocks) {
-    return sourceBlocks.map(
-      (item, index) => `Source ${index + 1}
+    return sourceBlocks.map((item, index) => {
+      const sourceType = item.path.startsWith("[ATTACHMENT-") || item.content.startsWith("Attachment document (PRIMARY EVIDENCE)") ? "attachment" : "selected-note";
+      return `Source ${index + 1}
+Type: ${sourceType}
 Path: ${item.path}
 Similarity: ${formatSimilarity(item.similarity)}
 Content:
-${item.content}`
-    ).join("\n\n---\n\n");
+${item.content}`;
+    }).join("\n\n---\n\n");
   }
   shouldIncludeSelectionInventory(question, selectedCount, intent) {
     if (!this.settings.qaIncludeSelectionInventory) {
@@ -5914,6 +10004,70 @@ ${item.content}`
     const qa = this.settings.qaOllamaModel.trim();
     const fallback = this.settings.ollamaModel.trim();
     return roleModel || qa || fallback;
+  }
+  isVisionCapableModel(modelName) {
+    return VISION_MODEL_REGEX.test(modelName.toLowerCase());
+  }
+  resolveVisionModelForImageAttachments() {
+    var _a;
+    const detected = this.getDetectedOllamaModelNames();
+    const isDetectedOrUnknown = (model) => detected.length === 0 || detected.includes(model);
+    const explicitVision = this.settings.qaAskVisionModel.trim();
+    if (explicitVision && this.isVisionCapableModel(explicitVision) && isDetectedOrUnknown(explicitVision)) {
+      return explicitVision;
+    }
+    const roleOptions = this.getRoleModelOptionsForQa("ask_vision");
+    const recommendedVision = roleOptions.filter((option) => option.status !== "unavailable").map((option) => option.model).sort((a, b) => {
+      const aLlamaVision = /llama3\.2-vision/i.test(a);
+      const bLlamaVision = /llama3\.2-vision/i.test(b);
+      if (aLlamaVision !== bLlamaVision) {
+        return aLlamaVision ? -1 : 1;
+      }
+      return a.localeCompare(b);
+    }).find(
+      (model) => this.isVisionCapableModel(model) && isDetectedOrUnknown(model)
+    );
+    if (recommendedVision) {
+      return recommendedVision;
+    }
+    const qaModel = this.settings.qaOllamaModel.trim();
+    if (qaModel && this.isVisionCapableModel(qaModel) && isDetectedOrUnknown(qaModel)) {
+      return qaModel;
+    }
+    const baseModel = this.settings.ollamaModel.trim();
+    if (baseModel && this.isVisionCapableModel(baseModel) && isDetectedOrUnknown(baseModel)) {
+      return baseModel;
+    }
+    const detectedVision = detected.filter((name) => this.isVisionCapableModel(name)).sort((a, b) => {
+      const aLlamaVision = /llama3\.2-vision/i.test(a);
+      const bLlamaVision = /llama3\.2-vision/i.test(b);
+      if (aLlamaVision !== bLlamaVision) {
+        return aLlamaVision ? -1 : 1;
+      }
+      return a.localeCompare(b);
+    });
+    return (_a = detectedVision[0]) != null ? _a : null;
+  }
+  shouldUseLightweightQaPipeline(question, intent) {
+    if (intent === "plan" || intent === "comparison") {
+      return false;
+    }
+    const normalized = question.trim().toLowerCase();
+    if (!normalized) {
+      return true;
+    }
+    if (normalized.length > 120 || normalized.includes("\n")) {
+      return false;
+    }
+    const complexitySignals = /(계획서|보고서|로드맵|발표|아키텍처|구조|구현|리팩터|디버그|오류 분석|체크리스트|단계별|pipeline|orchestrator|roadmap|report|architecture|design|debug|refactor|checklist|step[- ]by[- ]step|trade[- ]?off)/i;
+    if (complexitySignals.test(normalized)) {
+      return false;
+    }
+    const directQuestionSignals = /(무엇|뭐야|뜻|정의|요약|간단|짧게|한줄|차이|why|what is|meaning|summary|brief|quick answer|difference)/i;
+    if (directQuestionSignals.test(normalized)) {
+      return true;
+    }
+    return normalized.split(/\s+/).length <= 14;
   }
   shouldRunOrchestratorPassLegacy(question, intent) {
     if (this.settings.qaRolePreset === "orchestrator") {
@@ -6047,17 +10201,122 @@ ${item.content}`
         return "Use the same language as the user's question.";
     }
   }
-  buildLocalQaSystemPrompt(intent, preferDetailed) {
-    const role = this.resolveQaPrimaryRole();
+  isLikelyKoreanResponse(text) {
+    var _a, _b;
+    const value = text.trim();
+    if (!value) {
+      return false;
+    }
+    const hangulMatches = (_a = value.match(/[가-힣]/g)) != null ? _a : [];
+    const latinMatches = (_b = value.match(/[A-Za-z]/g)) != null ? _b : [];
+    if (hangulMatches.length >= 18) {
+      return true;
+    }
+    if (hangulMatches.length === 0) {
+      return false;
+    }
+    return hangulMatches.length >= Math.max(8, Math.floor(latinMatches.length * 0.35));
+  }
+  async enforcePreferredLanguageIfNeeded(params) {
+    const { answer, question, qaBaseUrl, qaModel, onEvent, abortSignal } = params;
+    const trimmed = answer.trim();
+    if (!trimmed || this.settings.qaPreferredResponseLanguage !== "korean") {
+      return answer;
+    }
+    if (this.isLikelyKoreanResponse(trimmed)) {
+      return answer;
+    }
+    this.emitQaEvent(
+      onEvent,
+      "warning",
+      "Answer language drift detected; retrying final output in Korean."
+    );
+    const systemPrompt = [
+      "You are a strict Korean localization editor.",
+      "Return Korean only.",
+      "Preserve markdown structure, bullet order, checkboxes, tables, and source citations.",
+      "Do not add new facts; if uncertain keep original uncertainty wording.",
+      "Keep code blocks and inline code as-is unless plain-language comments require translation.",
+      "Output only the localized final answer."
+    ].join("\n");
+    const userPrompt = [
+      `Original user question: ${question}`,
+      "",
+      "Rewrite the following answer in Korean:",
+      trimmed
+    ].join("\n");
+    try {
+      const localized = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        onEvent,
+        abortSignal
+      });
+      const split = splitThinkingBlocks(localized.answer);
+      const normalized = split.answer.trim() || localized.answer.trim();
+      if (normalized && this.isLikelyKoreanResponse(normalized)) {
+        this.emitQaEvent(onEvent, "generation", "Korean language guard applied");
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", "Korean language guard did not improve output");
+      return answer;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown language guard error";
+      this.emitQaEvent(onEvent, "warning", "Korean language guard failed", {
+        detail: message
+      });
+      return answer;
+    }
+  }
+  getQaAgentToolInstructionLines() {
+    if (!this.settings.qaAgentToolModeEnabled) {
+      return [];
+    }
+    const allowlist = this.parseQaAgentAbsoluteAllowlist();
+    const fullAccess = this.settings.qaAgentShellFullAccess;
+    const allowlistText = allowlist.length > 0 ? allowlist.join(", ") : "(vault only)";
+    const shellLine = this.settings.qaAgentAllowShellTool ? "- run_shell: execute a local shell command (`command` required, `cwd` optional)." : "- run_shell: unavailable (disabled by settings).";
+    const shellScopeLine = fullAccess ? "Shell access scope: FULL ACCESS enabled (danger). Any absolute cwd is allowed." : `Shell allowlist roots: ${allowlistText}`;
+    return [
+      "Agent tool mode is enabled.",
+      shellScopeLine,
+      "If an action is required, append ONE fenced code block using language `auto-link-actions` and strict JSON:",
+      '{ "actions": [ ... ] }',
+      "Supported actions:",
+      "- read_note: read file content (`path` required; vault-relative or allowed absolute path).",
+      "- write_note: overwrite/create file (`path`, `content` required; vault-relative or allowed absolute path).",
+      "- append_note: append to file (`path`, `content` required; vault-relative or allowed absolute path).",
+      '- list_folder: list folder (`path` required; use "." for vault root, or allowed absolute path).',
+      shellLine,
+      "Action schema examples:",
+      '{ "type": "read_note", "path": "Projects/TODO.md" }',
+      '{ "type": "read_note", "path": "/absolute/path/project/README.md" }',
+      '{ "type": "write_note", "path": "Projects/plan.md", "content": "# Plan" }',
+      '{ "type": "append_note", "path": "Daily/2026-02-16.md", "content": "\\n- done" }',
+      '{ "type": "list_folder", "path": "." }',
+      '{ "type": "run_shell", "command": "npm run check", "cwd": "obsidian-plugin/auto-link", "timeoutSec": 20 }',
+      "When actions are included, keep non-action answer brief and focused.",
+      "Never include multiple action blocks."
+    ];
+  }
+  buildLocalQaSystemPrompt(intent, preferDetailed, hasSourceContext, roleOverride) {
+    const role = roleOverride != null ? roleOverride : this.resolveQaPrimaryRole();
     const toneLine = preferDetailed ? "Keep tone natural, direct, and sufficiently detailed." : "Keep tone natural, direct, and concise.";
     return [
       "You are a local-note assistant for Obsidian.",
-      "Answer only from the provided sources.",
+      hasSourceContext ? "Answer only from the provided sources." : "No note sources were provided for this turn. You may answer from general knowledge with explicit uncertainty notes.",
       this.getQaPreferredLanguageInstruction(),
+      ...this.getQaAgentToolInstructionLines(),
       this.getQaRolePresetInstruction(role),
       toneLine,
       "Output in markdown.",
-      "When making claims, cite source paths inline in parentheses.",
+      hasSourceContext ? "When making claims, cite source paths inline in parentheses." : "Do not fabricate source citations when no source context is provided.",
       "If evidence is insufficient, state it clearly and do not invent facts.",
       ...this.getQaContractLines(intent, preferDetailed),
       this.getQaRoleSystemPrompt(role) ? `Role system prompt (${role}):
@@ -6066,15 +10325,29 @@ ${this.getQaRoleSystemPrompt(role)}` : "",
 ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     ].filter((line) => line.length > 0).join("\n");
   }
-  buildLocalQaUserPrompt(question, sourceContext, selectionInventoryContext) {
+  buildLocalQaUserPrompt(question, sourceContext, selectionInventoryContext, attachmentLabels = []) {
+    const sourceBlock = sourceContext.trim() || "(no source excerpts provided)";
+    const hasVisionAttachment = attachmentLabels.some(
+      (label) => label.startsWith("[IMG]") || label.startsWith("[PDF]")
+    );
+    const attachmentBlock = attachmentLabels.length > 0 ? [
+      "",
+      "Attachments for this turn (highest priority evidence):",
+      ...attachmentLabels.map((label) => `- ${label}`)
+    ] : [];
+    const attachmentPriorityLine = attachmentLabels.length > 0 ? "Priority rule (strict): treat attachments as PRIMARY evidence. Use selected-note excerpts only as SECONDARY fallback when attachment evidence is missing." : "";
+    const imageHandlingLine = hasVisionAttachment ? "Image/PDF attachments are already included in this request. Do not ask user for local file paths." : "";
     const inventoryBlock = (selectionInventoryContext == null ? void 0 : selectionInventoryContext.trim()) ? ["", "Selection inventory metadata:", selectionInventoryContext.trim()] : [];
     return [
       `Question: ${question}`,
       "",
+      attachmentPriorityLine,
+      imageHandlingLine,
       "Sources:",
-      sourceContext,
+      sourceBlock,
+      ...attachmentBlock,
       ...inventoryBlock
-    ].join("\n");
+    ].filter((line) => line.length > 0).join("\n");
   }
   buildLocalQaGeneratePrompt(systemPrompt, userPrompt, history) {
     const historyText = history.length > 0 ? history.slice(-6).map(
@@ -6090,7 +10363,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       userPrompt
     ].join("\n");
   }
-  buildLocalQaChatMessages(systemPrompt, userPrompt, history) {
+  buildLocalQaChatMessages(systemPrompt, userPrompt, history, userImages = []) {
     const messages = [
       { role: "system", content: systemPrompt }
     ];
@@ -6100,7 +10373,11 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
         content: turn.text
       });
     }
-    messages.push({ role: "user", content: userPrompt });
+    messages.push({
+      role: "user",
+      content: userPrompt,
+      images: userImages.length > 0 ? userImages : void 0
+    });
     return messages;
   }
   extractOllamaTokenChunk(payload) {
@@ -6124,13 +10401,24 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     }
     return { token, thinking };
   }
-  async consumeOllamaJsonLineStream(body, onToken, onEvent) {
+  async consumeOllamaJsonLineStream(body, onToken, onEvent, abortSignal) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let answer = "";
     let thinking = "";
+    const throwIfAborted = () => {
+      if (abortSignal == null ? void 0 : abortSignal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+    };
+    const cancelReaderOnAbort = () => {
+      void reader.cancel("aborted").catch(() => {
+      });
+    };
+    abortSignal == null ? void 0 : abortSignal.addEventListener("abort", cancelReaderOnAbort, { once: true });
     const consumeLine = (line) => {
+      throwIfAborted();
       if (!line) {
         return;
       }
@@ -6150,28 +10438,42 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       } catch (e) {
       }
     };
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
+    try {
+      while (true) {
+        throwIfAborted();
+        const { done, value } = await reader.read();
+        throwIfAborted();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        let lineBreakIndex = buffer.indexOf("\n");
+        while (lineBreakIndex >= 0) {
+          const line = buffer.slice(0, lineBreakIndex).trim();
+          buffer = buffer.slice(lineBreakIndex + 1);
+          consumeLine(line);
+          lineBreakIndex = buffer.indexOf("\n");
+        }
       }
-      buffer += decoder.decode(value, { stream: true });
-      let lineBreakIndex = buffer.indexOf("\n");
-      while (lineBreakIndex >= 0) {
-        const line = buffer.slice(0, lineBreakIndex).trim();
-        buffer = buffer.slice(lineBreakIndex + 1);
-        consumeLine(line);
-        lineBreakIndex = buffer.indexOf("\n");
+      const tail = buffer.trim();
+      if (tail) {
+        consumeLine(tail);
       }
-    }
-    const tail = buffer.trim();
-    if (tail) {
-      consumeLine(tail);
+    } finally {
+      abortSignal == null ? void 0 : abortSignal.removeEventListener("abort", cancelReaderOnAbort);
     }
     return { answer, thinking };
   }
   async requestLocalQaGenerate(params) {
-    const { qaBaseUrl, qaModel, prompt, onToken, onEvent, abortSignal } = params;
+    const {
+      qaBaseUrl,
+      qaModel,
+      prompt,
+      images,
+      onToken,
+      onEvent,
+      abortSignal
+    } = params;
     const base = qaBaseUrl.replace(/\/$/, "");
     if (onToken) {
       const streamResponse = await fetch(`${base}/api/generate`, {
@@ -6181,13 +10483,48 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
         body: JSON.stringify({
           model: qaModel,
           prompt,
+          images: images && images.length > 0 ? images : void 0,
           stream: true
         })
       });
       if (!streamResponse.ok || !streamResponse.body) {
         throw new Error(`Local Q&A request failed: ${streamResponse.status}`);
       }
-      return this.consumeOllamaJsonLineStream(streamResponse.body, onToken, onEvent);
+      return this.consumeOllamaJsonLineStream(
+        streamResponse.body,
+        onToken,
+        onEvent,
+        abortSignal
+      );
+    }
+    if (abortSignal) {
+      const response2 = await fetch(`${base}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: abortSignal,
+        body: JSON.stringify({
+          model: qaModel,
+          prompt,
+          images: images && images.length > 0 ? images : void 0,
+          stream: false
+        })
+      });
+      if (!response2.ok) {
+        throw new Error(`Local Q&A request failed: ${response2.status}`);
+      }
+      const raw = await response2.text();
+      let parsed2 = {};
+      try {
+        parsed2 = raw ? JSON.parse(raw) : {};
+      } catch (e) {
+        parsed2 = {};
+      }
+      const chunk2 = this.extractOllamaTokenChunk(parsed2);
+      const answer2 = chunk2.token.trim() || raw.trim();
+      return {
+        answer: answer2,
+        thinking: chunk2.thinking.trim()
+      };
     }
     const response = await (0, import_obsidian4.requestUrl)({
       url: `${base}/api/generate`,
@@ -6196,6 +10533,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       body: JSON.stringify({
         model: qaModel,
         prompt,
+        images: images && images.length > 0 ? images : void 0,
         stream: false
       }),
       throw: false
@@ -6218,11 +10556,12 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       systemPrompt,
       userPrompt,
       history,
+      images,
       onToken,
       onEvent,
       abortSignal
     } = params;
-    const messages = this.buildLocalQaChatMessages(systemPrompt, userPrompt, history);
+    const messages = this.buildLocalQaChatMessages(systemPrompt, userPrompt, history, images);
     const base = qaBaseUrl.replace(/\/$/, "");
     if (onToken) {
       const streamResponse = await fetch(`${base}/api/chat`, {
@@ -6238,7 +10577,40 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       if (!streamResponse.ok || !streamResponse.body) {
         throw new Error(`Local Q&A chat request failed: ${streamResponse.status}`);
       }
-      return this.consumeOllamaJsonLineStream(streamResponse.body, onToken, onEvent);
+      return this.consumeOllamaJsonLineStream(
+        streamResponse.body,
+        onToken,
+        onEvent,
+        abortSignal
+      );
+    }
+    if (abortSignal) {
+      const response2 = await fetch(`${base}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: abortSignal,
+        body: JSON.stringify({
+          model: qaModel,
+          messages,
+          stream: false
+        })
+      });
+      if (!response2.ok) {
+        throw new Error(`Local Q&A chat request failed: ${response2.status}`);
+      }
+      const raw = await response2.text();
+      let parsed2 = {};
+      try {
+        parsed2 = raw ? JSON.parse(raw) : {};
+      } catch (e) {
+        parsed2 = {};
+      }
+      const chunk2 = this.extractOllamaTokenChunk(parsed2);
+      const answer2 = chunk2.token.trim() || raw.trim();
+      return {
+        answer: answer2,
+        thinking: chunk2.thinking.trim()
+      };
     }
     const response = await (0, import_obsidian4.requestUrl)({
       url: `${base}/api/chat`,
@@ -6269,11 +10641,19 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       systemPrompt,
       userPrompt,
       history,
+      images,
       onToken,
       onEvent,
       abortSignal
     } = params;
-    if (this.settings.qaPreferChatApi) {
+    const hasImages = Boolean(images && images.length > 0);
+    if (hasImages) {
+      this.emitQaEvent(
+        onEvent,
+        "generation",
+        "Image attachments detected; using /api/generate endpoint"
+      );
+    } else if (this.settings.qaPreferChatApi) {
       try {
         this.emitQaEvent(onEvent, "generation", "Using /api/chat endpoint");
         const chatResult = await this.requestLocalQaChat({
@@ -6282,6 +10662,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
           systemPrompt,
           userPrompt,
           history,
+          images,
           onToken,
           onEvent,
           abortSignal
@@ -6296,6 +10677,9 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
           detail: "Fallback to /api/generate"
         });
       } catch (error) {
+        if (this.isAbortError(error)) {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : "Unknown /api/chat error";
         this.emitQaEvent(onEvent, "warning", "Falling back to /api/generate", {
           detail: message
@@ -6304,14 +10688,39 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     }
     this.emitQaEvent(onEvent, "generation", "Using /api/generate endpoint");
     const prompt = this.buildLocalQaGeneratePrompt(systemPrompt, userPrompt, history);
-    const generateResult = await this.requestLocalQaGenerate({
-      qaBaseUrl,
-      qaModel,
-      prompt,
-      onToken,
-      onEvent,
-      abortSignal
-    });
+    let generateResult;
+    try {
+      generateResult = await this.requestLocalQaGenerate({
+        qaBaseUrl,
+        qaModel,
+        prompt,
+        images,
+        onToken,
+        onEvent,
+        abortSignal
+      });
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      if (images && images.length > 0) {
+        const message = error instanceof Error ? error.message : "Unknown image generate error";
+        this.emitQaEvent(onEvent, "warning", "Image input failed; retrying without images", {
+          detail: message
+        });
+        generateResult = await this.requestLocalQaGenerate({
+          qaBaseUrl,
+          qaModel,
+          prompt,
+          images: [],
+          onToken,
+          onEvent,
+          abortSignal
+        });
+      } else {
+        throw error;
+      }
+    }
     return {
       ...generateResult,
       endpoint: "generate"
@@ -6330,7 +10739,8 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       sourceBlocks,
       qaBaseUrl,
       qaModel,
-      onEvent
+      onEvent,
+      abortSignal
     } = params;
     if (!this.settings.qaStructureGuardEnabled) {
       return answer;
@@ -6365,7 +10775,8 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
         qaModel,
         systemPrompt,
         userPrompt,
-        history: []
+        history: [],
+        abortSignal
       });
       const split = splitThinkingBlocks(repaired.answer);
       const normalized = split.answer.trim() || repaired.answer.trim();
@@ -6377,6 +10788,9 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       }
       this.emitQaEvent(onEvent, "warning", "Structured output guard could not enforce format");
     } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : "Unknown structure guard error";
       this.emitQaEvent(onEvent, "warning", "Structured output guard failed", {
         detail: message
@@ -6388,10 +10802,29 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     return answer;
   }
   resolvePassModelOrWarn(role, onEvent) {
-    const model = this.resolveQaModelForRole(role).trim();
+    let model = this.resolveQaModelForRole(role).trim();
     if (!model) {
       this.emitQaEvent(onEvent, "warning", `Skipping ${role} pass: model is empty`);
       return null;
+    }
+    const detected = this.getDetectedOllamaModelNames();
+    if (detected.length > 0 && !this.hasDetectedOllamaModel(model)) {
+      const fallback = this.resolveDetectedRoleFallbackModel(role);
+      if (fallback) {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          `Pass model not detected (${model}); fallback to ${fallback}`
+        );
+        model = fallback;
+      } else {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          `Skipping ${role} pass: model not detected (${model})`
+        );
+        return null;
+      }
     }
     if (!isOllamaModelAllowedForQaRole(role, model)) {
       this.emitQaEvent(
@@ -6421,6 +10854,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       "- Objective and scope",
       "- Core findings",
       "- Execution plan/checklist",
+      "- Role coordination summary (architect/coder/debugger/safeguard: responsibility, output, handoff, unresolved)",
       "- Deliverables (report/PPT/materials/code)",
       "- Risks and safeguards",
       "- Next actions",
@@ -6573,15 +11007,685 @@ ${roleSystemPrompt}` : ""
   async openLocalQaChatModal() {
     await this.openLocalQaWorkspaceView();
   }
-  async askLocalQa(question, topK, history = [], onToken, onEvent, abortSignal) {
-    const selectedFiles = this.getSelectedFiles();
-    if (selectedFiles.length === 0) {
-      throw new Error("No target notes selected. Open selector first.");
+  parseQaAgentApprovalCommand(question) {
+    const normalized = question.trim().toLowerCase();
+    if (!normalized) {
+      return null;
     }
+    if (/^(\/approve|approve|승인|실행)$/.test(normalized)) {
+      return "approve";
+    }
+    if (/^(\/deny|deny|거부|취소|\/cancel|cancel)$/.test(normalized)) {
+      return "deny";
+    }
+    return null;
+  }
+  normalizeQaAgentAction(raw) {
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    const parsed = raw;
+    if (typeof parsed.type !== "string") {
+      return null;
+    }
+    const type = parsed.type.trim();
+    const allowedTypes = [
+      "read_note",
+      "write_note",
+      "append_note",
+      "list_folder",
+      "run_shell"
+    ];
+    if (!allowedTypes.includes(type)) {
+      return null;
+    }
+    const action = { type };
+    if (typeof parsed.path === "string") {
+      action.path = parsed.path.trim();
+    }
+    if (typeof parsed.content === "string") {
+      action.content = parsed.content;
+    }
+    if (typeof parsed.command === "string") {
+      action.command = parsed.command.trim();
+    }
+    if (typeof parsed.cwd === "string") {
+      action.cwd = parsed.cwd.trim();
+    }
+    if (typeof parsed.timeoutSec === "number" && Number.isFinite(parsed.timeoutSec)) {
+      action.timeoutSec = Math.floor(parsed.timeoutSec);
+    }
+    return action;
+  }
+  summarizeQaAgentAction(action) {
+    switch (action.type) {
+      case "read_note":
+        return `read_note path=${action.path || "(missing)"}`;
+      case "write_note":
+        return `write_note path=${action.path || "(missing)"}`;
+      case "append_note":
+        return `append_note path=${action.path || "(missing)"}`;
+      case "list_folder":
+        return `list_folder path=${action.path || "(missing)"}`;
+      case "run_shell":
+        return `run_shell command=${action.command || "(missing)"}`;
+      default:
+        return action.type;
+    }
+  }
+  parseQaAgentActionPlanFromAnswer(params) {
+    var _a, _b;
+    const { answer, question, model } = params;
+    const blockRegex = /```auto-link-actions\s*([\s\S]*?)```/i;
+    const match = blockRegex.exec(answer);
+    const answerWithoutPlan = answer.replace(blockRegex, "").trim();
+    if (!match) {
+      return { answerWithoutPlan: answer.trim(), plan: null };
+    }
+    const jsonText = (_b = (_a = match[1]) == null ? void 0 : _a.trim()) != null ? _b : "";
+    if (!jsonText) {
+      return {
+        answerWithoutPlan,
+        plan: null,
+        warning: "Agent action block is empty."
+      };
+    }
+    try {
+      const parsed = JSON.parse(jsonText);
+      const rawActions = Array.isArray(parsed.actions) ? parsed.actions : null;
+      if (!rawActions || rawActions.length === 0) {
+        return {
+          answerWithoutPlan,
+          plan: null,
+          warning: "Agent action block has no actions array."
+        };
+      }
+      const normalized = rawActions.map((item) => this.normalizeQaAgentAction(item)).filter((item) => Boolean(item));
+      if (normalized.length === 0) {
+        return {
+          answerWithoutPlan,
+          plan: null,
+          warning: "Agent action block contains unsupported action types."
+        };
+      }
+      const capped = normalized.slice(0, 8);
+      const plan = {
+        id: `qa-actions-${formatBackupStamp(/* @__PURE__ */ new Date())}`,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        model,
+        question,
+        actions: capped
+      };
+      const warning = normalized.length > capped.length ? `Action count exceeded limit. Only first ${capped.length} actions were kept.` : void 0;
+      return {
+        answerWithoutPlan,
+        plan,
+        warning
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown JSON parse error";
+      return {
+        answerWithoutPlan,
+        plan: null,
+        warning: `Agent action JSON parse failed: ${message}`
+      };
+    }
+  }
+  buildQaActionApprovalText(plan) {
+    const lines = [
+      "### Agent action plan / \uC5D0\uC774\uC804\uD2B8 \uC561\uC158 \uACC4\uD68D",
+      `Plan ID: ${plan.id}`,
+      `Proposed by model: ${plan.model}`,
+      `Created: ${plan.createdAt}`,
+      ""
+    ];
+    for (let index = 0; index < plan.actions.length; index += 1) {
+      lines.push(`${index + 1}. ${this.summarizeQaAgentAction(plan.actions[index])}`);
+    }
+    lines.push("");
+    lines.push("\uC2E4\uD589\uD558\uB824\uBA74 `\uC2B9\uC778` \uB610\uB294 `/approve` \uB97C \uC785\uB825\uD558\uC138\uC694.");
+    lines.push("\uCDE8\uC18C\uD558\uB824\uBA74 `\uAC70\uBD80` \uB610\uB294 `/deny` \uB97C \uC785\uB825\uD558\uC138\uC694.");
+    return lines.join("\n");
+  }
+  trimQaToolText(text, maxChars) {
+    const normalized = text != null ? text : "";
+    if (normalized.length <= maxChars) {
+      return normalized;
+    }
+    return `${normalized.slice(0, maxChars)}
+...(truncated ${normalized.length - maxChars} chars)`;
+  }
+  resolveSafeQaAgentPath(rawPath, label) {
+    const normalized = (0, import_obsidian4.normalizePath)((rawPath != null ? rawPath : "").trim());
+    if (!this.isSafeVaultRelativePath(normalized)) {
+      throw new Error(`${label} must be a safe vault-relative path.`);
+    }
+    return normalized;
+  }
+  getVaultBasePathForQaShell() {
+    const adapter = this.app.vault.adapter;
+    if (typeof adapter.getBasePath !== "function") {
+      throw new Error("Shell tool requires desktop filesystem vault adapter.");
+    }
+    const base = adapter.getBasePath();
+    if (!base || typeof base !== "string") {
+      throw new Error("Could not resolve vault base path for shell tool.");
+    }
+    return base;
+  }
+  parseQaAgentAbsoluteAllowlist() {
+    return this.settings.qaAgentPathAllowlist.split(/[\n,;]+/).map((item) => item.trim()).filter((item) => item.length > 0).filter((item) => item.startsWith("/") || /^[A-Za-z]:/.test(item)).map((item) => nodePath.resolve(item)).filter((item, index, arr) => arr.indexOf(item) === index);
+  }
+  isPathInsideAnyAllowedRoot(resolvedPath, allowedRoots) {
+    return allowedRoots.some((root) => {
+      const normalizedRoot = nodePath.resolve(root);
+      const relative2 = nodePath.relative(normalizedRoot, resolvedPath);
+      return relative2 === "" || !relative2.startsWith("..") && !nodePath.isAbsolute(relative2);
+    });
+  }
+  isAbsoluteQaPath(pathValue) {
+    return pathValue.startsWith("/") || /^[A-Za-z]:/.test(pathValue);
+  }
+  resolveQaAgentPathTarget(rawPath, label, kind) {
+    const requested = (rawPath != null ? rawPath : "").trim();
+    if (!requested) {
+      throw new Error(`${label} is required.`);
+    }
+    if (!this.isAbsoluteQaPath(requested)) {
+      if (kind === "folder") {
+        return {
+          mode: "vault",
+          path: this.resolveSafeFolderPath(requested, ".", label)
+        };
+      }
+      return {
+        mode: "vault",
+        path: this.resolveSafeQaAgentPath(requested, label)
+      };
+    }
+    const resolved = nodePath.resolve(requested);
+    if (this.settings.qaAgentShellFullAccess) {
+      return {
+        mode: "absolute",
+        path: resolved
+      };
+    }
+    const allowedRoots = [
+      nodePath.resolve(this.getVaultBasePathForQaShell()),
+      ...this.parseQaAgentAbsoluteAllowlist()
+    ];
+    if (!this.isPathInsideAnyAllowedRoot(resolved, allowedRoots)) {
+      throw new Error(
+        `${label} absolute path is blocked. Allowed roots: ${allowedRoots.join(", ") || "(none)"}`
+      );
+    }
+    return {
+      mode: "absolute",
+      path: resolved
+    };
+  }
+  sanitizeQaShellCwdPath(rawCwd) {
+    const requested = (rawCwd != null ? rawCwd : "").trim();
+    if (!requested) {
+      return "";
+    }
+    if (requested.startsWith("/") || /^[A-Za-z]:/.test(requested)) {
+      const resolved = nodePath.resolve(requested);
+      if (this.settings.qaAgentShellFullAccess) {
+        return resolved;
+      }
+      const allowedRoots = this.parseQaAgentAbsoluteAllowlist();
+      if (!this.isPathInsideAnyAllowedRoot(resolved, allowedRoots)) {
+        throw new Error(
+          `Shell cwd must be inside allowlist roots: ${allowedRoots.join(", ") || "(none)"}`
+        );
+      }
+      return resolved;
+    }
+    return this.resolveSafeFolderPath(requested, ".", "Shell cwd");
+  }
+  resolveQaShellCwd(rawCwd) {
+    var _a;
+    const basePath = this.getVaultBasePathForQaShell();
+    const baseResolved = nodePath.resolve(basePath);
+    const fullAccess = this.settings.qaAgentShellFullAccess;
+    const allowedRoots = [baseResolved, ...this.parseQaAgentAbsoluteAllowlist()];
+    const requested = ((_a = rawCwd != null ? rawCwd : this.settings.qaAgentShellCwdPath) != null ? _a : "").trim();
+    if (!requested) {
+      return baseResolved;
+    }
+    const sanitized = this.sanitizeQaShellCwdPath(requested);
+    const resolved = sanitized.startsWith("/") || /^[A-Za-z]:/.test(sanitized) ? nodePath.resolve(sanitized) : nodePath.resolve(baseResolved, sanitized);
+    if (fullAccess) {
+      return resolved;
+    }
+    if (!this.isPathInsideAnyAllowedRoot(resolved, allowedRoots)) {
+      throw new Error(
+        `Shell cwd must stay inside vault or allowlist roots: ${allowedRoots.join(", ")}`
+      );
+    }
+    return resolved;
+  }
+  async writeVaultTextFile(path, content) {
+    await this.ensureParentFolder(path);
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof import_obsidian4.TFile) {
+      await this.app.vault.modify(existing, content);
+      return;
+    }
+    const exists = await this.app.vault.adapter.exists(path);
+    if (exists) {
+      await this.app.vault.adapter.write(path, content);
+      return;
+    }
+    await this.app.vault.create(path, content);
+  }
+  async executeQaAgentAction(action) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    try {
+      if (action.type === "read_note") {
+        const target = this.resolveQaAgentPathTarget(
+          action.path || "",
+          "read_note.path",
+          "file"
+        );
+        let content = "";
+        if (target.mode === "vault") {
+          const exists = await this.app.vault.adapter.exists(target.path);
+          if (!exists) {
+            return {
+              status: "error",
+              title: `read_note ${target.path}`,
+              detail: "File does not exist."
+            };
+          }
+          content = await this.app.vault.adapter.read(target.path);
+        } else {
+          try {
+            content = await nodeFs.promises.readFile(target.path, "utf8");
+          } catch (e) {
+            return {
+              status: "error",
+              title: `read_note ${target.path}`,
+              detail: "File does not exist or is not readable."
+            };
+          }
+        }
+        return {
+          status: "ok",
+          title: `read_note ${target.path}`,
+          detail: this.trimQaToolText(content, 2400)
+        };
+      }
+      if (action.type === "write_note") {
+        const target = this.resolveQaAgentPathTarget(
+          action.path || "",
+          "write_note.path",
+          "file"
+        );
+        const content = (_a = action.content) != null ? _a : "";
+        if (target.mode === "vault") {
+          await this.writeVaultTextFile(target.path, content);
+        } else {
+          await nodeFs.promises.mkdir(nodePath.dirname(target.path), { recursive: true });
+          await nodeFs.promises.writeFile(target.path, content, "utf8");
+        }
+        return {
+          status: "ok",
+          title: `write_note ${target.path}`,
+          detail: `Wrote ${content.length} chars.`
+        };
+      }
+      if (action.type === "append_note") {
+        const target = this.resolveQaAgentPathTarget(
+          action.path || "",
+          "append_note.path",
+          "file"
+        );
+        const appendText = (_b = action.content) != null ? _b : "";
+        let previous = "";
+        if (target.mode === "vault") {
+          const exists = await this.app.vault.adapter.exists(target.path);
+          previous = exists ? await this.app.vault.adapter.read(target.path) : "";
+        } else {
+          try {
+            previous = await nodeFs.promises.readFile(target.path, "utf8");
+          } catch (e) {
+            previous = "";
+          }
+        }
+        const separator = previous.length > 0 && !previous.endsWith("\n") && appendText.length > 0 && !appendText.startsWith("\n") ? "\n" : "";
+        const merged = `${previous}${separator}${appendText}`;
+        if (target.mode === "vault") {
+          await this.writeVaultTextFile(target.path, merged);
+        } else {
+          await nodeFs.promises.mkdir(nodePath.dirname(target.path), { recursive: true });
+          await nodeFs.promises.writeFile(target.path, merged, "utf8");
+        }
+        return {
+          status: "ok",
+          title: `append_note ${target.path}`,
+          detail: `Appended ${appendText.length} chars (total ${merged.length}).`
+        };
+      }
+      if (action.type === "list_folder") {
+        const target = this.resolveQaAgentPathTarget(
+          action.path || ".",
+          "list_folder.path",
+          "folder"
+        );
+        const lines = [
+          `folder=${target.path}`
+        ];
+        let folders = [];
+        let files = [];
+        if (target.mode === "vault") {
+          const listing = await this.app.vault.adapter.list(target.path);
+          folders = listing.folders;
+          files = listing.files;
+          lines.push(`folders=${folders.length}, files=${files.length}`);
+        } else {
+          const entries = await nodeFs.promises.readdir(target.path, { withFileTypes: true });
+          for (const entry of entries) {
+            const resolved = nodePath.join(target.path, entry.name);
+            if (entry.isDirectory()) {
+              folders.push(resolved);
+            } else {
+              files.push(resolved);
+            }
+          }
+          folders.sort((a, b) => a.localeCompare(b));
+          files.sort((a, b) => a.localeCompare(b));
+          lines.push(`folders=${folders.length}, files=${files.length}`);
+        }
+        const folderPreview = folders.slice(0, 30);
+        const filePreview = files.slice(0, 40);
+        if (folders.length > 0) {
+          lines.push("subfolders:");
+          for (const folder of folderPreview) {
+            lines.push(`- ${folder}`);
+          }
+          if (folders.length > folderPreview.length) {
+            lines.push(`- ...and ${folders.length - folderPreview.length} more`);
+          }
+        }
+        if (files.length > 0) {
+          lines.push("files:");
+          for (const file of filePreview) {
+            lines.push(`- ${file}`);
+          }
+          if (files.length > filePreview.length) {
+            lines.push(`- ...and ${files.length - filePreview.length} more`);
+          }
+        }
+        return {
+          status: "ok",
+          title: `list_folder ${target.path}`,
+          detail: lines.join("\n")
+        };
+      }
+      if (action.type === "run_shell") {
+        if (!this.settings.qaAgentAllowShellTool) {
+          return {
+            status: "blocked",
+            title: "run_shell",
+            detail: "Blocked by settings: 'Allow shell tool (danger)' is disabled."
+          };
+        }
+        const command = ((_c = action.command) != null ? _c : "").trim();
+        if (!command) {
+          return {
+            status: "error",
+            title: "run_shell",
+            detail: "command is empty."
+          };
+        }
+        const timeoutSec = Math.max(
+          3,
+          Math.min(
+            300,
+            Math.floor((_d = action.timeoutSec) != null ? _d : this.settings.qaAgentShellTimeoutSec)
+          )
+        );
+        const cwd = this.resolveQaShellCwd(action.cwd);
+        const output = await execAsync(command, {
+          cwd,
+          timeout: timeoutSec * 1e3,
+          maxBuffer: 1024 * 1024
+        });
+        const stdout = this.trimQaToolText(String((_e = output.stdout) != null ? _e : ""), 2e3);
+        const stderr = this.trimQaToolText(String((_f = output.stderr) != null ? _f : ""), 1600);
+        const lines = [
+          `cwd=${cwd}`,
+          `timeout=${timeoutSec}s`,
+          stdout ? `stdout:
+${stdout}` : "stdout: (empty)",
+          stderr ? `stderr:
+${stderr}` : "stderr: (empty)"
+        ];
+        return {
+          status: "ok",
+          title: "run_shell",
+          detail: lines.join("\n")
+        };
+      }
+      return {
+        status: "error",
+        title: `unsupported action: ${String(action.type)}`,
+        detail: "Unsupported action type."
+      };
+    } catch (error) {
+      if (action.type === "run_shell") {
+        const shellError = error;
+        const stdout = this.trimQaToolText(String((_g = shellError.stdout) != null ? _g : ""), 1800);
+        const stderr = this.trimQaToolText(String((_h = shellError.stderr) != null ? _h : ""), 1800);
+        const details = [
+          (_i = shellError.message) != null ? _i : "Shell execution failed.",
+          shellError.code !== void 0 ? `code=${String(shellError.code)}` : "",
+          shellError.signal ? `signal=${shellError.signal}` : "",
+          stdout ? `stdout:
+${stdout}` : "",
+          stderr ? `stderr:
+${stderr}` : ""
+        ].filter((line) => line.length > 0).join("\n");
+        return {
+          status: "error",
+          title: "run_shell",
+          detail: details
+        };
+      }
+      const message = error instanceof Error ? error.message : "Unknown action error";
+      return {
+        status: "error",
+        title: this.summarizeQaAgentAction(action),
+        detail: message
+      };
+    }
+  }
+  async executeQaAgentActionPlan(plan, onEvent) {
+    const lines = [
+      "### Agent action execution report / \uC5D0\uC774\uC804\uD2B8 \uC561\uC158 \uC2E4\uD589 \uB9AC\uD3EC\uD2B8",
+      `Plan ID: ${plan.id}`,
+      `Actions: ${plan.actions.length}`,
+      ""
+    ];
+    for (let index = 0; index < plan.actions.length; index += 1) {
+      const action = plan.actions[index];
+      const actionLabel = this.summarizeQaAgentAction(action);
+      this.emitQaEvent(
+        onEvent,
+        "info",
+        `Executing action ${index + 1}/${plan.actions.length}: ${actionLabel}`
+      );
+      const result = await this.executeQaAgentAction(action);
+      if (result.status === "ok") {
+        this.emitQaEvent(onEvent, "info", `Action completed: ${actionLabel}`);
+      } else if (result.status === "blocked") {
+        this.emitQaEvent(onEvent, "warning", `Action blocked: ${actionLabel}`, {
+          detail: result.detail
+        });
+      } else {
+        this.emitQaEvent(onEvent, "error", `Action failed: ${actionLabel}`, {
+          detail: result.detail
+        });
+      }
+      lines.push(
+        `#### ${index + 1}. [${result.status.toUpperCase()}] ${result.title}`
+      );
+      if (result.detail) {
+        lines.push(result.detail);
+      }
+      lines.push("");
+    }
+    return lines.join("\n").trim();
+  }
+  buildQaAgentControlResult(question, answer) {
+    return {
+      question: question.trim(),
+      answer,
+      thinking: "",
+      model: "agent-tools",
+      embeddingModel: this.settings.semanticOllamaModel.trim() || "(none)",
+      sources: [],
+      retrievalCacheHits: 0,
+      retrievalCacheWrites: 0
+    };
+  }
+  async applyQaAgentActionsFromAnswer(params) {
+    const { answer, question, qaModel, onEvent, abortSignal } = params;
+    if (abortSignal == null ? void 0 : abortSignal.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    if (!this.settings.qaAgentToolModeEnabled) {
+      return answer;
+    }
+    const parsed = this.parseQaAgentActionPlanFromAnswer({
+      answer,
+      question,
+      model: qaModel
+    });
+    if (!parsed.plan) {
+      if (!parsed.warning) {
+        return parsed.answerWithoutPlan;
+      }
+      const warningLine = `> Agent action parse warning: ${parsed.warning}`;
+      return [parsed.answerWithoutPlan, warningLine].filter((line) => line.trim()).join("\n\n");
+    }
+    if (parsed.warning) {
+      this.emitQaEvent(onEvent, "warning", parsed.warning);
+    }
+    if (this.settings.qaAgentRequireApproval) {
+      if (abortSignal == null ? void 0 : abortSignal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+      this.pendingQaActionPlan = parsed.plan;
+      this.emitQaEvent(
+        onEvent,
+        "info",
+        `Queued ${parsed.plan.actions.length} action(s) for manual approval.`
+      );
+      return [
+        parsed.answerWithoutPlan || "(Action-only response)",
+        this.buildQaActionApprovalText(parsed.plan)
+      ].filter((line) => line.trim().length > 0).join("\n\n");
+    }
+    if (abortSignal == null ? void 0 : abortSignal.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    const report = await this.executeQaAgentActionPlan(parsed.plan, onEvent);
+    return [parsed.answerWithoutPlan, report].filter((line) => line.trim().length > 0).join("\n\n");
+  }
+  normalizeQaExternalAttachments(attachments) {
+    var _a, _b, _c, _d, _e;
+    const textDocs = [];
+    const images = [];
+    const imageLabels = [];
+    const pdfLabels = [];
+    const imageItems = [];
+    const pdfItems = [];
+    for (const attachment of attachments.slice(0, LOCAL_QA_MAX_ATTACHMENTS)) {
+      if (attachment.kind === "image") {
+        const base64 = ((_a = attachment.imageBase64) != null ? _a : "").trim();
+        if (base64) {
+          images.push(base64);
+          const label2 = (attachment.label || attachment.path || `image-${images.length}`).trim();
+          const path2 = (_b = attachment.path) == null ? void 0 : _b.trim();
+          imageLabels.push(label2);
+          imageItems.push({ label: label2, path: path2 });
+        }
+      }
+      if (attachment.kind === "pdf") {
+        const label2 = (attachment.label || attachment.path || `pdf-${pdfLabels.length + 1}`).trim();
+        const path2 = (_c = attachment.path) == null ? void 0 : _c.trim();
+        pdfLabels.push(label2);
+        pdfItems.push({ label: label2, path: path2 });
+      }
+      const content = this.trimQaToolText(((_d = attachment.content) != null ? _d : "").trim(), 12e3);
+      if (!content) {
+        continue;
+      }
+      const label = (attachment.label || attachment.path || `document-${textDocs.length + 1}`).trim();
+      const path = (_e = attachment.path) == null ? void 0 : _e.trim();
+      textDocs.push({
+        label,
+        path,
+        content
+      });
+    }
+    return {
+      textDocs: textDocs.slice(0, LOCAL_QA_MAX_ATTACHMENTS),
+      images: images.slice(0, LOCAL_QA_MAX_ATTACHMENTS),
+      imageLabels: imageLabels.slice(0, LOCAL_QA_MAX_ATTACHMENTS),
+      pdfLabels: pdfLabels.slice(0, LOCAL_QA_MAX_ATTACHMENTS),
+      imageItems: imageItems.slice(0, LOCAL_QA_MAX_ATTACHMENTS),
+      pdfItems: pdfItems.slice(0, LOCAL_QA_MAX_ATTACHMENTS)
+    };
+  }
+  async askLocalQa(question, topK, history = [], onToken, onEvent, abortSignal, externalAttachments = [], options = {}) {
+    var _a;
     const safeQuestion = question.trim();
     if (!safeQuestion) {
       throw new Error("Question is empty.");
     }
+    const throwIfAborted = () => {
+      if (abortSignal == null ? void 0 : abortSignal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+    };
+    throwIfAborted();
+    if (this.settings.qaAgentToolModeEnabled) {
+      const approvalCommand = this.parseQaAgentApprovalCommand(safeQuestion);
+      if (approvalCommand) {
+        if (!this.pendingQaActionPlan) {
+          return this.buildQaAgentControlResult(
+            safeQuestion,
+            "\uB300\uAE30 \uC911\uC778 \uC561\uC158 \uACC4\uD68D\uC774 \uC5C6\uC2B5\uB2C8\uB2E4. / No pending action plan."
+          );
+        }
+        if (approvalCommand === "deny") {
+          const cancelled = this.pendingQaActionPlan;
+          this.pendingQaActionPlan = null;
+          return this.buildQaAgentControlResult(
+            safeQuestion,
+            `\uACC4\uD68D\uC744 \uCDE8\uC18C\uD588\uC2B5\uB2C8\uB2E4: ${cancelled.id} (${cancelled.actions.length} actions).`
+          );
+        }
+        const plan = this.pendingQaActionPlan;
+        this.pendingQaActionPlan = null;
+        const report = await this.executeQaAgentActionPlan(plan, onEvent);
+        return this.buildQaAgentControlResult(safeQuestion, report);
+      }
+    }
+    const qaContextEnabled = this.settings.qaContextInChat;
+    const selectedFiles = qaContextEnabled ? this.getSelectedFiles() : [];
+    const normalizedExternal = this.normalizeQaExternalAttachments(externalAttachments);
+    const openFilePath = (0, import_obsidian4.normalizePath)(((_a = options.openFilePath) != null ? _a : "").trim());
+    const openFileEntry = openFilePath ? this.app.vault.getAbstractFileByPath(openFilePath) : null;
+    const openFile = qaContextEnabled && openFileEntry instanceof import_obsidian4.TFile && openFileEntry.extension === "md" ? openFileEntry : null;
+    const hasImageAttachments = normalizedExternal.images.length > 0;
+    const hasPdfAttachments = normalizedExternal.pdfLabels.length > 0;
+    const hasVisionAttachments = hasImageAttachments || hasPdfAttachments;
+    const hasExternalContext = normalizedExternal.textDocs.length > 0 || normalizedExternal.images.length > 0 || normalizedExternal.pdfLabels.length > 0;
     const intent = this.detectLocalQaIntent(safeQuestion);
     const preferDetailed = this.shouldPreferDetailedAnswer(safeQuestion, intent);
     const safeTopK = Math.max(1, Math.min(15, topK));
@@ -6589,13 +11693,65 @@ ${roleSystemPrompt}` : ""
     if (!qaBaseUrl) {
       throw new Error("Q&A base URL is empty.");
     }
-    if (!this.settings.qaAllowNonLocalEndpoint && !this.isLocalEndpoint(qaBaseUrl)) {
-      throw new Error(
-        "Blocked by security policy: Q&A endpoint must be localhost unless explicitly allowed."
+    const endpointPolicyError = this.validateQaEndpointPolicy(qaBaseUrl);
+    if (endpointPolicyError) {
+      throw new Error(endpointPolicyError);
+    }
+    if (!qaContextEnabled) {
+      this.emitQaEvent(
+        onEvent,
+        "retrieval",
+        "QA context is disabled; running general chat without selected-note retrieval."
       );
     }
-    const primaryRole = this.resolveQaPrimaryRole();
-    const qaModel = this.resolveQaModelForRole(primaryRole);
+    let primaryRole = this.resolveQaPrimaryRole();
+    if (hasVisionAttachments && primaryRole !== "ask_vision") {
+      primaryRole = "ask_vision";
+      this.emitQaEvent(
+        onEvent,
+        "info",
+        "Vision-compatible attachments detected (image/pdf); switching role to Ask (vision) for this turn."
+      );
+    }
+    let qaModel = this.resolveQaModelForRole(primaryRole);
+    const detectedModels = this.getDetectedOllamaModelNames();
+    if (qaModel && detectedModels.length > 0 && !this.hasDetectedOllamaModel(qaModel)) {
+      const roleFallback = this.resolveDetectedRoleFallbackModel(primaryRole);
+      if (roleFallback) {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          `Selected ${primaryRole} model is not detected (${qaModel}); fallback to ${roleFallback}`
+        );
+        qaModel = roleFallback;
+      } else {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          `Selected ${primaryRole} model is not detected (${qaModel}); continuing with configured value.`
+        );
+      }
+    }
+    if (hasVisionAttachments && !this.isVisionCapableModel(qaModel)) {
+      const visionFallback = this.resolveVisionModelForImageAttachments();
+      if (visionFallback) {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          `Current model is text-only for image input. Switching to vision model: ${visionFallback}`
+        );
+        qaModel = visionFallback;
+      } else {
+        this.emitQaEvent(
+          onEvent,
+          "error",
+          "No vision-capable local model detected. Image/PDF understanding is unavailable in current setup."
+        );
+        throw new Error(
+          "\uBE44\uC804 \uBAA8\uB378\uC774 \uAC10\uC9C0\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4. \uC774\uBBF8\uC9C0/PDF \uCCA8\uBD80\uB97C \uCC98\uB9AC\uD558\uB824\uBA74 Guide\uC758 \uBE44\uC804 \uBAA8\uB378 \uC124\uCE58 \uC548\uB0B4\uB97C \uBA3C\uC800 \uC644\uB8CC\uD558\uC138\uC694."
+        );
+      }
+    }
     if (!qaModel) {
       throw new Error("Q&A model is empty.");
     }
@@ -6603,106 +11759,246 @@ ${roleSystemPrompt}` : ""
       throw new Error(`Q&A model is not suitable: ${qaModel}`);
     }
     try {
-      const embeddingModel = this.settings.semanticOllamaModel.trim();
-      if (!embeddingModel) {
-        throw new Error("Embedding model is empty. Refresh embedding detection first.");
-      }
-      this.setStatus("semantic retrieval for local qa...");
-      this.emitQaEvent(onEvent, "retrieval", "Embedding retrieval started");
-      const retrievalCandidateK = this.resolveQaRetrievalCandidateK(intent, safeTopK);
-      const retrieval = await searchSemanticNotesByQuery(
-        this.app,
-        selectedFiles,
-        this.settings,
-        safeQuestion,
-        retrievalCandidateK
-      );
-      this.emitQaEvent(
-        onEvent,
-        "retrieval",
-        `Retrieved ${retrieval.hits.length} candidates (cache hits=${retrieval.cacheHits}, writes=${retrieval.cacheWrites})`
-      );
-      if (retrieval.errors.length > 0) {
-        this.notice(`Semantic retrieval had ${retrieval.errors.length} issue(s).`, 6e3);
-        this.emitQaEvent(onEvent, "warning", `Retrieval warnings: ${retrieval.errors.length}`);
-      }
-      if (retrieval.hits.length === 0) {
-        throw new Error("No relevant notes were found for this question.");
-      }
-      const rankedHits = this.rerankQaHits(
-        retrieval.hits,
-        safeQuestion,
-        this.resolveQaRerankTopK(intent, safeTopK)
-      );
-      if (rankedHits.length === 0) {
-        throw new Error("No relevant notes were found for this question.");
-      }
-      this.emitQaEvent(onEvent, "retrieval", `Reranked to ${rankedHits.length} notes`);
+      throwIfAborted();
+      let embeddingModel = this.settings.semanticOllamaModel.trim();
+      let retrievalCacheHits = 0;
+      let retrievalCacheWrites = 0;
       const maxContextChars = this.resolveQaContextCharLimit(intent);
-      const queryTerms = this.tokenizeQuery(safeQuestion);
-      const sourceCandidates = [];
-      let usedChars = 0;
-      for (const hit of rankedHits) {
-        if (usedChars >= maxContextChars) {
-          break;
+      let sourceBlocks = [];
+      if (selectedFiles.length > 0 && embeddingModel) {
+        this.setStatus("semantic retrieval for local qa...");
+        this.emitQaEvent(onEvent, "retrieval", "Embedding retrieval started");
+        try {
+          throwIfAborted();
+          const retrievalCandidateK = this.resolveQaRetrievalCandidateK(intent, safeTopK);
+          const retrieval = await searchSemanticNotesByQuery(
+            this.app,
+            selectedFiles,
+            this.settings,
+            safeQuestion,
+            retrievalCandidateK,
+            abortSignal
+          );
+          retrievalCacheHits = retrieval.cacheHits;
+          retrievalCacheWrites = retrieval.cacheWrites;
+          this.emitQaEvent(
+            onEvent,
+            "retrieval",
+            `Retrieved ${retrieval.hits.length} candidates (cache hits=${retrieval.cacheHits}, writes=${retrieval.cacheWrites})`
+          );
+          if (retrieval.errors.length > 0) {
+            this.notice(`Semantic retrieval had ${retrieval.errors.length} issue(s).`, 6e3);
+            this.emitQaEvent(
+              onEvent,
+              "warning",
+              `Retrieval warnings: ${retrieval.errors.length}`
+            );
+          }
+          if (retrieval.hits.length === 0 && !hasExternalContext) {
+            throw new Error("No relevant notes were found for this question.");
+          }
+          const rankedHits = this.rerankQaHits(
+            retrieval.hits,
+            safeQuestion,
+            this.resolveQaRerankTopK(intent, safeTopK)
+          );
+          const queryTerms = this.tokenizeQuery(safeQuestion);
+          const sourceCandidates = [];
+          let usedChars = 0;
+          for (const hit of rankedHits) {
+            throwIfAborted();
+            if (usedChars >= maxContextChars) {
+              break;
+            }
+            const entry = this.app.vault.getAbstractFileByPath(hit.path);
+            if (!(entry instanceof import_obsidian4.TFile)) {
+              continue;
+            }
+            const raw = await this.app.vault.cachedRead(entry);
+            throwIfAborted();
+            const remaining = Math.max(500, maxContextChars - usedChars);
+            const snippet = this.extractRelevantSnippet(raw, safeQuestion, remaining);
+            if (!snippet) {
+              continue;
+            }
+            const snippetMatch = this.countTermMatches(snippet.toLowerCase(), queryTerms);
+            const relevance = hit.similarity + Math.min(0.22, snippetMatch * 0.03);
+            sourceCandidates.push({
+              path: hit.path,
+              similarity: hit.similarity,
+              content: snippet,
+              relevance
+            });
+            usedChars += snippet.length;
+          }
+          sourceCandidates.sort(
+            (a, b) => b.relevance - a.relevance || a.path.localeCompare(b.path)
+          );
+          const sourceLimit = intent === "comparison" || intent === "plan" ? Math.max(safeTopK + 2, safeTopK) : intent === "sources_only" ? Math.max(safeTopK, 5) : safeTopK;
+          sourceBlocks = sourceCandidates.slice(0, sourceLimit).map((item) => ({
+            path: item.path,
+            similarity: item.similarity,
+            content: item.content
+          }));
+          this.emitQaEvent(
+            onEvent,
+            "retrieval",
+            `Context built from ${sourceBlocks.length} notes (${usedChars} chars)`
+          );
+        } catch (error) {
+          if (this.isAbortError(error)) {
+            throw error;
+          }
+          if (!hasExternalContext) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : "Unknown semantic retrieval error";
+          this.emitQaEvent(
+            onEvent,
+            "warning",
+            `Semantic retrieval failed. Falling back to attachments: ${message}`
+          );
+          this.notice(`Semantic retrieval fallback: ${message}`, 7e3);
+          sourceBlocks = [];
         }
-        const entry = this.app.vault.getAbstractFileByPath(hit.path);
-        if (!(entry instanceof import_obsidian4.TFile)) {
-          continue;
+      } else if (selectedFiles.length > 0 && !embeddingModel) {
+        if (!hasExternalContext) {
+          throw new Error("Embedding model is empty. Refresh embedding detection first.");
         }
-        const raw = await this.app.vault.cachedRead(entry);
-        const remaining = Math.max(500, maxContextChars - usedChars);
-        const snippet = this.extractRelevantSnippet(raw, safeQuestion, remaining);
-        if (!snippet) {
-          continue;
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          "Embedding model is empty. Selected-note retrieval skipped; using attachments only."
+        );
+        embeddingModel = "(attachments-priority)";
+      } else if (!hasExternalContext && openFile instanceof import_obsidian4.TFile) {
+        const openRaw = await this.app.vault.cachedRead(openFile);
+        throwIfAborted();
+        const snippet = this.extractRelevantSnippet(openRaw, safeQuestion, maxContextChars);
+        if (snippet.trim().length > 0) {
+          sourceBlocks = [{
+            path: openFile.path,
+            similarity: 1,
+            content: snippet
+          }];
+          embeddingModel = "(open-file-fallback)";
+          this.emitQaEvent(
+            onEvent,
+            "retrieval",
+            `No selected scope/attachments. Using currently open file: ${openFile.path}`
+          );
+        } else {
+          embeddingModel = "(open-file-empty)";
+          this.emitQaEvent(
+            onEvent,
+            "warning",
+            `Open file detected but no readable text: ${openFile.path}`
+          );
         }
-        const snippetMatch = this.countTermMatches(snippet.toLowerCase(), queryTerms);
-        const relevance = hit.similarity + Math.min(0.22, snippetMatch * 0.03);
-        sourceCandidates.push({
-          path: hit.path,
-          similarity: hit.similarity,
-          content: snippet,
-          relevance
-        });
-        usedChars += snippet.length;
+      } else if (hasExternalContext) {
+        this.emitQaEvent(onEvent, "retrieval", "Skipping semantic retrieval (attachments only)");
+        embeddingModel = "(attachments-only)";
+      } else {
+        this.emitQaEvent(onEvent, "retrieval", "No selected notes/attachments: general chat mode");
+        embeddingModel = "(general-chat)";
       }
-      sourceCandidates.sort(
-        (a, b) => b.relevance - a.relevance || a.path.localeCompare(b.path)
-      );
-      const sourceLimit = intent === "comparison" || intent === "plan" ? Math.max(safeTopK + 2, safeTopK) : intent === "sources_only" ? Math.max(safeTopK, 5) : safeTopK;
-      const sourceBlocks = sourceCandidates.slice(0, sourceLimit).map((item) => ({
-        path: item.path,
-        similarity: item.similarity,
-        content: item.content
-      }));
-      this.emitQaEvent(
-        onEvent,
-        "retrieval",
-        `Context built from ${sourceBlocks.length} notes (${usedChars} chars)`
-      );
-      if (sourceBlocks.length === 0) {
-        throw new Error("Relevant notes found but no readable content extracted.");
+      if (normalizedExternal.textDocs.length > 0) {
+        const attachmentBlocks = normalizedExternal.textDocs.map((doc, index) => ({
+          path: doc.path || `[ATTACHMENT-DOC] ${doc.label || `document-${index + 1}`}`,
+          similarity: 1,
+          content: this.trimQaToolText(
+            [
+              "Attachment document (PRIMARY EVIDENCE)",
+              `Label: ${doc.label || `document-${index + 1}`}`,
+              doc.path ? `Original path: ${doc.path}` : "Original path: (external attachment)",
+              "---",
+              doc.content
+            ].join("\n"),
+            Math.max(900, Math.floor(maxContextChars * 0.6))
+          )
+        }));
+        sourceBlocks = [...attachmentBlocks, ...sourceBlocks];
+        this.emitQaEvent(
+          onEvent,
+          "retrieval",
+          `Included ${attachmentBlocks.length} attached text document(s).`
+        );
+      }
+      if (sourceBlocks.length > 0) {
+        const trimmedBlocks = [];
+        let used = 0;
+        for (const block of sourceBlocks) {
+          throwIfAborted();
+          const remaining = maxContextChars - used;
+          if (remaining < 160) {
+            break;
+          }
+          const nextContent = this.trimQaToolText(block.content, remaining);
+          if (!nextContent.trim()) {
+            continue;
+          }
+          trimmedBlocks.push({
+            path: block.path,
+            similarity: block.similarity,
+            content: nextContent
+          });
+          used += nextContent.length;
+        }
+        sourceBlocks = trimmedBlocks;
+      }
+      if (sourceBlocks.length === 0 && (normalizedExternal.images.length > 0 || normalizedExternal.pdfLabels.length > 0)) {
+        const imageBlocks = normalizedExternal.imageItems.map((item, index) => {
+          var _a2;
+          return {
+            path: ((_a2 = item.path) == null ? void 0 : _a2.trim()) || `[ATTACHMENT-IMAGE] ${item.label || `image-${index + 1}`}`,
+            similarity: 1,
+            content: "Image attachment (model should inspect attached image input)."
+          };
+        });
+        const pdfBlocks = normalizedExternal.pdfItems.map((item, index) => {
+          var _a2;
+          return {
+            path: ((_a2 = item.path) == null ? void 0 : _a2.trim()) || `[ATTACHMENT-PDF] ${item.label || `pdf-${index + 1}`}`,
+            similarity: 1,
+            content: "PDF attachment (if direct parsing is limited, request converted image/text excerpts for precise grounding)."
+          };
+        });
+        sourceBlocks = [...pdfBlocks, ...imageBlocks];
       }
       const sourceContext = this.buildLocalQaSourceContext(sourceBlocks);
-      const selectionInventoryContext = this.shouldIncludeSelectionInventory(
+      const hasSourceContext = sourceBlocks.length > 0 || normalizedExternal.images.length > 0 || normalizedExternal.pdfLabels.length > 0;
+      const attachmentLabels = [
+        ...normalizedExternal.textDocs.map((doc) => `[DOC] ${doc.label}`),
+        ...normalizedExternal.imageLabels.map((label) => `[IMG] ${label}`),
+        ...normalizedExternal.pdfLabels.map((label) => `[PDF] ${label}`)
+      ];
+      const selectionInventoryContext = selectedFiles.length > 0 && this.shouldIncludeSelectionInventory(
         safeQuestion,
         selectedFiles.length,
         intent
       ) ? this.buildSelectionInventoryContext(selectedFiles) : void 0;
-      const systemPrompt = this.buildLocalQaSystemPrompt(intent, preferDetailed);
+      const systemPrompt = this.buildLocalQaSystemPrompt(
+        intent,
+        preferDetailed,
+        hasSourceContext,
+        primaryRole
+      );
       const userPrompt = this.buildLocalQaUserPrompt(
         safeQuestion,
         sourceContext,
-        selectionInventoryContext
+        selectionInventoryContext,
+        attachmentLabels
       );
       this.emitQaEvent(onEvent, "generation", "Generation started");
       this.setStatus("asking local qa model...");
+      throwIfAborted();
       const completion = await this.requestLocalQaCompletion({
         qaBaseUrl,
         qaModel,
         systemPrompt,
         userPrompt,
         history,
+        images: normalizedExternal.images,
         onToken,
         onEvent,
         abortSignal
@@ -6715,37 +12011,29 @@ ${roleSystemPrompt}` : ""
       if (!initialAnswer) {
         throw new Error("Local Q&A returned an empty answer.");
       }
-      let finalAnswer = await this.repairQaStructureIfNeeded({
-        intent,
-        answer: initialAnswer,
-        question: safeQuestion,
-        preferDetailed,
-        sourceBlocks,
-        qaBaseUrl,
-        qaModel,
-        onEvent
-      });
-      const pipelineStages = this.resolveQaPipelineStages(safeQuestion, intent);
-      if (pipelineStages.length > 0) {
+      const hasAgentActionBlock = this.settings.qaAgentToolModeEnabled && /```auto-link-actions[\s\S]*?```/i.test(initialAnswer);
+      let finalAnswer = initialAnswer;
+      if (!hasSourceContext) {
         this.emitQaEvent(
           onEvent,
-          "generation",
-          `Pipeline: ${pipelineStages.join(" -> ")}`
+          "info",
+          "No source context for this turn; skipping source-based rewrite passes."
         );
-      }
-      for (const stage of pipelineStages) {
-        if (stage === "orchestrator") {
-          finalAnswer = await this.applyOrchestratorPass({
-            question: safeQuestion,
-            answer: finalAnswer,
-            sourceBlocks,
-            qaBaseUrl,
-            onEvent,
-            abortSignal
-          });
-          continue;
-        }
-        if (stage === "safeguard") {
+      } else if (hasAgentActionBlock) {
+        this.emitQaEvent(
+          onEvent,
+          "info",
+          "Agent action block detected; skipping post-generation rewrite passes."
+        );
+      } else if (hasVisionAttachments) {
+        this.emitQaEvent(
+          onEvent,
+          "info",
+          "Vision-compatible attachments detected; limiting rewrite passes to safeguard-only."
+        );
+        const limitedStages = this.resolveQaPipelineStages(safeQuestion, intent).filter((stage) => stage === "safeguard");
+        for (const stage of limitedStages) {
+          throwIfAborted();
           finalAnswer = await this.applySafeguardPass({
             question: safeQuestion,
             answer: finalAnswer,
@@ -6754,14 +12042,82 @@ ${roleSystemPrompt}` : ""
             onEvent,
             abortSignal
           });
-          continue;
         }
-        finalAnswer = await this.applyRolePresetRefinementPass({
-          role: stage,
+      } else {
+        throwIfAborted();
+        finalAnswer = await this.repairQaStructureIfNeeded({
+          intent,
+          answer: initialAnswer,
           question: safeQuestion,
-          answer: finalAnswer,
+          preferDetailed,
           sourceBlocks,
           qaBaseUrl,
+          qaModel,
+          onEvent,
+          abortSignal
+        });
+        const useLightweightPipeline = this.shouldUseLightweightQaPipeline(
+          safeQuestion,
+          intent
+        );
+        if (useLightweightPipeline) {
+          this.emitQaEvent(
+            onEvent,
+            "info",
+            "Simple question detected; skipping heavy pipeline passes for faster response."
+          );
+        }
+        const pipelineStages = useLightweightPipeline ? [] : this.resolveQaPipelineStages(safeQuestion, intent);
+        if (pipelineStages.length > 0) {
+          this.emitQaEvent(
+            onEvent,
+            "generation",
+            `Pipeline: ${pipelineStages.join(" -> ")}`
+          );
+        }
+        for (const stage of pipelineStages) {
+          throwIfAborted();
+          if (stage === "orchestrator") {
+            finalAnswer = await this.applyOrchestratorPass({
+              question: safeQuestion,
+              answer: finalAnswer,
+              sourceBlocks,
+              qaBaseUrl,
+              onEvent,
+              abortSignal
+            });
+            continue;
+          }
+          if (stage === "safeguard") {
+            finalAnswer = await this.applySafeguardPass({
+              question: safeQuestion,
+              answer: finalAnswer,
+              sourceBlocks,
+              qaBaseUrl,
+              onEvent,
+              abortSignal
+            });
+            continue;
+          }
+          finalAnswer = await this.applyRolePresetRefinementPass({
+            role: stage,
+            question: safeQuestion,
+            answer: finalAnswer,
+            sourceBlocks,
+            qaBaseUrl,
+            onEvent,
+            abortSignal
+          });
+        }
+      }
+      const shouldSkipLanguageGuard = this.settings.qaAgentToolModeEnabled && /```auto-link-actions[\s\S]*?```/i.test(finalAnswer);
+      if (!shouldSkipLanguageGuard) {
+        throwIfAborted();
+        finalAnswer = await this.enforcePreferredLanguageIfNeeded({
+          answer: finalAnswer,
+          question: safeQuestion,
+          qaBaseUrl,
+          qaModel,
           onEvent,
           abortSignal
         });
@@ -6772,15 +12128,23 @@ ${roleSystemPrompt}` : ""
         path: item.path,
         similarity: item.similarity
       }));
+      throwIfAborted();
+      const answerWithActions = await this.applyQaAgentActionsFromAnswer({
+        answer: finalAnswer,
+        question: safeQuestion,
+        qaModel,
+        onEvent,
+        abortSignal
+      });
       return {
         question: safeQuestion,
-        answer: finalAnswer,
+        answer: answerWithActions,
         thinking: mergedThinking,
         model: qaModel,
         embeddingModel,
         sources: sourceList,
-        retrievalCacheHits: retrieval.cacheHits,
-        retrievalCacheWrites: retrieval.cacheWrites
+        retrievalCacheHits,
+        retrievalCacheWrites
       };
     } finally {
       this.setStatus("idle");
@@ -8025,7 +13389,7 @@ ${roleSystemPrompt}` : ""
       }
       lines.push("");
     }
-    const outputPath = this.resolveSafeMarkdownPath(this.settings.mocPath, "MOC");
+    const outputPath = await this.allocateTimestampedMocPath(this.settings.mocPath);
     await this.ensureParentFolder(outputPath);
     const existing = this.app.vault.getAbstractFileByPath(outputPath);
     const content = `${lines.join("\n").trim()}
@@ -8035,7 +13399,7 @@ ${roleSystemPrompt}` : ""
     } else {
       await this.app.vault.create(outputPath, content);
     }
-    this.notice(`MOC updated: ${outputPath}`);
+    this.notice(`MOC saved: ${outputPath}`);
   }
   async ensureFolderPath(folderPath) {
     const normalized = (0, import_obsidian4.normalizePath)(folderPath);

@@ -25,6 +25,8 @@ Auto Link는 반대로 동작합니다.
 - 선택 범위 분석(선택한 파일/폴더만)
 - 제안 우선 워크플로우(미리보기 후 적용)
 - 선택 노트 기반 로컬 AI 챗(markdown 렌더링)
+- 첨부 기반 채팅 지원(드래그/업로드/붙여넣기, 최대 10개, 이미지 미리보기)
+- 선택 노트가 없어도 일반 대화 가능(첨부 우선 근거 모드 지원)
 - 장시간 생성 중 `Send/Stop` 제어 지원
 - 출처 링크(`[[노트 경로]]`) 제공
 - 검색/생성 진행 타임라인 카드
@@ -47,7 +49,7 @@ Auto Link는 반대로 동작합니다.
   - MOC 출력 경로
 - 레거시 캐시 정리는 best-effort 방식으로 분리 처리
 
-정책 상세는 [SECURITY.md](SECURITY.md)를 참고하세요.
+신뢰 경계를 검토하지 않은 non-local endpoint는 기본값(비활성) 유지가 안전합니다.
 
 ## 설치
 
@@ -64,23 +66,30 @@ Auto Link는 반대로 동작합니다.
    - `manifest.json`
    - `main.js`
    - `styles.css`
-2. `.obsidian/plugins/auto-linker/` 경로에 배치
+2. `.obsidian/plugins/auto-link/` 경로에 배치
 3. Obsidian 재시작 후 **Auto Link** 활성화
 
 ## 5분 빠른 시작
 
 1. `설정 -> Auto Link` 열기
+   - `Settings view mode`를 `Simple / 간결`로 두면 핵심 항목만 깔끔하게 볼 수 있습니다.
+   - 필요할 때만 `Open Full / 전체 열기`로 고급 항목을 펼치세요.
+   - 상단 탭(`Quick/Models/Chat/Workflow/Advanced`)으로 설정 영역을 분리해 볼 수 있습니다.
 2. Provider/Model 선택
    - 로컬 우선 권장: `Ollama`
-3. 명령 실행: `Select target notes/folders`
-4. 명령 실행: `Analyze selected notes (suggestions by default)`
-5. 제안 미리보기 확인 후 적용
-6. (선택) `Ask local AI from selected notes` 실행
+3. `One-click local presets`에서 기본은 `Balanced` 권장
+4. 명령 실행: `Select target notes/folders`
+5. 명령 실행: `Analyze selected notes (suggestions by default)`
+6. 제안 미리보기 확인 후 적용
+7. (선택) `Ask local AI from selected notes` 실행
 
 ## 권장 설정
 
 | 영역 | 설정 | 권장값 |
 |---|---|---|
+| UI | Settings view mode | Simple (평소), Full (고급 조정 시) |
+| UI | Settings UI language | KO (기본), 필요 시 EN/Bilingual |
+| UI | One-click local presets | Balanced 기본, Fast/Quality+는 목적별 선택 |
 | 안전 | Allow non-local Q&A endpoint | OFF |
 | Q&A | Prefer Ollama /api/chat (with fallback) | ON |
 | Q&A | Structured answer guard | ON |
@@ -88,6 +97,7 @@ Auto Link는 반대로 동작합니다.
 | Q&A | Preferred response language | 한국어 중심이면 Korean |
 | Q&A | Include selection inventory | ON (대규모 선택 시) |
 | Chat | Auto-sync chat thread | ON |
+| Chat | Allow PDF attachments in chat (experimental) | 필요 시 ON (정확도 향상을 위해 PDF 변환본 병행 권장) |
 | 분석 | Analyze changed notes only | ON (대형 볼트 권장) |
 | 감시 | Watch folders for new notes | Inbox 워크플로우면 ON |
 | 자동 태깅 | Auto-tag active note | ON (선택, 태그 자동화) |
@@ -95,8 +105,8 @@ Auto Link는 반대로 동작합니다.
 
 ## Ollama Agent 모델 가이드 (M4 Pro 48GB)
 
-현재 Auto Link의 로컬 Q&A는 텍스트 노트 RAG 흐름입니다.
-채팅 UI는 Ollama `/api/chat`, `/api/generate`에 텍스트 프롬프트/메시지를 보내며, 이미지 입력 전송은 아직 연결되어 있지 않습니다.
+현재 Auto Link의 로컬 Q&A는 노트 RAG + 첨부 문서/이미지 기반 흐름입니다.
+채팅 UI는 Ollama `/api/chat`, `/api/generate`를 사용하며, 이미지 첨부가 있으면 비전 모델 우선으로 `/api/generate` 경로를 사용합니다.
 
 | Agent 역할 | 기본 권장 모델 | 경량 대안 | 메모 |
 |---|---|---|---|
@@ -185,8 +195,5 @@ npm run release:check
 ```
 
 관련 문서:
-- [USER_GUIDE_EN.md](docs/USER_GUIDE_EN.md)
-- [USER_GUIDE_KO.md](docs/USER_GUIDE_KO.md)
-- [SECURITY.md](SECURITY.md)
-- [RELEASE.md](RELEASE.md)
-- [COMMUNITY_SUBMISSION_CHECKLIST.md](COMMUNITY_SUBMISSION_CHECKLIST.md)
+- [README.md](README.md)
+- [CHANGELOG.md](CHANGELOG.md)

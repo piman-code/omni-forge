@@ -125,6 +125,18 @@ export type QaPipelinePreset =
   | "legacy_auto";
 
 export interface KnowledgeWeaverSettings {
+  settingsViewMode: "simple" | "full";
+  settingsUiLanguage: "ko" | "en" | "bilingual";
+  settingsActiveTab:
+    | "quick"
+    | "analyzed"
+    | "models"
+    | "chat"
+    | "advanced"
+    | "orchestration"
+    | "skills"
+    | "parser"
+    | "guide";
   provider: ProviderId;
   ollamaBaseUrl: string;
   ollamaModel: string;
@@ -163,11 +175,17 @@ export interface KnowledgeWeaverSettings {
   qaTopK: number;
   qaMaxContextChars: number;
   qaAllowNonLocalEndpoint: boolean;
+  qaAllowedOutboundHosts: string;
   qaPreferChatApi: boolean;
   qaStructureGuardEnabled: boolean;
   qaAlwaysDetailedAnswer: boolean;
   qaMinAnswerChars: number;
   qaPreferredResponseLanguage: "auto" | "korean" | "english";
+  qaLocalPresetProfile: "fast_local" | "balanced_local" | "quality_local" | "custom";
+  qaConversationMode: "ask" | "plan" | "agent" | "orchestration";
+  qaQuickCustomProfileSlot1: string;
+  qaQuickCustomProfileSlot2: string;
+  qaQuickCustomProfileSlot3: string;
   qaCustomSystemPrompt: string;
   qaRolePreset: QaRolePreset;
   qaPipelinePreset: QaPipelinePreset;
@@ -178,6 +196,12 @@ export interface KnowledgeWeaverSettings {
   qaArchitectModel: string;
   qaOrchestratorModel: string;
   qaSafeguardModel: string;
+  qaBalancedPresetBaseModel: string;
+  qaBalancedPresetVisionModel: string;
+  qaBalancedPresetEmbeddingModel: string;
+  qaQualityPresetBaseModel: string;
+  qaQualityPresetVisionModel: string;
+  qaQualityPresetEmbeddingModel: string;
   qaAskSystemPrompt: string;
   qaAskVisionSystemPrompt: string;
   qaImageGeneratorSystemPrompt: string;
@@ -192,6 +216,17 @@ export interface KnowledgeWeaverSettings {
   qaIncludeSelectionInventory: boolean;
   qaSelectionInventoryMaxFiles: number;
   qaThreadAutoSyncEnabled: boolean;
+  qaPdfAttachmentEnabled: boolean;
+  qaContextInChat: boolean;
+  qaParserMode: "fast" | "detailed";
+  qaAgentToolModeEnabled: boolean;
+  qaAgentRequireApproval: boolean;
+  qaAgentAllowShellTool: boolean;
+  qaAgentShellFullAccess: boolean;
+  qaAgentShellTimeoutSec: number;
+  qaAgentShellCwdPath: string;
+  qaAgentPathAllowlist: string;
+  qaAttachmentIngestRootPath: string;
   autoTagActiveNoteEnabled: boolean;
   autoTagActiveNoteCooldownSec: number;
   watchNewNotesEnabled: boolean;
