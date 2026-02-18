@@ -442,7 +442,7 @@ function pruneRuntimeQueryVectorCache(): void {
 
 function getEmbeddingCachePath(app: App): string {
   return normalizePath(
-    `${app.vault.configDir}/plugins/auto-link/semantic-embedding-cache.json`,
+    `${app.vault.configDir}/plugins/omni-forge/semantic-embedding-cache.json`,
   );
 }
 

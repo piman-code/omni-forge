@@ -1,19 +1,19 @@
-# Auto Link
+# Omni Forge
 
 Language: [English](README.md) | [한국어](README_KO.md)
 
-Auto Link is a local-first Obsidian plugin that helps you manage note metadata and ask questions over selected notes with a strong security baseline.
+Omni Forge is a local-first Obsidian plugin that helps you manage note metadata and ask questions over selected notes with a strong security baseline.
 
 It is designed for users who want:
 - controlled, selected-scope AI analysis (`tags`, `topic`, `linked`, `index`)
 - local-note chat with source links and progress timeline
 - safe cleanup and backup-aware batch workflows
 
-## Why Auto Link
+## Why Omni Forge
 
 Most AI note workflows fail in one of two ways: they are too broad (analyze everything) or too risky (send data externally by default).
 
-Auto Link takes the opposite approach:
+Omni Forge takes the opposite approach:
 - you explicitly choose files/folders first
 - local endpoints are the default
 - path safety checks are enforced for chat/report/backup outputs
@@ -54,8 +54,8 @@ Keep non-local endpoints disabled unless you explicitly trust the destination an
 ### Option A: BRAT (Recommended)
 
 1. Install BRAT in Obsidian.
-2. Add this plugin repo: `piman-code/auto-link`
-3. Enable **Auto Link**.
+2. Add this plugin repo: `piman-code/omni-forge`
+3. Enable **Omni Forge**.
 4. Open plugin settings and complete first-run configuration.
 
 ### Option B: Manual Release Install
@@ -64,12 +64,12 @@ Keep non-local endpoints disabled unless you explicitly trust the destination an
    - `manifest.json`
    - `main.js`
    - `styles.css`
-2. Place them in: `.obsidian/plugins/auto-link/`
-3. Reload Obsidian and enable **Auto Link**.
+2. Place them in: `.obsidian/plugins/omni-forge/`
+3. Reload Obsidian and enable **Omni Forge**.
 
 ## 5-Minute Quick Start
 
-1. Open `Settings -> Auto Link`.
+1. Open `Settings -> Omni Forge`.
    - Keep `Settings view mode` on `Simple` for an essentials-only screen.
    - Use `Open Full` only when you need advanced controls.
    - Use top tabs (`Quick/Models/Chat/Workflow/Advanced`) to focus on one area at a time.
@@ -101,7 +101,7 @@ Keep non-local endpoints disabled unless you explicitly trust the destination an
 
 ## Ollama Agent Model Guide (M4 Pro 48GB)
 
-Auto Link Local Q&A is currently a text-note RAG flow.
+Omni Forge Local Q&A is currently a text-note RAG flow.
 It calls Ollama `/api/chat` and `/api/generate` with text prompts/messages, and does not yet send image inputs from the chat UI.
 
 | Agent role | Primary model | Lighter fallback | Notes |
@@ -142,7 +142,7 @@ For large selections and repeated runs:
 ## New Note Watch Workflow
 
 You can define watched folders.
-When a new markdown note is created there, Auto Link can prompt you to:
+When a new markdown note is created there, Omni Forge can prompt you to:
 - ignore
 - add to current selection
 - add and analyze now

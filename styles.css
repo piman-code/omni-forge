@@ -1,12 +1,12 @@
-.auto-linker-hidden-simple {
+.omni-forge-hidden-simple {
   display: none !important;
 }
 
-.auto-linker-hidden-tab {
+.omni-forge-hidden-tab {
   display: none !important;
 }
 
-.auto-linker-settings-mode-note {
+.omni-forge-settings-mode-note {
   margin: 6px 0 12px;
   padding: 8px 10px;
   border-radius: 10px;
@@ -17,14 +17,14 @@
   line-height: 1.4;
 }
 
-.auto-linker-settings-tab-row {
+.omni-forge-settings-tab-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 0 0 10px;
 }
 
-.auto-linker-settings-tab-btn {
+.omni-forge-settings-tab-btn {
   border: 1px solid var(--background-modifier-border);
   border-radius: 999px;
   background: var(--background-secondary);
@@ -35,33 +35,33 @@
   font-weight: 700;
 }
 
-.auto-linker-settings-tab-btn:hover {
+.omni-forge-settings-tab-btn:hover {
   background: var(--background-modifier-hover);
 }
 
-.auto-linker-settings-tab-btn.is-active {
+.omni-forge-settings-tab-btn.is-active {
   background: color-mix(in srgb, var(--interactive-accent) 18%, var(--background-secondary));
   border-color: color-mix(in srgb, var(--interactive-accent) 48%, var(--background-modifier-border));
 }
 
-.auto-linker-settings-tab .setting-item {
+.omni-forge-settings-tab .setting-item {
   align-items: flex-start;
   gap: 12px;
 }
 
-.auto-linker-settings-tab .setting-item.auto-linker-settings-quick {
+.omni-forge-settings-tab .setting-item.omni-forge-settings-quick {
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   padding: 8px 10px;
   background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-secondary));
 }
 
-.auto-linker-settings-tab .setting-item-info {
+.omni-forge-settings-tab .setting-item-info {
   min-width: 260px;
   flex: 1 1 360px;
 }
 
-.auto-linker-settings-tab .setting-item-control {
+.omni-forge-settings-tab .setting-item-control {
   min-width: 260px;
   flex: 1 1 380px;
   display: flex;
@@ -71,24 +71,24 @@
   gap: 8px;
 }
 
-.auto-linker-settings-tab .setting-item-name,
-.auto-linker-settings-tab .setting-item-description {
+.omni-forge-settings-tab .setting-item-name,
+.omni-forge-settings-tab .setting-item-description {
   white-space: normal;
   word-break: normal;
   overflow-wrap: anywhere;
   line-height: 1.38;
 }
 
-.auto-linker-settings-guide-note {
+.omni-forge-settings-guide-note {
   margin: 6px 0 12px;
   color: var(--text-muted);
 }
 
-.auto-linker-settings-guide-preline {
+.omni-forge-settings-guide-preline {
   white-space: pre-line;
 }
 
-.auto-linker-settings-guide-card {
+.omni-forge-settings-guide-card {
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   padding: 10px 12px;
@@ -96,21 +96,21 @@
   background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-secondary));
 }
 
-.auto-linker-settings-guide-card p {
+.omni-forge-settings-guide-card p {
   margin: 6px 0 0;
   line-height: 1.45;
 }
 
-.auto-linker-settings-guide-card-list {
+.omni-forge-settings-guide-card-list {
   margin-top: 8px;
 }
 
-.auto-linker-settings-guide-list {
+.omni-forge-settings-guide-list {
   margin: 8px 0 12px 20px;
   line-height: 1.5;
 }
 
-.auto-linker-settings-guide-code {
+.omni-forge-settings-guide-code {
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -118,7 +118,7 @@
   margin: 8px 0 12px;
 }
 
-.auto-linker-setting-unavailable-model {
+.omni-forge-setting-unavailable-model {
   border: 1px dashed color-mix(in srgb, #d08a24 72%, var(--background-modifier-border));
   border-left: 4px solid color-mix(in srgb, #d08a24 76%, var(--background-modifier-border));
   border-radius: 10px;
@@ -127,50 +127,50 @@
   opacity: 0.8;
 }
 
-.auto-linker-setting-unavailable-model .setting-item-name,
-.auto-linker-setting-unavailable-model .setting-item-description {
+.omni-forge-setting-unavailable-model .setting-item-name,
+.omni-forge-setting-unavailable-model .setting-item-description {
   color: var(--text-faint);
 }
 
-.auto-linker-setting-unavailable-model .clickable-icon {
+.omni-forge-setting-unavailable-model .clickable-icon {
   color: #d08a24;
 }
 
-.auto-linker-setting-prompt-editor .setting-item-control {
+.omni-forge-setting-prompt-editor .setting-item-control {
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
 }
 
-.auto-linker-setting-prompt-textarea {
+.omni-forge-setting-prompt-textarea {
   width: min(100%, 920px);
   min-height: 220px;
   line-height: 1.45;
 }
 
-.auto-linker-bilingual-field {
+.omni-forge-bilingual-field {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.auto-linker-bilingual-en {
+.omni-forge-bilingual-en {
   display: block;
 }
 
-.auto-linker-bilingual-ko {
+.omni-forge-bilingual-ko {
   display: block;
   font-size: 0.93em;
   color: var(--text-muted);
 }
 
-.auto-linker-chat-view {
+.omni-forge-chat-view {
   padding: 10px;
   height: 100%;
   box-sizing: border-box;
 }
 
-.auto-linker-chat-root {
+.omni-forge-chat-root {
   height: 100%;
   display: grid;
   grid-template-rows: auto auto auto auto 1fr auto;
@@ -185,7 +185,7 @@
   overflow: hidden;
 }
 
-.auto-linker-chat-header {
+.omni-forge-chat-header {
   border-bottom: 1px solid var(--background-modifier-border);
   padding-bottom: 8px;
   background:
@@ -197,14 +197,14 @@
   border-radius: 8px;
 }
 
-.auto-linker-chat-header h3 {
+.omni-forge-chat-header h3 {
   margin: 0 0 6px;
   font-size: clamp(19px, 2.2vw, 25px);
   line-height: 1.2;
   letter-spacing: -0.01em;
 }
 
-.auto-linker-chat-scope {
+.omni-forge-chat-scope {
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.4;
@@ -215,14 +215,14 @@
   background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-secondary));
 }
 
-.auto-linker-chat-scope-counts {
+.omni-forge-chat-scope-counts {
   margin: 1px 0 4px;
   color: var(--text-normal);
   font-weight: 700;
   line-height: 1.35;
 }
 
-.auto-linker-chat-scope-chip {
+.omni-forge-chat-scope-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -235,38 +235,38 @@
   font-weight: 800;
 }
 
-.auto-linker-chat-scope-chip-label {
+.omni-forge-chat-scope-chip-label {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   color: var(--text-muted);
 }
 
-.auto-linker-chat-scope-chip-value {
+.omni-forge-chat-scope-chip-value {
   font-variant-numeric: tabular-nums;
 }
 
-.auto-linker-chat-scope-detail {
+.omni-forge-chat-scope-detail {
   color: var(--text-normal);
   font-size: 12px;
   font-weight: 700;
   line-height: 1.35;
 }
 
-.auto-linker-chat-scope-subdetail {
+.omni-forge-chat-scope-subdetail {
   color: var(--text-faint);
   font-size: 11px;
   line-height: 1.35;
 }
 
-.auto-linker-chat-meta {
+.omni-forge-chat-meta {
   margin-top: 6px;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-.auto-linker-chat-thread-info,
-.auto-linker-chat-sync-info {
+.omni-forge-chat-thread-info,
+.omni-forge-chat-sync-info {
   font-size: 11px;
   color: var(--text-faint);
   border: 1px solid var(--background-modifier-border);
@@ -278,17 +278,17 @@
   white-space: nowrap;
 }
 
-.auto-linker-chat-actions {
+.omni-forge-chat-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
 }
 
-.auto-linker-chat-hidden-action {
+.omni-forge-chat-hidden-action {
   display: none !important;
 }
 
-.auto-linker-chat-icon-btn {
+.omni-forge-chat-icon-btn {
   min-width: 46px;
   width: 46px;
   min-height: 46px;
@@ -299,19 +299,19 @@
   border-radius: 13px;
 }
 
-.auto-linker-chat-icon-btn svg {
+.omni-forge-chat-icon-btn svg {
   width: 24px;
   height: 24px;
 }
 
-.auto-linker-chat-collapsible {
+.omni-forge-chat-collapsible {
   border: 1px dashed var(--background-modifier-border);
   border-radius: 10px;
   padding: 6px 8px;
   background: color-mix(in srgb, var(--background-secondary) 86%, transparent);
 }
 
-.auto-linker-chat-collapsible summary {
+.omni-forge-chat-collapsible summary {
   cursor: pointer;
   font-size: 12px;
   color: var(--text-muted);
@@ -319,25 +319,25 @@
   user-select: none;
 }
 
-.auto-linker-chat-collapsible[open] summary {
+.omni-forge-chat-collapsible[open] summary {
   margin-bottom: 8px;
 }
 
-.auto-linker-chat-collapsible > small {
+.omni-forge-chat-collapsible > small {
   display: block;
   margin: 2px 0 8px;
   color: var(--text-faint);
   line-height: 1.35;
 }
 
-.auto-linker-chat-model-hint {
+.omni-forge-chat-model-hint {
   display: block;
   margin: 2px 0 8px;
   color: var(--text-faint);
   line-height: 1.35;
 }
 
-.auto-linker-chat-model-layout-summary {
+.omni-forge-chat-model-layout-summary {
   margin: 0 0 10px;
   padding: 6px 8px;
   border: 1px solid var(--background-modifier-border);
@@ -350,7 +350,7 @@
   word-break: break-word;
 }
 
-.auto-linker-chat-btn {
+.omni-forge-chat-btn {
   min-height: 30px;
   border-radius: 9px;
   border: 1px solid var(--background-modifier-border);
@@ -360,11 +360,11 @@
   padding: 0 10px;
 }
 
-.auto-linker-chat-btn:hover {
+.omni-forge-chat-btn:hover {
   background: var(--background-modifier-hover);
 }
 
-.auto-linker-chat-agent-pill {
+.omni-forge-chat-agent-pill {
   min-height: 24px;
   padding: 0 8px;
   border-radius: 999px;
@@ -372,14 +372,14 @@
   font-weight: 700;
 }
 
-.auto-linker-chat-runtime-panel {
+.omni-forge-chat-runtime-panel {
   border: 1px dashed var(--background-modifier-border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--background-secondary) 88%, transparent);
   margin-top: 8px;
 }
 
-.auto-linker-chat-runtime-head {
+.omni-forge-chat-runtime-head {
   cursor: pointer;
   padding: 6px 8px;
   font-size: 12px;
@@ -388,12 +388,12 @@
   user-select: none;
 }
 
-.auto-linker-chat-runtime-body {
+.omni-forge-chat-runtime-body {
   border-top: 1px dashed var(--background-modifier-border);
   padding: 6px 8px;
 }
 
-.auto-linker-chat-runtime-summary {
+.omni-forge-chat-runtime-summary {
   margin-top: 6px;
   font-size: 11px;
   line-height: 1.35;
@@ -402,20 +402,20 @@
   word-break: break-word;
 }
 
-.auto-linker-chat-controls {
+.omni-forge-chat-controls {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   align-items: end;
 }
 
-.auto-linker-chat-control {
+.omni-forge-chat-control {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.auto-linker-chat-control label {
+.omni-forge-chat-control label {
   font-size: 11px;
   color: var(--text-muted);
   font-weight: 700;
@@ -423,8 +423,8 @@
   text-transform: uppercase;
 }
 
-.auto-linker-chat-model-select,
-.auto-linker-chat-topk-input {
+.omni-forge-chat-model-select,
+.omni-forge-chat-topk-input {
   min-height: 32px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 9px;
@@ -432,16 +432,16 @@
   background: var(--background-secondary);
 }
 
-.auto-linker-chat-model-select {
+.omni-forge-chat-model-select {
   min-width: 230px;
   max-width: 390px;
 }
 
-.auto-linker-chat-topk-input {
+.omni-forge-chat-topk-input {
   width: 86px;
 }
 
-.auto-linker-chat-thread {
+.omni-forge-chat-thread {
   overflow: auto;
   border: 1px solid var(--background-modifier-border);
   border-radius: 12px;
@@ -449,7 +449,7 @@
   background: var(--background-secondary);
 }
 
-.auto-linker-chat-empty {
+.omni-forge-chat-empty {
   min-height: 120px;
   display: grid;
   place-items: center;
@@ -459,7 +459,7 @@
   font-size: 13px;
 }
 
-.auto-linker-chat-message {
+.omni-forge-chat-message {
   margin-bottom: 10px;
   padding: 10px 11px;
   border-radius: 12px;
@@ -468,40 +468,40 @@
   box-shadow: 0 1px 0 color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
 }
 
-.auto-linker-chat-message-head {
+.omni-forge-chat-message-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
 }
 
-.auto-linker-chat-message-head strong {
+.omni-forge-chat-message-head strong {
   font-size: 14px;
 }
 
-.auto-linker-chat-message-user {
+.omni-forge-chat-message-user {
   margin-left: auto;
   background: color-mix(in srgb, var(--background-primary-alt) 88%, var(--interactive-accent) 12%);
 }
 
-.auto-linker-chat-message-assistant {
+.omni-forge-chat-message-assistant {
   margin-right: auto;
   background: color-mix(in srgb, var(--background-primary) 90%, var(--interactive-accent) 10%);
 }
 
-.auto-linker-chat-message-system {
+.omni-forge-chat-message-system {
   margin-right: auto;
   max-width: 86%;
   background: var(--background-modifier-hover);
 }
 
-.auto-linker-chat-system-panel {
+.omni-forge-chat-system-panel {
   border: 1px solid var(--background-modifier-border);
   border-radius: 9px;
   background: color-mix(in srgb, var(--background-secondary) 90%, var(--background-modifier-hover) 10%);
 }
 
-.auto-linker-chat-system-head {
+.omni-forge-chat-system-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -511,65 +511,65 @@
   user-select: none;
 }
 
-.auto-linker-chat-message-thinking {
+.omni-forge-chat-message-thinking {
   margin-right: auto;
   max-width: 92%;
   background: color-mix(in srgb, var(--background-secondary) 92%, var(--interactive-accent) 8%);
 }
 
-.auto-linker-chat-message-time {
+.omni-forge-chat-message-time {
   opacity: 0.82;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-.auto-linker-chat-message-body {
+.omni-forge-chat-message-body {
   margin-top: 6px;
   white-space: pre-wrap;
   line-height: 1.55;
   word-break: break-word;
 }
 
-.auto-linker-chat-thread,
-.auto-linker-chat-message,
-.auto-linker-chat-message-body,
-.auto-linker-chat-markdown,
-.auto-linker-chat-thinking-body,
-.auto-linker-chat-thinking-raw-body {
+.omni-forge-chat-thread,
+.omni-forge-chat-message,
+.omni-forge-chat-message-body,
+.omni-forge-chat-markdown,
+.omni-forge-chat-thinking-body,
+.omni-forge-chat-thinking-raw-body {
   user-select: text;
   -webkit-user-select: text;
 }
 
-.auto-linker-chat-markdown {
+.omni-forge-chat-markdown {
   white-space: normal;
 }
 
-.auto-linker-chat-markdown p {
+.omni-forge-chat-markdown p {
   margin: 0.45em 0;
 }
 
-.auto-linker-chat-markdown h1,
-.auto-linker-chat-markdown h2,
-.auto-linker-chat-markdown h3 {
+.omni-forge-chat-markdown h1,
+.omni-forge-chat-markdown h2,
+.omni-forge-chat-markdown h3 {
   margin: 0.7em 0 0.4em;
   line-height: 1.28;
 }
 
-.auto-linker-chat-markdown ul,
-.auto-linker-chat-markdown ol {
+.omni-forge-chat-markdown ul,
+.omni-forge-chat-markdown ol {
   margin: 0.35em 0 0.35em 1.2em;
 }
 
-.auto-linker-chat-markdown li + li {
+.omni-forge-chat-markdown li + li {
   margin-top: 0.2em;
 }
 
-.auto-linker-chat-markdown input[type="checkbox"] {
+.omni-forge-chat-markdown input[type="checkbox"] {
   transform: translateY(1px);
   margin-right: 0.4em;
 }
 
-.auto-linker-chat-markdown table {
+.omni-forge-chat-markdown table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 8px;
@@ -578,19 +578,19 @@
   font-size: 13px;
 }
 
-.auto-linker-chat-markdown th,
-.auto-linker-chat-markdown td {
+.omni-forge-chat-markdown th,
+.omni-forge-chat-markdown td {
   border: 1px solid var(--background-modifier-border);
   padding: 6px 8px;
   text-align: left;
   vertical-align: top;
 }
 
-.auto-linker-chat-markdown th {
+.omni-forge-chat-markdown th {
   background: var(--background-modifier-hover);
 }
 
-.auto-linker-chat-markdown blockquote {
+.omni-forge-chat-markdown blockquote {
   margin: 0.55em 0;
   padding: 0.35em 0.75em;
   border-left: 3px solid color-mix(in srgb, var(--interactive-accent) 52%, var(--background-modifier-border));
@@ -598,7 +598,7 @@
   color: var(--text-muted);
 }
 
-.auto-linker-chat-markdown pre {
+.omni-forge-chat-markdown pre {
   margin: 0.6em 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
@@ -607,24 +607,24 @@
   overflow-x: auto;
 }
 
-.auto-linker-chat-markdown code {
+.omni-forge-chat-markdown code {
   font-size: 0.92em;
 }
 
-.auto-linker-chat-markdown hr {
+.omni-forge-chat-markdown hr {
   border: 0;
   border-top: 1px solid var(--background-modifier-border);
   margin: 0.7em 0;
 }
 
-.auto-linker-chat-thinking-panel {
+.omni-forge-chat-thinking-panel {
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--background-primary) 90%, var(--interactive-accent) 10%);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
 }
 
-.auto-linker-chat-thinking-head {
+.omni-forge-chat-thinking-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -633,13 +633,13 @@
   border-bottom: 1px dashed var(--background-modifier-border);
 }
 
-.auto-linker-chat-thinking-summary {
+.omni-forge-chat-thinking-summary {
   font-weight: 700;
   font-size: 13px;
   color: var(--text-muted);
 }
 
-.auto-linker-chat-thinking-live {
+.omni-forge-chat-thinking-live {
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.06em;
@@ -649,7 +649,7 @@
   padding: 1px 6px;
 }
 
-.auto-linker-chat-thinking-body {
+.omni-forge-chat-thinking-body {
   padding: 8px;
   white-space: pre-wrap;
   line-height: 1.45;
@@ -657,12 +657,12 @@
   color: var(--text-muted);
 }
 
-.auto-linker-chat-thinking-timeline {
+.omni-forge-chat-thinking-timeline {
   display: grid;
   gap: 6px;
 }
 
-.auto-linker-chat-thinking-event {
+.omni-forge-chat-thinking-event {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 8px;
@@ -673,7 +673,7 @@
   background: color-mix(in srgb, var(--background-primary) 90%, var(--background-modifier-hover) 10%);
 }
 
-.auto-linker-chat-thinking-event-stage {
+.omni-forge-chat-thinking-event-stage {
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -685,50 +685,50 @@
   text-align: center;
 }
 
-.auto-linker-chat-thinking-event-content {
+.omni-forge-chat-thinking-event-content {
   min-width: 0;
 }
 
-.auto-linker-chat-thinking-event-message {
+.omni-forge-chat-thinking-event-message {
   font-size: 12px;
   color: var(--text-normal);
 }
 
-.auto-linker-chat-thinking-event-detail {
+.omni-forge-chat-thinking-event-detail {
   margin-top: 2px;
   font-size: 11px;
   color: var(--text-muted);
   word-break: break-word;
 }
 
-.auto-linker-chat-thinking-event-time {
+.omni-forge-chat-thinking-event-time {
   font-size: 11px;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.auto-linker-chat-thinking-event-warning {
+.omni-forge-chat-thinking-event-warning {
   border-color: color-mix(in srgb, #d08a24 35%, var(--background-modifier-border));
 }
 
-.auto-linker-chat-thinking-event-error {
+.omni-forge-chat-thinking-event-error {
   border-color: color-mix(in srgb, #d03a37 45%, var(--background-modifier-border));
 }
 
-.auto-linker-chat-thinking-raw {
+.omni-forge-chat-thinking-raw {
   margin-top: 8px;
   border-top: 1px dashed var(--background-modifier-border);
   padding-top: 7px;
 }
 
-.auto-linker-chat-thinking-raw-title {
+.omni-forge-chat-thinking-raw-title {
   font-size: 11px;
   color: var(--text-faint);
   margin-bottom: 4px;
 }
 
-.auto-linker-chat-thinking-raw-body {
+.omni-forge-chat-thinking-raw-body {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
@@ -737,24 +737,24 @@
   color: var(--text-muted);
 }
 
-.auto-linker-chat-message-meta {
+.omni-forge-chat-message-meta {
   margin-top: 7px;
   font-size: 11px;
   color: var(--text-faint);
 }
 
-.auto-linker-chat-sources {
+.omni-forge-chat-sources {
   margin-top: 9px;
 }
 
-.auto-linker-chat-sources-title {
+.omni-forge-chat-sources-title {
   font-size: 12px;
   font-weight: 700;
   color: var(--text-muted);
   margin-bottom: 5px;
 }
 
-.auto-linker-chat-source-row {
+.omni-forge-chat-source-row {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
@@ -767,7 +767,7 @@
   color: var(--text-normal) !important;
 }
 
-.auto-linker-chat-source-link {
+.omni-forge-chat-source-link {
   color: var(--text-normal) !important;
   text-decoration: none;
   overflow: hidden;
@@ -776,18 +776,18 @@
   min-width: 0;
 }
 
-.auto-linker-chat-source-link:hover {
+.omni-forge-chat-source-link:hover {
   color: var(--interactive-accent) !important;
   text-decoration: underline;
 }
 
-.auto-linker-chat-source-similarity {
+.omni-forge-chat-source-similarity {
   color: var(--text-muted) !important;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-.auto-linker-chat-composer {
+.omni-forge-chat-composer {
   display: grid;
   grid-template-columns: 1fr;
   gap: 8px;
@@ -796,13 +796,13 @@
   padding-top: 10px;
 }
 
-.auto-linker-chat-composer.auto-linker-chat-drop-active {
+.omni-forge-chat-composer.omni-forge-chat-drop-active {
   outline: 2px dashed color-mix(in srgb, var(--interactive-accent) 70%, var(--background-modifier-border));
   outline-offset: 3px;
   border-radius: 10px;
 }
 
-.auto-linker-chat-input {
+.omni-forge-chat-input {
   width: 100%;
   min-height: 112px;
   resize: vertical;
@@ -813,23 +813,23 @@
   background: var(--background-primary-alt);
 }
 
-.auto-linker-chat-input:focus {
+.omni-forge-chat-input:focus {
   border-color: color-mix(in srgb, var(--interactive-accent) 58%, var(--background-modifier-border));
 }
 
-.auto-linker-chat-active-file-status {
+.omni-forge-chat-active-file-status {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
 
-.auto-linker-chat-active-file-status.is-empty {
+.omni-forge-chat-active-file-status.is-empty {
   color: var(--text-faint);
   font-size: 12px;
 }
 
-.auto-linker-chat-active-file-chip {
+.omni-forge-chat-active-file-chip {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -840,12 +840,12 @@
   max-width: min(100%, 520px);
 }
 
-.auto-linker-chat-active-file-chip.is-current {
+.omni-forge-chat-active-file-chip.is-current {
   border-color: color-mix(in srgb, var(--interactive-accent) 58%, var(--background-modifier-border));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 26%, transparent);
 }
 
-.auto-linker-chat-active-file-chip.is-current::before {
+.omni-forge-chat-active-file-chip.is-current::before {
   content: "";
   width: 8px;
   height: 8px;
@@ -855,7 +855,7 @@
   flex: 0 0 auto;
 }
 
-.auto-linker-chat-active-file-label {
+.omni-forge-chat-active-file-label {
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
@@ -863,7 +863,7 @@
   letter-spacing: 0.02em;
 }
 
-.auto-linker-chat-active-file-name {
+.omni-forge-chat-active-file-name {
   font-size: 12px;
   color: var(--text-normal);
   font-weight: 700;
@@ -872,7 +872,7 @@
   white-space: nowrap;
 }
 
-.auto-linker-chat-attachment-status {
+.omni-forge-chat-attachment-status {
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.45;
@@ -882,21 +882,21 @@
   background: color-mix(in srgb, var(--background-secondary) 86%, transparent);
 }
 
-.auto-linker-chat-attachment-head {
+.omni-forge-chat-attachment-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.auto-linker-chat-attachment-list {
+.omni-forge-chat-attachment-list {
   margin-top: 7px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.auto-linker-chat-attachment-item {
+.omni-forge-chat-attachment-item {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
@@ -909,7 +909,7 @@
   background: var(--background-primary);
 }
 
-.auto-linker-chat-attachment-thumb {
+.omni-forge-chat-attachment-thumb {
   width: 36px;
   height: 36px;
   object-fit: cover;
@@ -917,7 +917,7 @@
   border: 1px solid var(--background-modifier-border);
 }
 
-.auto-linker-chat-attachment-file-badge {
+.omni-forge-chat-attachment-file-badge {
   width: 36px;
   height: 36px;
   border-radius: 6px;
@@ -930,14 +930,14 @@
   background: var(--background-secondary);
 }
 
-.auto-linker-chat-attachment-meta {
+.omni-forge-chat-attachment-meta {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.auto-linker-chat-attachment-title {
+.omni-forge-chat-attachment-title {
   font-size: 12px;
   color: var(--text-normal);
   overflow: hidden;
@@ -945,7 +945,7 @@
   white-space: nowrap;
 }
 
-.auto-linker-chat-attachment-sub {
+.omni-forge-chat-attachment-sub {
   font-size: 10px;
   color: var(--text-muted);
   overflow: hidden;
@@ -953,7 +953,7 @@
   white-space: nowrap;
 }
 
-.auto-linker-chat-attachment-remove {
+.omni-forge-chat-attachment-remove {
   border: 1px solid var(--background-modifier-border);
   border-radius: 7px;
   background: var(--background-secondary);
@@ -963,11 +963,11 @@
   font-size: 11px;
 }
 
-.auto-linker-chat-attachment-remove:hover {
+.omni-forge-chat-attachment-remove:hover {
   background: var(--background-modifier-hover);
 }
 
-.auto-linker-chat-drop-clear {
+.omni-forge-chat-drop-clear {
   margin-left: 8px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 7px;
@@ -978,11 +978,11 @@
   font-size: 12px;
 }
 
-.auto-linker-chat-drop-clear:hover {
+.omni-forge-chat-drop-clear:hover {
   background: var(--background-modifier-hover);
 }
 
-.auto-linker-chat-footer {
+.omni-forge-chat-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -990,14 +990,14 @@
   gap: 8px;
 }
 
-.auto-linker-chat-footer-left {
+.omni-forge-chat-footer-left {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.auto-linker-chat-mode-select {
+.omni-forge-chat-mode-select {
   min-height: 30px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 9px;
@@ -1007,55 +1007,55 @@
   min-width: 140px;
 }
 
-.auto-linker-settings-guide-list li small {
+.omni-forge-settings-guide-list li small {
   display: block;
   margin-top: 2px;
   color: var(--text-muted);
   line-height: 1.4;
 }
 
-.auto-linker-chat-send {
+.omni-forge-chat-send {
   min-width: 96px;
   min-height: 38px;
   border-radius: 10px;
 }
 
-.auto-linker-chat-stop {
+.omni-forge-chat-stop {
   min-width: 84px;
   min-height: 38px;
   border-radius: 10px;
 }
 
 @media (max-width: 820px) {
-  .auto-linker-settings-tab .setting-item {
+  .omni-forge-settings-tab .setting-item {
     flex-direction: column;
     gap: 7px;
   }
 
-  .auto-linker-settings-tab .setting-item-control,
-  .auto-linker-settings-tab .setting-item-info {
+  .omni-forge-settings-tab .setting-item-control,
+  .omni-forge-settings-tab .setting-item-info {
     min-width: 0;
     width: 100%;
   }
 
-  .auto-linker-chat-root {
+  .omni-forge-chat-root {
     grid-template-rows: auto auto auto auto 1fr auto;
   }
 
-  .auto-linker-chat-model-select {
+  .omni-forge-chat-model-select {
     min-width: 180px;
     max-width: 240px;
   }
 
-  .auto-linker-chat-footer {
+  .omni-forge-chat-footer {
     justify-content: flex-start;
   }
 
-  .auto-linker-chat-mode-select {
+  .omni-forge-chat-mode-select {
     min-width: 128px;
   }
 
-  .auto-linker-chat-message {
+  .omni-forge-chat-message {
     max-width: 100%;
   }
 }

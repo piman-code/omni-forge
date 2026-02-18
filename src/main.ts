@@ -172,13 +172,13 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   qaAgentShellTimeoutSec: 20,
   qaAgentShellCwdPath: "",
   qaAgentPathAllowlist: "",
-  qaAttachmentIngestRootPath: "Auto Link Ingest",
+  qaAttachmentIngestRootPath: "Omni Forge Ingest",
   autoTagActiveNoteEnabled: false,
   autoTagActiveNoteCooldownSec: 90,
   watchNewNotesEnabled: false,
   watchNewNotesFolders: "",
-  chatTranscriptRootPath: "Auto Link Chats",
-  cleanupReportRootPath: "Auto Link Reports",
+  chatTranscriptRootPath: "Omni Forge Chats",
+  cleanupReportRootPath: "Omni Forge Reports",
   propertyCleanupEnabled: false,
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
@@ -188,15 +188,15 @@ const DEFAULT_SETTINGS: KnowledgeWeaverSettings = {
   includeSubfoldersInFolderSelection: true,
   selectionPathWidthPercent: 72,
   backupBeforeApply: true,
-  backupRootPath: "Auto Link Backups",
+  backupRootPath: "Omni Forge Backups",
   backupRetentionCount: 10,
-  excludedFolderPatterns: ".obsidian,Auto Link Backups",
+  excludedFolderPatterns: ".obsidian,Omni Forge Backups",
   showProgressNotices: true,
   generateMoc: true,
   mocPath: "MOC/Selected Knowledge MOC.md",
 };
 
-const LOCAL_QA_VIEW_TYPE = "auto-linker-local-qa-view";
+const LOCAL_QA_VIEW_TYPE = "omni-forge-local-qa-view";
 const LOCAL_QA_MAX_ATTACHMENTS = 10;
 const LOCAL_QA_PDF_OCR_MAX_PAGES_FAST = 3;
 const LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED = 8;
@@ -1834,7 +1834,7 @@ class LocalQAWorkspaceView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Auto Link Local Chat / 로컬 채팅";
+    return "Omni Forge Local Chat / 로컬 채팅";
   }
 
   getIcon(): string {
@@ -1951,8 +1951,8 @@ class LocalQAWorkspaceView extends ItemView {
     cta = false,
   ): HTMLButtonElement {
     const button = parent.createEl("button");
-    button.addClass("auto-linker-chat-btn");
-    button.addClass("auto-linker-chat-icon-btn");
+    button.addClass("omni-forge-chat-btn");
+    button.addClass("omni-forge-chat-icon-btn");
     if (cta) {
       button.addClass("mod-cta");
     }
@@ -1968,16 +1968,16 @@ class LocalQAWorkspaceView extends ItemView {
   private render(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.addClass("auto-linker-chat-view");
+    contentEl.addClass("omni-forge-chat-view");
 
-    const root = contentEl.createDiv({ cls: "auto-linker-chat-root" });
-    const header = root.createDiv({ cls: "auto-linker-chat-header" });
+    const root = contentEl.createDiv({ cls: "omni-forge-chat-root" });
+    const header = root.createDiv({ cls: "omni-forge-chat-header" });
     header.createEl("h3", {
-      text: "Auto Link Chat",
+      text: "Omni Forge Chat",
     });
-    this.scopeEl = header.createDiv({ cls: "auto-linker-chat-scope" });
+    this.scopeEl = header.createDiv({ cls: "omni-forge-chat-scope" });
 
-    const actionRow = root.createDiv({ cls: "auto-linker-chat-actions" });
+    const actionRow = root.createDiv({ cls: "omni-forge-chat-actions" });
     this.createHeaderIconButton(
       actionRow,
       "plus-square",
@@ -2029,15 +2029,15 @@ class LocalQAWorkspaceView extends ItemView {
     );
 
     const newThreadButton = actionRow.createEl("button", { text: "New thread / 새 스레드" });
-    newThreadButton.addClass("auto-linker-chat-btn");
-    newThreadButton.addClass("auto-linker-chat-hidden-action");
+    newThreadButton.addClass("omni-forge-chat-btn");
+    newThreadButton.addClass("omni-forge-chat-hidden-action");
     newThreadButton.onclick = async () => {
       await this.startNewThread();
     };
 
     const selectButton = actionRow.createEl("button", { text: "Select notes / 노트 선택" });
-    selectButton.addClass("auto-linker-chat-btn");
-    selectButton.addClass("auto-linker-chat-hidden-action");
+    selectButton.addClass("omni-forge-chat-btn");
+    selectButton.addClass("omni-forge-chat-hidden-action");
     selectButton.onclick = async () => {
       await this.plugin.openSelectionForQa();
       await this.refreshScopeLabel();
@@ -2046,8 +2046,8 @@ class LocalQAWorkspaceView extends ItemView {
     const resetSelectionButton = actionRow.createEl("button", {
       text: "Select reset / 선택 초기화",
     });
-    resetSelectionButton.addClass("auto-linker-chat-btn");
-    resetSelectionButton.addClass("auto-linker-chat-hidden-action");
+    resetSelectionButton.addClass("omni-forge-chat-btn");
+    resetSelectionButton.addClass("omni-forge-chat-hidden-action");
     resetSelectionButton.onclick = async () => {
       await this.plugin.clearSelectionForQa(true);
       await this.refreshScopeLabel();
@@ -2059,8 +2059,8 @@ class LocalQAWorkspaceView extends ItemView {
     };
 
     const refreshModelsButton = actionRow.createEl("button", { text: "Refresh models / 모델 감지" });
-    refreshModelsButton.addClass("auto-linker-chat-btn");
-    refreshModelsButton.addClass("auto-linker-chat-hidden-action");
+    refreshModelsButton.addClass("omni-forge-chat-btn");
+    refreshModelsButton.addClass("omni-forge-chat-hidden-action");
     refreshModelsButton.setAttr(
       "title",
       "로컬 모델 감지를 다시 읽고, 채팅의 모델 선택 목록을 갱신합니다.",
@@ -2072,49 +2072,49 @@ class LocalQAWorkspaceView extends ItemView {
     };
 
     const openThreadButton = actionRow.createEl("button", { text: "Open chat note / 채팅 노트 열기" });
-    openThreadButton.addClass("auto-linker-chat-btn");
-    openThreadButton.addClass("auto-linker-chat-hidden-action");
+    openThreadButton.addClass("omni-forge-chat-btn");
+    openThreadButton.addClass("omni-forge-chat-hidden-action");
     openThreadButton.onclick = async () => {
       await this.openThreadNote();
     };
 
-    const utilityDetails = root.createEl("details", { cls: "auto-linker-chat-collapsible" });
+    const utilityDetails = root.createEl("details", { cls: "omni-forge-chat-collapsible" });
     utilityDetails.createEl("summary", { text: "More tools / 추가 도구" });
     utilityDetails.createEl("small", {
       text: "Cleanup keys는 AI 분석 없이 frontmatter 키만 정리하므로 Analyze/Apply보다 일반적으로 빠릅니다.",
     });
-    const utilityRow = utilityDetails.createDiv({ cls: "auto-linker-chat-actions" });
+    const utilityRow = utilityDetails.createDiv({ cls: "omni-forge-chat-actions" });
 
     const cleanupPickerButton = utilityRow.createEl("button", { text: "Cleanup keys / 정리 키" });
-    cleanupPickerButton.addClass("auto-linker-chat-btn");
+    cleanupPickerButton.addClass("omni-forge-chat-btn");
     cleanupPickerButton.onclick = async () => {
       await this.plugin.openCleanupKeyPickerForQa();
       await this.refreshScopeLabel();
     };
 
     const cleanupApplyButton = utilityRow.createEl("button", { text: "Run cleanup / 정리 실행" });
-    cleanupApplyButton.addClass("auto-linker-chat-btn");
+    cleanupApplyButton.addClass("omni-forge-chat-btn");
     cleanupApplyButton.onclick = async () => {
       await this.plugin.runCleanupForQa(false);
       await this.refreshScopeLabel();
     };
 
     const cleanupDryRunButton = utilityRow.createEl("button", { text: "Cleanup dry-run / 정리 미리보기" });
-    cleanupDryRunButton.addClass("auto-linker-chat-btn");
+    cleanupDryRunButton.addClass("omni-forge-chat-btn");
     cleanupDryRunButton.onclick = async () => {
       await this.plugin.runCleanupForQa(true);
       await this.refreshScopeLabel();
     };
 
     const folderButton = utilityRow.createEl("button", { text: "Chat folder / 채팅 폴더" });
-    folderButton.addClass("auto-linker-chat-btn");
+    folderButton.addClass("omni-forge-chat-btn");
     folderButton.setAttr("title", "채팅 기록 저장 폴더를 변경합니다.");
     folderButton.onclick = () => {
-      const current = this.plugin.getChatTranscriptRootPathForQa() || "Auto Link Chats";
+      const current = this.plugin.getChatTranscriptRootPathForQa() || "Omni Forge Chats";
       new VaultTextInputModal(
         this.app,
         "Chat transcript folder / 채팅 저장 폴더",
-        "Auto Link Chats",
+        "Omni Forge Chats",
         current,
         "Save / 저장",
         async (value) => {
@@ -2128,15 +2128,15 @@ class LocalQAWorkspaceView extends ItemView {
       ).open();
     };
 
-    const modelDetails = root.createEl("details", { cls: "auto-linker-chat-collapsible" });
+    const modelDetails = root.createEl("details", { cls: "omni-forge-chat-collapsible" });
     modelDetails.createEl("summary", { text: "Model options / 모델 옵션" });
     this.modelPresetHintEl = modelDetails.createEl("small", {
-      cls: "auto-linker-chat-model-hint",
+      cls: "omni-forge-chat-model-hint",
     });
     this.modelLayoutSummaryEl = modelDetails.createDiv({
-      cls: "auto-linker-chat-model-layout-summary",
+      cls: "omni-forge-chat-model-layout-summary",
     });
-    const presetRow = modelDetails.createDiv({ cls: "auto-linker-chat-actions" });
+    const presetRow = modelDetails.createDiv({ cls: "omni-forge-chat-actions" });
     presetRow.createEl("small", {
       text: "One-click local presets / 원클릭 프리셋",
     });
@@ -2163,34 +2163,34 @@ class LocalQAWorkspaceView extends ItemView {
       }
     };
     const fastPresetButton = presetRow.createEl("button", { text: "Flash" });
-    fastPresetButton.addClass("auto-linker-chat-btn");
+    fastPresetButton.addClass("omni-forge-chat-btn");
     fastPresetButton.onclick = async () => {
       await applyPresetFromChat("fast_local");
     };
     const proPresetButton = presetRow.createEl("button", { text: "Pro" });
-    proPresetButton.addClass("auto-linker-chat-btn");
+    proPresetButton.addClass("omni-forge-chat-btn");
     proPresetButton.onclick = async () => {
       await applyPresetFromChat("balanced_local");
     };
     const custom1Button = presetRow.createEl("button", { text: "Custom 1" });
-    custom1Button.addClass("auto-linker-chat-btn");
+    custom1Button.addClass("omni-forge-chat-btn");
     custom1Button.onclick = async () => {
       await applyCustomSlotFromChat("qaQuickCustomProfileSlot1");
     };
     const custom2Button = presetRow.createEl("button", { text: "Custom 2" });
-    custom2Button.addClass("auto-linker-chat-btn");
+    custom2Button.addClass("omni-forge-chat-btn");
     custom2Button.onclick = async () => {
       await applyCustomSlotFromChat("qaQuickCustomProfileSlot2");
     };
     const custom3Button = presetRow.createEl("button", { text: "Custom 3" });
-    custom3Button.addClass("auto-linker-chat-btn");
+    custom3Button.addClass("omni-forge-chat-btn");
     custom3Button.onclick = async () => {
       await applyCustomSlotFromChat("qaQuickCustomProfileSlot3");
     };
     const refreshLocalAiButton = presetRow.createEl("button", {
       text: "Refresh Local AI",
     });
-    refreshLocalAiButton.addClass("auto-linker-chat-btn");
+    refreshLocalAiButton.addClass("omni-forge-chat-btn");
     refreshLocalAiButton.onclick = async () => {
       await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
       await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
@@ -2198,12 +2198,12 @@ class LocalQAWorkspaceView extends ItemView {
       await this.refreshScopeLabel();
     };
 
-    const controlRow = modelDetails.createDiv({ cls: "auto-linker-chat-controls" });
-    const topKWrap = controlRow.createDiv({ cls: "auto-linker-chat-control" });
+    const controlRow = modelDetails.createDiv({ cls: "omni-forge-chat-controls" });
+    const topKWrap = controlRow.createDiv({ cls: "omni-forge-chat-control" });
     topKWrap.createEl("label", { text: "Top sources / 상위 소스 수" });
     this.topKInput = topKWrap.createEl("input", {
       type: "number",
-      cls: "auto-linker-chat-topk-input",
+      cls: "omni-forge-chat-topk-input",
     });
     this.topKInput.min = "1";
     this.topKInput.max = "15";
@@ -2218,57 +2218,57 @@ class LocalQAWorkspaceView extends ItemView {
       await this.plugin.saveSettings();
     };
 
-    const runtimePanel = root.createEl("details", { cls: "auto-linker-chat-runtime-panel" });
+    const runtimePanel = root.createEl("details", { cls: "omni-forge-chat-runtime-panel" });
     runtimePanel.open = false;
     runtimePanel.createEl("summary", {
-      cls: "auto-linker-chat-runtime-head",
+      cls: "omni-forge-chat-runtime-head",
       text: "Runtime status / 현재 상태",
     });
-    const runtimeBody = runtimePanel.createDiv({ cls: "auto-linker-chat-runtime-body" });
-    const runtimeMetaRow = runtimeBody.createDiv({ cls: "auto-linker-chat-meta" });
-    this.threadInfoEl = runtimeMetaRow.createDiv({ cls: "auto-linker-chat-thread-info" });
-    this.syncInfoEl = runtimeMetaRow.createDiv({ cls: "auto-linker-chat-sync-info" });
-    this.runtimeSummaryEl = runtimeBody.createDiv({ cls: "auto-linker-chat-runtime-summary" });
+    const runtimeBody = runtimePanel.createDiv({ cls: "omni-forge-chat-runtime-body" });
+    const runtimeMetaRow = runtimeBody.createDiv({ cls: "omni-forge-chat-meta" });
+    this.threadInfoEl = runtimeMetaRow.createDiv({ cls: "omni-forge-chat-thread-info" });
+    this.syncInfoEl = runtimeMetaRow.createDiv({ cls: "omni-forge-chat-sync-info" });
+    this.runtimeSummaryEl = runtimeBody.createDiv({ cls: "omni-forge-chat-runtime-summary" });
 
-    this.threadEl = root.createDiv({ cls: "auto-linker-chat-thread" });
+    this.threadEl = root.createDiv({ cls: "omni-forge-chat-thread" });
     this.threadEl.createDiv({
-      cls: "auto-linker-chat-empty",
+      cls: "omni-forge-chat-empty",
       text: "질문을 입력해 대화를 시작하세요. / Ask a question to start.",
     });
 
-    const composer = root.createDiv({ cls: "auto-linker-chat-composer" });
+    const composer = root.createDiv({ cls: "omni-forge-chat-composer" });
     composer.addEventListener("dragover", (event) => {
       event.preventDefault();
-      composer.addClass("auto-linker-chat-drop-active");
+      composer.addClass("omni-forge-chat-drop-active");
     });
     composer.addEventListener("dragleave", () => {
-      composer.removeClass("auto-linker-chat-drop-active");
+      composer.removeClass("omni-forge-chat-drop-active");
     });
     composer.addEventListener("drop", (event) => {
       void this.handleChatDrop(event, composer);
     });
 
-    this.activeFileStatusEl = composer.createDiv({ cls: "auto-linker-chat-active-file-status" });
+    this.activeFileStatusEl = composer.createDiv({ cls: "omni-forge-chat-active-file-status" });
     void this.refreshActiveFileStatus();
 
-    this.inputEl = composer.createEl("textarea", { cls: "auto-linker-chat-input" });
+    this.inputEl = composer.createEl("textarea", { cls: "omni-forge-chat-input" });
     this.inputEl.placeholder =
       "선택 문서가 없어도 대화할 수 있습니다. 첨부/선택 문서 기반 질문도 가능합니다.";
     this.attachmentStatusEl = composer.createDiv({
-      cls: "auto-linker-chat-attachment-status",
+      cls: "omni-forge-chat-attachment-status",
     });
     this.refreshAttachmentStatus();
 
-    const footer = composer.createDiv({ cls: "auto-linker-chat-footer" });
-    const footerLeft = footer.createDiv({ cls: "auto-linker-chat-footer-left" });
+    const footer = composer.createDiv({ cls: "omni-forge-chat-footer" });
+    const footerLeft = footer.createDiv({ cls: "omni-forge-chat-footer-left" });
     const attachButton = footerLeft.createEl("button", { text: "+ 첨부 / Add" });
-    attachButton.addClass("auto-linker-chat-btn");
+    attachButton.addClass("omni-forge-chat-btn");
     attachButton.onclick = async () => {
       await this.openAttachmentPicker();
     };
 
     const conversationModeSelect = footerLeft.createEl("select", {
-      cls: "auto-linker-chat-mode-select",
+      cls: "omni-forge-chat-mode-select",
     });
     this.conversationModeSelect = conversationModeSelect;
     conversationModeSelect.setAttr("aria-label", "Conversation mode");
@@ -2289,7 +2289,7 @@ class LocalQAWorkspaceView extends ItemView {
     };
 
     this.qaContextButton = footerLeft.createEl("button", { text: "QA ON" });
-    this.qaContextButton.addClass("auto-linker-chat-btn");
+    this.qaContextButton.addClass("omni-forge-chat-btn");
     this.qaContextButton.onclick = async () => {
       const next = !this.plugin.isQaContextEnabledForQa();
       await this.plugin.setQaContextEnabledForQa(next);
@@ -2306,12 +2306,12 @@ class LocalQAWorkspaceView extends ItemView {
     this.refreshQaContextButton();
 
     this.sendButton = footer.createEl("button", { text: "Send / 전송", cls: "mod-cta" });
-    this.sendButton.addClass("auto-linker-chat-send");
+    this.sendButton.addClass("omni-forge-chat-send");
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
     };
     this.stopButton = footer.createEl("button", { text: "Stop / 중지" });
-    this.stopButton.addClass("auto-linker-chat-stop");
+    this.stopButton.addClass("omni-forge-chat-stop");
     this.stopButton.disabled = true;
     this.stopButton.onclick = () => {
       if (!this.running) {
@@ -2851,7 +2851,7 @@ class LocalQAWorkspaceView extends ItemView {
 
   private async extractPdfTextViaOcr(pdfAbsolutePath: string, maxPages: number): Promise<string> {
     const tmpRoot = await nodeFs.promises.mkdtemp(
-      nodePath.join(nodeOs.tmpdir(), "auto-link-ocr-"),
+      nodePath.join(nodeOs.tmpdir(), "omni-forge-ocr-"),
     );
     try {
       const prefix = nodePath.join(tmpRoot, "page");
@@ -2936,7 +2936,7 @@ class LocalQAWorkspaceView extends ItemView {
     try {
       if (!workingPath) {
         tempDir = await nodeFs.promises.mkdtemp(
-          nodePath.join(nodeOs.tmpdir(), "auto-link-pdf-"),
+          nodePath.join(nodeOs.tmpdir(), "omni-forge-pdf-"),
         );
         workingPath = nodePath.join(tempDir, "input.pdf");
         await nodeFs.promises.writeFile(workingPath, Buffer.from(binary));
@@ -3045,7 +3045,7 @@ class LocalQAWorkspaceView extends ItemView {
     try {
       if (!workingPath) {
         tempDir = await nodeFs.promises.mkdtemp(
-          nodePath.join(nodeOs.tmpdir(), "auto-link-image-"),
+          nodePath.join(nodeOs.tmpdir(), "omni-forge-image-"),
         );
         const ext = fallbackExt.replace(/[^A-Za-z0-9]/g, "").toLowerCase() || "png";
         workingPath = nodePath.join(tempDir, `input.${ext}`);
@@ -3487,7 +3487,7 @@ class LocalQAWorkspaceView extends ItemView {
     }
 
     const head = this.attachmentStatusEl.createDiv({
-      cls: "auto-linker-chat-attachment-head",
+      cls: "omni-forge-chat-attachment-head",
     });
     head.createSpan({
       text: `첨부 ${this.pendingAttachments.length}/${LOCAL_QA_MAX_ATTACHMENTS} (다음 전송에 포함)`,
@@ -3495,7 +3495,7 @@ class LocalQAWorkspaceView extends ItemView {
     const clearButton = head.createEl("button", {
       text: "첨부 비우기",
     });
-    clearButton.addClass("auto-linker-chat-drop-clear");
+    clearButton.addClass("omni-forge-chat-drop-clear");
     clearButton.onclick = () => {
       this.pendingAttachments = [];
       this.refreshAttachmentStatus();
@@ -3503,27 +3503,27 @@ class LocalQAWorkspaceView extends ItemView {
     };
 
     const list = this.attachmentStatusEl.createDiv({
-      cls: "auto-linker-chat-attachment-list",
+      cls: "omni-forge-chat-attachment-list",
     });
     this.pendingAttachments.forEach((item, index) => {
-      const card = list.createDiv({ cls: "auto-linker-chat-attachment-item" });
+      const card = list.createDiv({ cls: "omni-forge-chat-attachment-item" });
       if (item.kind === "image" && item.imageBase64) {
-        const image = card.createEl("img", { cls: "auto-linker-chat-attachment-thumb" });
+        const image = card.createEl("img", { cls: "omni-forge-chat-attachment-thumb" });
         image.src = `data:${item.mimeType || "image/png"};base64,${item.imageBase64}`;
         image.alt = item.label || `image-${index + 1}`;
       } else {
         card.createDiv({
-          cls: "auto-linker-chat-attachment-file-badge",
+          cls: "omni-forge-chat-attachment-file-badge",
           text: "FILE",
         });
       }
-      const meta = card.createDiv({ cls: "auto-linker-chat-attachment-meta" });
+      const meta = card.createDiv({ cls: "omni-forge-chat-attachment-meta" });
       meta.createDiv({
-        cls: "auto-linker-chat-attachment-title",
+        cls: "omni-forge-chat-attachment-title",
         text: item.label || item.path || `attachment-${index + 1}`,
       });
       meta.createDiv({
-        cls: "auto-linker-chat-attachment-sub",
+        cls: "omni-forge-chat-attachment-sub",
         text:
           item.path?.trim() ||
           (item.kind === "image"
@@ -3535,7 +3535,7 @@ class LocalQAWorkspaceView extends ItemView {
       const removeButton = card.createEl("button", {
         text: "제거",
       });
-      removeButton.addClass("auto-linker-chat-attachment-remove");
+      removeButton.addClass("omni-forge-chat-attachment-remove");
       removeButton.onclick = () => {
         this.removePendingAttachmentAt(index);
       };
@@ -3590,7 +3590,7 @@ class LocalQAWorkspaceView extends ItemView {
 
   private async handleChatDrop(event: DragEvent, dropZone: HTMLElement): Promise<void> {
     event.preventDefault();
-    dropZone.removeClass("auto-linker-chat-drop-active");
+    dropZone.removeClass("omni-forge-chat-drop-active");
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer) {
       return;
@@ -3968,60 +3968,60 @@ class LocalQAWorkspaceView extends ItemView {
   private renderThinkingCard(parent: HTMLElement, message: LocalQAViewMessage): void {
     const timeline = message.timeline ?? [];
     const latest = timeline.length > 0 ? timeline[timeline.length - 1] : undefined;
-    const panel = parent.createEl("details", { cls: "auto-linker-chat-thinking-panel" });
+    const panel = parent.createEl("details", { cls: "omni-forge-chat-thinking-panel" });
     panel.open = false;
-    const head = panel.createEl("summary", { cls: "auto-linker-chat-thinking-head" });
+    const head = panel.createEl("summary", { cls: "omni-forge-chat-thinking-head" });
     const summaryText = latest
       ? `Thinking timeline · ${timeline.length} events · ${this.formatThinkingStage(latest.stage)}`
       : "Thinking timeline";
     head.createDiv({
       text: summaryText,
-      cls: "auto-linker-chat-thinking-summary",
+      cls: "omni-forge-chat-thinking-summary",
     });
     if (message.isDraft) {
       head.createDiv({
-        cls: "auto-linker-chat-thinking-live",
+        cls: "omni-forge-chat-thinking-live",
         text: "LIVE",
       });
     }
 
-    const body = panel.createDiv({ cls: "auto-linker-chat-thinking-body" });
+    const body = panel.createDiv({ cls: "omni-forge-chat-thinking-body" });
     if (timeline.length > 0) {
-      const timelineEl = body.createDiv({ cls: "auto-linker-chat-thinking-timeline" });
+      const timelineEl = body.createDiv({ cls: "omni-forge-chat-thinking-timeline" });
       for (const event of timeline.slice(-24)) {
         const card = timelineEl.createDiv({
-          cls: `auto-linker-chat-thinking-event auto-linker-chat-thinking-event-${event.stage}`,
+          cls: `omni-forge-chat-thinking-event omni-forge-chat-thinking-event-${event.stage}`,
         });
         card.createEl("span", {
-          cls: "auto-linker-chat-thinking-event-stage",
+          cls: "omni-forge-chat-thinking-event-stage",
           text: this.formatThinkingStage(event.stage),
         });
-        const content = card.createDiv({ cls: "auto-linker-chat-thinking-event-content" });
+        const content = card.createDiv({ cls: "omni-forge-chat-thinking-event-content" });
         content.createDiv({
-          cls: "auto-linker-chat-thinking-event-message",
+          cls: "omni-forge-chat-thinking-event-message",
           text: event.message,
         });
         if (event.detail) {
           content.createDiv({
-            cls: "auto-linker-chat-thinking-event-detail",
+            cls: "omni-forge-chat-thinking-event-detail",
             text: event.detail,
           });
         }
         card.createEl("span", {
-          cls: "auto-linker-chat-thinking-event-time",
+          cls: "omni-forge-chat-thinking-event-time",
           text: this.formatTime(event.timestamp),
         });
       }
     }
 
     if (message.thinkingDetails?.trim()) {
-      const raw = body.createDiv({ cls: "auto-linker-chat-thinking-raw" });
+      const raw = body.createDiv({ cls: "omni-forge-chat-thinking-raw" });
       raw.createEl("div", {
-        cls: "auto-linker-chat-thinking-raw-title",
+        cls: "omni-forge-chat-thinking-raw-title",
         text: "Model thinking (raw)",
       });
       raw.createEl("pre", {
-        cls: "auto-linker-chat-thinking-raw-body",
+        cls: "omni-forge-chat-thinking-raw-body",
         text: message.thinkingDetails.trim(),
       });
     } else if (!timeline.length) {
@@ -4118,7 +4118,7 @@ class LocalQAWorkspaceView extends ItemView {
   }
 
   private renderSourceLink(parent: HTMLElement, source: LocalQASourceItem): void {
-    const row = parent.createDiv({ cls: "auto-linker-chat-source-row" });
+    const row = parent.createDiv({ cls: "omni-forge-chat-source-row" });
     const sourcePath = source.path.trim();
     const isAttachmentVirtual = sourcePath.startsWith("[ATTACHMENT-");
     const virtualLabel = isAttachmentVirtual
@@ -4149,7 +4149,7 @@ class LocalQAWorkspaceView extends ItemView {
       const link = row.createEl("a", {
         text: sourcePath,
         href: "#",
-        cls: "auto-linker-chat-source-link",
+        cls: "omni-forge-chat-source-link",
       });
       link.setAttr("title", sourcePath);
       link.onclick = async (event) => {
@@ -4160,7 +4160,7 @@ class LocalQAWorkspaceView extends ItemView {
       const link = row.createEl("a", {
         text: sourcePath,
         href: "#",
-        cls: "auto-linker-chat-source-link",
+        cls: "omni-forge-chat-source-link",
       });
       link.setAttr("title", sourcePath);
       link.onclick = async (event) => {
@@ -4173,7 +4173,7 @@ class LocalQAWorkspaceView extends ItemView {
     } else {
       const text = row.createEl("span", {
         text: sourcePath,
-        cls: "auto-linker-chat-source-link",
+        cls: "omni-forge-chat-source-link",
       });
       text.setAttr(
         "title",
@@ -4187,7 +4187,7 @@ class LocalQAWorkspaceView extends ItemView {
 
     row.createEl("span", {
       text: formatSimilarity(source.similarity),
-      cls: "auto-linker-chat-source-similarity",
+      cls: "omni-forge-chat-source-similarity",
     });
   }
 
@@ -4197,7 +4197,7 @@ class LocalQAWorkspaceView extends ItemView {
     this.threadEl.empty();
     if (this.messages.length === 0) {
       this.threadEl.createDiv({
-        cls: "auto-linker-chat-empty",
+        cls: "omni-forge-chat-empty",
         text: "질문을 입력해 대화를 시작하세요. / Ask a question to start.",
       });
       return;
@@ -4205,27 +4205,27 @@ class LocalQAWorkspaceView extends ItemView {
 
     for (const message of this.messages) {
       const box = this.threadEl.createDiv({
-        cls: `auto-linker-chat-message auto-linker-chat-message-${message.role}`,
+        cls: `omni-forge-chat-message omni-forge-chat-message-${message.role}`,
       });
       if (message.role === "thinking") {
         this.renderThinkingCard(box, message);
         continue;
       }
       if (message.role === "system") {
-        const panel = box.createEl("details", { cls: "auto-linker-chat-system-panel" });
+        const panel = box.createEl("details", { cls: "omni-forge-chat-system-panel" });
         panel.open = false;
-        const summary = panel.createEl("summary", { cls: "auto-linker-chat-system-head" });
+        const summary = panel.createEl("summary", { cls: "omni-forge-chat-system-head" });
         summary.createEl("strong", { text: "System / 시스템" });
         summary.createEl("small", {
           text: this.formatTime(message.timestamp),
-          cls: "auto-linker-chat-message-time",
+          cls: "omni-forge-chat-message-time",
         });
-        const body = panel.createDiv({ cls: "auto-linker-chat-message-body" });
+        const body = panel.createDiv({ cls: "omni-forge-chat-message-body" });
         body.setText(message.text);
         continue;
       }
 
-      const head = box.createDiv({ cls: "auto-linker-chat-message-head" });
+      const head = box.createDiv({ cls: "omni-forge-chat-message-head" });
       head.createEl("strong", {
         text:
           message.role === "assistant"
@@ -4236,21 +4236,21 @@ class LocalQAWorkspaceView extends ItemView {
       });
       head.createEl("small", {
         text: this.formatTime(message.timestamp),
-        cls: "auto-linker-chat-message-time",
+        cls: "omni-forge-chat-message-time",
       });
 
-      const body = box.createDiv({ cls: "auto-linker-chat-message-body" });
+      const body = box.createDiv({ cls: "omni-forge-chat-message-body" });
       if (message.role === "assistant" && !message.isDraft) {
-        body.addClass("auto-linker-chat-markdown");
+        body.addClass("omni-forge-chat-markdown");
         this.renderMarkdownBody(body, message.text, this.threadPath ?? "", version);
       } else {
         body.setText(message.text);
       }
 
       if (message.role === "assistant" && message.sources && message.sources.length > 0) {
-        const src = box.createDiv({ cls: "auto-linker-chat-sources" });
+        const src = box.createDiv({ cls: "omni-forge-chat-sources" });
         src.createDiv({
-          cls: "auto-linker-chat-sources-title",
+          cls: "omni-forge-chat-sources-title",
           text: `Sources / 출처 (${message.sources.length})`,
         });
         for (const source of message.sources) {
@@ -4264,7 +4264,7 @@ class LocalQAWorkspaceView extends ItemView {
         message.embeddingModel
       ) {
         box.createDiv({
-          cls: "auto-linker-chat-message-meta",
+          cls: "omni-forge-chat-message-meta",
           text: `model=${message.model} | embedding=${message.embeddingModel}`,
         });
       }
@@ -4311,7 +4311,7 @@ class LocalQAWorkspaceView extends ItemView {
     this.scopeEl.setAttr("title", fullSummary);
 
     this.scopeEl.createDiv({
-      cls: "auto-linker-chat-scope-counts",
+      cls: "omni-forge-chat-scope-counts",
       text: `파일(Files): ${fileCount} / 폴더(Folders): ${folderCount} / 첨부 파일(Attach): ${attachmentCount}`,
     });
     if (this.runtimeSummaryEl) {
@@ -4334,15 +4334,15 @@ class LocalQAWorkspaceView extends ItemView {
     this.lastKnownOpenMarkdownPath = active.path;
     this.activeFileStatusEl.removeClass("is-empty");
     const chip = this.activeFileStatusEl.createDiv({
-      cls: "auto-linker-chat-active-file-chip",
+      cls: "omni-forge-chat-active-file-chip",
     });
     chip.addClass("is-current");
     chip.createSpan({
-      cls: "auto-linker-chat-active-file-label",
+      cls: "omni-forge-chat-active-file-label",
       text: "Open file",
     });
     chip.createSpan({
-      cls: "auto-linker-chat-active-file-name",
+      cls: "omni-forge-chat-active-file-name",
       text: `@${active.basename}`,
     });
     chip.setAttr("title", active.path);
@@ -4826,7 +4826,7 @@ const SETTINGS_DESC_KO_MAP: Readonly<Record<string, string>> = {
   "When enabled, PDF files can be attached in chat. Current mode keeps metadata/label context and routes to vision role for safer handling.": "활성화하면 채팅에서 PDF 첨부를 허용합니다. 현재는 메타데이터/라벨 중심 컨텍스트로 처리하며 비전 역할로 우선 라우팅합니다.",
   "Shows all preset override fields currently marked with warning (⚠) in one place.": "⚠ 경고가 붙은 프리셋 오버라이드 필드를 한 곳에서 모아 보여줍니다.",
   "Quick diagnostic for role-model auto assignment and unavailable role mappings.": "역할 모델 자동 배치와 불가 매핑을 빠르게 점검합니다.",
-  "Allow model-proposed actions (read/write/list/shell) from chat responses via auto-link-actions JSON block.": "채팅 응답의 auto-link-actions JSON 블록을 통해 모델 제안 액션(읽기/쓰기/목록/셸)을 허용합니다.",
+  "Allow model-proposed actions (read/write/list/shell) from chat responses via omni-forge-actions JSON block.": "채팅 응답의 omni-forge-actions JSON 블록을 통해 모델 제안 액션(읽기/쓰기/목록/셸)을 허용합니다.",
   "Recommended. If enabled, proposed actions are queued and run only after user sends '승인' or '/approve'.": "권장 설정입니다. 켜면 제안된 액션을 대기열에 두고 사용자가 '승인' 또는 '/approve' 입력 시에만 실행합니다.",
   "Allows run_shell actions via local terminal command execution. Keep off unless absolutely needed.": "로컬 터미널 명령 실행 기반 run_shell 액션을 허용합니다. 꼭 필요할 때만 켜세요.",
   "If enabled, run_shell and agent file actions(read/write/list) can use any absolute path (allowlist bypass).": "활성화하면 run_shell과 에이전트 파일 액션(read/write/list)이 임의의 절대경로를 사용할 수 있습니다(allowlist 우회).",
@@ -5584,7 +5584,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         }
       });
     if (!hasCompatible) {
-      setting.settingEl.addClass("auto-linker-setting-unavailable-model");
+      setting.settingEl.addClass("omni-forge-setting-unavailable-model");
       const link =
         config.role === "ask_vision" || config.role === "image_generator"
           ? "https://ollama.com/library/qwen2.5vl"
@@ -5744,7 +5744,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       );
     }
     if (!availability.available || (config.kind === "vision" && availability.detectedCount === 0)) {
-      setting.settingEl.addClass("auto-linker-setting-unavailable-model");
+      setting.settingEl.addClass("omni-forge-setting-unavailable-model");
       setting.addExtraButton((button) =>
         button
           .setIcon("alert-triangle")
@@ -5885,7 +5885,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           this.display();
         });
       });
-    quickModelSetting.settingEl.addClass("auto-linker-settings-quick");
+    quickModelSetting.settingEl.addClass("omni-forge-settings-quick");
 
     const detectedModels = this.plugin.getOllamaModelOptions();
     const localReadySummary =
@@ -5907,7 +5907,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           new Notice(this.plugin.getHardwareCapabilitySummaryForQa(), 7000);
         }),
       );
-    readinessSetting.settingEl.addClass("auto-linker-settings-quick");
+    readinessSetting.settingEl.addClass("omni-forge-settings-quick");
   }
 
   private addChatPresetControls(containerEl: HTMLElement): void {
@@ -5963,13 +5963,13 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   }
 
   private addSettingsTabSwitcher(containerEl: HTMLElement): void {
-    const row = containerEl.createDiv({ cls: "auto-linker-settings-tab-row" });
+    const row = containerEl.createDiv({ cls: "omni-forge-settings-tab-row" });
     const mode = this.plugin.settings.settingsUiLanguage;
     for (const tab of KnowledgeWeaverSettingTab.TAB_OPTIONS) {
       const label =
         mode === "en" ? tab.en : mode === "ko" ? tab.ko : `${tab.en} / ${tab.ko}`;
       const button = row.createEl("button", { text: label });
-      button.addClass("auto-linker-settings-tab-btn");
+      button.addClass("omni-forge-settings-tab-btn");
       if (this.plugin.settings.settingsActiveTab === tab.key) {
         button.addClass("is-active");
       }
@@ -6001,7 +6001,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
             this.display();
           }),
       );
-    languageSetting.settingEl.addClass("auto-linker-settings-quick");
+    languageSetting.settingEl.addClass("omni-forge-settings-quick");
   }
 
   private isSectionVisibleForTab(sectionTitle: string, tab: SettingsPanelTab): boolean {
@@ -6104,8 +6104,8 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       }
       if (
         child.tagName === "H2" ||
-        child.classList.contains("auto-linker-settings-tab-row") ||
-        child.classList.contains("auto-linker-settings-mode-note")
+        child.classList.contains("omni-forge-settings-tab-row") ||
+        child.classList.contains("omni-forge-settings-mode-note")
       ) {
         continue;
       }
@@ -6116,7 +6116,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       if (child.tagName === "H3") {
         currentSection = (child.textContent ?? "").trim();
         const visible = this.isSectionVisibleForTab(currentSection, activeTab);
-        child.classList.toggle("auto-linker-hidden-tab", !visible);
+        child.classList.toggle("omni-forge-hidden-tab", !visible);
         continue;
       }
 
@@ -6134,7 +6134,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       }
 
       if (shouldHide) {
-        child.classList.add("auto-linker-hidden-tab");
+        child.classList.add("omni-forge-hidden-tab");
       }
     }
   }
@@ -6158,14 +6158,14 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           continue;
         }
         if (
-          !candidate.classList.contains("auto-linker-hidden-tab") &&
-          !candidate.classList.contains("auto-linker-hidden-simple")
+          !candidate.classList.contains("omni-forge-hidden-tab") &&
+          !candidate.classList.contains("omni-forge-hidden-simple")
         ) {
           hasVisibleSetting = true;
           break;
         }
       }
-      child.classList.toggle("auto-linker-hidden-tab", !hasVisibleSetting);
+      child.classList.toggle("omni-forge-hidden-tab", !hasVisibleSetting);
     }
   }
 
@@ -6188,11 +6188,11 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       if (child.tagName === "H3") {
         const title = (child.textContent ?? "").trim();
         hideSection = KnowledgeWeaverSettingTab.SIMPLE_HIDDEN_SECTION_TITLES.has(title);
-        child.toggleClass("auto-linker-hidden-simple", hideSection);
+        child.toggleClass("omni-forge-hidden-simple", hideSection);
         continue;
       }
       if (hideSection) {
-        child.classList.add("auto-linker-hidden-simple");
+        child.classList.add("omni-forge-hidden-simple");
       }
     }
 
@@ -6208,7 +6208,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       const hiddenByNonEssential = !this.isSimpleEssentialSettingName(name);
       const shouldHide = hiddenByKeyword || hiddenByNonEssential;
       if (shouldHide) {
-        item.classList.add("auto-linker-hidden-simple");
+        item.classList.add("omni-forge-hidden-simple");
       }
     }
   }
@@ -6220,12 +6220,12 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         "One-click presets detect local models first.",
         "Then they auto-assign base/role/embedding models by preset + hardware capability.",
       ].join("\n"),
-      cls: "auto-linker-settings-guide-note auto-linker-settings-guide-preline",
+      cls: "omni-forge-settings-guide-note omni-forge-settings-guide-preline",
     });
 
     const detectedModels = this.plugin.getOllamaModelOptions();
     const hardwareSummary = this.plugin.getHardwareCapabilitySummaryForQa();
-    const readiness = containerEl.createDiv({ cls: "auto-linker-settings-guide-card" });
+    const readiness = containerEl.createDiv({ cls: "omni-forge-settings-guide-card" });
     readiness.createEl("strong", {
       text:
         detectedModels.length > 0
@@ -6240,14 +6240,14 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         ];
     const hardwareLines = this.splitGuideLines(hardwareSummary);
     const readinessList = readiness.createEl("ul", {
-      cls: "auto-linker-settings-guide-list auto-linker-settings-guide-card-list",
+      cls: "omni-forge-settings-guide-list omni-forge-settings-guide-card-list",
     });
     for (const line of [...readinessLines, ...hardwareLines]) {
       readinessList.createEl("li", { text: line });
     }
 
     containerEl.createEl("h3", { text: "When to use each preset / 프리셋 선택 기준" });
-    const presetList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const presetList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     presetList.createEl("li", {
       text: "Flash: 문서 1~20개 기반 빠른 조회/요약. Role/Pipeline을 경량 고정해 지연을 최소화합니다.",
     });
@@ -6259,7 +6259,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     });
 
     containerEl.createEl("h3", { text: "Chat shortcut reference / 채팅 단축키 안내" });
-    const shortcutList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const shortcutList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     shortcutList.createEl("li", {
       text: "Enter: 전송",
     });
@@ -6274,7 +6274,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     });
 
     containerEl.createEl("h3", { text: "Agent external-path policy / 에이전트 외부 경로 정책" });
-    const securityGuideList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const securityGuideList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     securityGuideList.createEl("li", {
       text: "기본값은 보수적(vault 범위)입니다. 외부 절대경로 접근은 allowlist 또는 full access 조건에서만 허용됩니다.",
     });
@@ -6289,7 +6289,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     });
 
     containerEl.createEl("h3", { text: "PDF parsing notes / PDF 파싱 고려사항" });
-    const pdfGuideList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const pdfGuideList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     pdfGuideList.createEl("li", {
       text: "PDF는 pdftotext -> OCR(tesseract/pdftoppm) -> fallback 체인으로 본문 추출을 시도합니다.",
     });
@@ -6304,7 +6304,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     });
 
     containerEl.createEl("h3", { text: "Reference models by tier / 티어별 참고 모델" });
-    const modelList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const modelList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     modelList.createEl("li", {
       text: "Flash tier text: qwen3:8b / llama3.1:8b / gemma3:4b",
     });
@@ -6319,7 +6319,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     });
 
     containerEl.createEl("pre", {
-      cls: "auto-linker-settings-guide-code",
+      cls: "omni-forge-settings-guide-code",
       text: [
         "ollama pull qwen3:8b",
         "ollama pull qwen3:14b",
@@ -6329,7 +6329,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     });
 
     containerEl.createEl("h3", { text: "Official references / 공식 참고" });
-    const refList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const refList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     const references = [
       "https://ollama.com/library/qwen3",
       "https://ollama.com/library/qwen2.5vl",
@@ -6343,7 +6343,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     }
 
     containerEl.createEl("h3", { text: "Preset warning snapshot / 프리셋 경고 스냅샷" });
-    const warningList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const warningList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     const warnings = this.collectPresetOverrideWarnings();
     if (warnings.length === 0) {
       warningList.createEl("li", { text: "현재 프리셋 오버라이드 경고(⚠) 없음" });
@@ -6383,7 +6383,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private renderOrchestrationTab(containerEl: HTMLElement): void {
     containerEl.createEl("h3", { text: "Orchestration controls / 오케스트레이션 제어" });
     containerEl.createEl("p", {
-      cls: "auto-linker-settings-guide-note",
+      cls: "omni-forge-settings-guide-note",
       text: "내부 문서 보호를 우선하며, 외부 연결은 allowlist 기반으로 제한된 상태에서만 실행하세요.",
     });
 
@@ -6414,7 +6414,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private renderSkillsTab(containerEl: HTMLElement): void {
     containerEl.createEl("h3", { text: "Skills manager (beta) / 스킬 관리(베타)" });
     containerEl.createEl("p", {
-      cls: "auto-linker-settings-guide-note",
+      cls: "omni-forge-settings-guide-note",
       text: "오케스트레이션으로 생성한 스킬 문서를 내부/외부 경로에서 관리하기 위한 준비 탭입니다.",
     });
 
@@ -6435,7 +6435,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   private renderParserTab(containerEl: HTMLElement): void {
     containerEl.createEl("h3", { text: "Parser pipeline / 파서 파이프라인" });
     containerEl.createEl("p", {
-      cls: "auto-linker-settings-guide-note",
+      cls: "omni-forge-settings-guide-note",
       text: "PDF/이미지 파서를 중심으로 첨부 컨텍스트 품질을 높입니다. excel/hwp는 현재 미리보기 수준이며 추후 확장됩니다.",
     });
 
@@ -6468,7 +6468,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         }),
       );
 
-    const parserList = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const parserList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     parserList.createEl("li", {
       text: "PDF: pdftotext(텍스트 추출) + pdftoppm/tesseract(OCR) + fallback",
     });
@@ -6487,7 +6487,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("외부 첨부를 vault 내부로 미러링할 경로입니다.")
       .addText((text) =>
         text
-          .setPlaceholder("Auto Link Ingest")
+          .setPlaceholder("Omni Forge Ingest")
           .setValue(this.plugin.settings.qaAttachmentIngestRootPath)
           .onChange(async (value) => {
             this.plugin.settings.qaAttachmentIngestRootPath = normalizePath(
@@ -6501,16 +6501,16 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("auto-linker-settings-tab");
+    containerEl.addClass("omni-forge-settings-tab");
     this.addSettingsLanguageControl(containerEl);
     const uiMode = this.plugin.settings.settingsUiLanguage;
     containerEl.createEl("h2", {
       text:
         uiMode === "en"
-          ? "Auto Link Settings"
+          ? "Omni Forge Settings"
           : uiMode === "ko"
-            ? "Auto Link 설정"
-            : "Auto Link Settings / Auto Link 설정",
+            ? "Omni Forge 설정"
+            : "Omni Forge Settings / Omni Forge 설정",
     });
 
     containerEl.createEl("p", {
@@ -7447,7 +7447,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         "Optional global policy/style instructions. Beginner default is prefilled and can be restored anytime. / 전체 역할에 공통 적용되는 지시입니다.",
       )
       .addTextArea((text) => {
-        text.inputEl.addClass("auto-linker-setting-prompt-textarea");
+        text.inputEl.addClass("omni-forge-setting-prompt-textarea");
         text.inputEl.rows = 10;
         return text
           .setPlaceholder(DEFAULT_SETTINGS.qaCustomSystemPrompt)
@@ -7464,7 +7464,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           this.display();
         }),
       );
-    customPromptSetting.settingEl.addClass("auto-linker-setting-prompt-editor");
+    customPromptSetting.settingEl.addClass("omni-forge-setting-prompt-editor");
 
     const rolePromptSetting = new Setting(containerEl)
       .setName("Role system prompt editor")
@@ -7483,7 +7483,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           });
       })
       .addTextArea((text) => {
-        text.inputEl.addClass("auto-linker-setting-prompt-textarea");
+        text.inputEl.addClass("omni-forge-setting-prompt-textarea");
         text.inputEl.rows = 12;
         return text
           .setPlaceholder(
@@ -7506,10 +7506,10 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
           this.display();
         }),
       );
-    rolePromptSetting.settingEl.addClass("auto-linker-setting-prompt-editor");
+    rolePromptSetting.settingEl.addClass("omni-forge-setting-prompt-editor");
 
     containerEl.createEl("h3", { text: "Advanced scenario examples / 고급 시나리오 예시" });
-    const advancedExamples = containerEl.createEl("ul", { cls: "auto-linker-settings-guide-list" });
+    const advancedExamples = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     const exampleFast = advancedExamples.createEl("li");
     exampleFast.createDiv({ text: "Flash (빠른 질의응답)" });
     exampleFast.createEl("small", {
@@ -7579,7 +7579,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Vault-relative path for saving chat transcripts.")
       .addText((text) =>
         text
-          .setPlaceholder("Auto Link Chats")
+          .setPlaceholder("Omni Forge Chats")
           .setValue(this.plugin.settings.chatTranscriptRootPath)
           .onChange(async (value) => {
             this.plugin.settings.chatTranscriptRootPath = value.trim();
@@ -7592,7 +7592,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Vault-relative folder where external attachments are mirrored for stable source links.")
       .addText((text) =>
         text
-          .setPlaceholder("Auto Link Ingest")
+          .setPlaceholder("Omni Forge Ingest")
           .setValue(this.plugin.settings.qaAttachmentIngestRootPath)
           .onChange(async (value) => {
             this.plugin.settings.qaAttachmentIngestRootPath = normalizePath(
@@ -7637,7 +7637,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Enable agent tool mode (experimental)")
       .setDesc(
-        "Allow model-proposed actions (read/write/list/shell) from chat responses via auto-link-actions JSON block.",
+        "Allow model-proposed actions (read/write/list/shell) from chat responses via omni-forge-actions JSON block.",
       )
       .addToggle((toggle) =>
         toggle
@@ -7891,7 +7891,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       )
       .addText((text) =>
         text
-          .setPlaceholder("Auto Link Reports")
+          .setPlaceholder("Omni Forge Reports")
           .setValue(this.plugin.settings.cleanupReportRootPath)
           .onChange(async (value) => {
             this.plugin.settings.cleanupReportRootPath = value.trim();
@@ -8000,7 +8000,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Comma-separated substrings. Matched folders are ignored during selection/analysis.")
       .addText((text) =>
         text
-          .setPlaceholder(".obsidian,Auto Link Backups")
+          .setPlaceholder(".obsidian,Omni Forge Backups")
           .setValue(this.plugin.settings.excludedFolderPatterns)
           .onChange(async (value) => {
             this.plugin.settings.excludedFolderPatterns = value;
@@ -8025,7 +8025,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
       .setDesc("Vault-relative folder path used for versioned backups.")
       .addText((text) =>
         text
-          .setPlaceholder("Auto Link Backups")
+          .setPlaceholder("Omni Forge Backups")
           .setValue(this.plugin.settings.backupRootPath)
           .onChange(async (value) => {
             try {
@@ -8101,7 +8101,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         if (!inline) {
           continue;
         }
-        nameEl.removeClass("auto-linker-bilingual-field");
+        nameEl.removeClass("omni-forge-bilingual-field");
         nameEl.textContent = inline.en;
       }
       const descEls = containerEl.querySelectorAll<HTMLElement>(".setting-item-description");
@@ -8110,7 +8110,7 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
         if (!inline) {
           continue;
         }
-        descEl.removeClass("auto-linker-bilingual-field");
+        descEl.removeClass("omni-forge-bilingual-field");
         descEl.textContent = inline.en;
       }
       const headerEls = containerEl.querySelectorAll<HTMLElement>("h2, h3");
@@ -8143,24 +8143,24 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     for (const nameEl of Array.from(nameEls)) {
       const inline = splitInlineBilingualText(nameEl.textContent);
       if (inline) {
-        nameEl.removeClass("auto-linker-bilingual-field");
+        nameEl.removeClass("omni-forge-bilingual-field");
         nameEl.textContent = mode === "ko" ? inline.ko : `${inline.en} / ${inline.ko}`;
         continue;
       }
       const localized = toKoreanBilingualParts(nameEl.textContent, SETTINGS_NAME_KO_MAP);
       if (localized && mode === "ko") {
-        nameEl.removeClass("auto-linker-bilingual-field");
+        nameEl.removeClass("omni-forge-bilingual-field");
         nameEl.textContent = localized.ko;
       } else if (localized && mode === "bilingual") {
         nameEl.empty();
-        nameEl.addClass("auto-linker-bilingual-field");
+        nameEl.addClass("omni-forge-bilingual-field");
         nameEl.createSpan({
           text: localized.en,
-          cls: "auto-linker-bilingual-en",
+          cls: "omni-forge-bilingual-en",
         });
         nameEl.createSpan({
           text: localized.ko,
-          cls: "auto-linker-bilingual-ko",
+          cls: "omni-forge-bilingual-ko",
         });
       }
     }
@@ -8169,24 +8169,24 @@ class KnowledgeWeaverSettingTab extends PluginSettingTab {
     for (const descEl of Array.from(descEls)) {
       const inline = splitInlineBilingualText(descEl.textContent);
       if (inline) {
-        descEl.removeClass("auto-linker-bilingual-field");
+        descEl.removeClass("omni-forge-bilingual-field");
         descEl.textContent = mode === "ko" ? inline.ko : `${inline.en} / ${inline.ko}`;
         continue;
       }
       const localized = toKoreanBilingualParts(descEl.textContent, SETTINGS_DESC_KO_MAP);
       if (localized && mode === "ko") {
-        descEl.removeClass("auto-linker-bilingual-field");
+        descEl.removeClass("omni-forge-bilingual-field");
         descEl.textContent = localized.ko;
       } else if (localized && mode === "bilingual") {
         descEl.empty();
-        descEl.addClass("auto-linker-bilingual-field");
+        descEl.addClass("omni-forge-bilingual-field");
         descEl.createSpan({
           text: localized.en,
-          cls: "auto-linker-bilingual-en",
+          cls: "omni-forge-bilingual-en",
         });
         descEl.createSpan({
           text: localized.ko,
-          cls: "auto-linker-bilingual-ko",
+          cls: "omni-forge-bilingual-ko",
         });
       }
     }
@@ -8264,10 +8264,10 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     );
     await this.cleanupLegacyCacheArtifacts();
     void this.refreshParserToolReadinessForQa(false);
-    this.addRibbonIcon("message-square", "Open Auto Link Local Chat", () => {
+    this.addRibbonIcon("message-square", "Open Omni Forge Local Chat", () => {
       void this.openLocalQaWorkspaceView();
     });
-    this.addRibbonIcon("list-checks", "Open Auto Link Analyzed Track", () => {
+    this.addRibbonIcon("list-checks", "Open Omni Forge Analyzed Track", () => {
       void this.openAnalyzedTrack();
     });
     this.registerEvent(
@@ -9519,14 +9519,14 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   }
 
   async setChatTranscriptRootPathForQa(path: string): Promise<void> {
-    const next = this.resolveSafeFolderPath(path, "Auto Link Chats", "Chat transcript");
+    const next = this.resolveSafeFolderPath(path, "Omni Forge Chats", "Chat transcript");
     this.settings.chatTranscriptRootPath = next;
     await this.saveSettings();
     await this.refreshOpenQaWorkspaceViews();
   }
 
   async setBackupRootPathForQa(path: string): Promise<void> {
-    const next = this.resolveSafeFolderPath(path, "Auto Link Backups", "Backup root");
+    const next = this.resolveSafeFolderPath(path, "Omni Forge Backups", "Backup root");
     this.settings.backupRootPath = next;
     await this.saveSettings();
   }
@@ -9605,7 +9605,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   private async allocateLocalQaThreadPath(threadId: string): Promise<string> {
     const folder = this.resolveSafeFolderPath(
       this.settings.chatTranscriptRootPath,
-      "Auto Link Chats",
+      "Omni Forge Chats",
       "Chat transcript",
     );
     let outputPath = normalizePath(`${folder}/${threadId}.md`);
@@ -9640,7 +9640,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
     const lines: string[] = [];
     lines.push("---");
-    lines.push('type: "auto-linker-chat"');
+    lines.push('type: "omni-forge-chat"');
     lines.push(`thread_id: "${this.escapeYamlValue(threadId)}"`);
     lines.push(`created: "${createdAt}"`);
     lines.push(`updated: "${updatedAt}"`);
@@ -10272,7 +10272,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
   }
 
   private setStatus(text: string): void {
-    this.statusBarEl?.setText(`Auto Link: ${text}`);
+    this.statusBarEl?.setText(`Omni Forge: ${text}`);
   }
 
   private notice(text: string, timeout = 3500): void {
@@ -10353,14 +10353,14 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
   private getAnalysisCachePath(): string {
     return normalizePath(
-      `${this.app.vault.configDir}/plugins/auto-link/${ANALYSIS_CACHE_FILE}`,
+      `${this.app.vault.configDir}/plugins/omni-forge/${ANALYSIS_CACHE_FILE}`,
     );
   }
 
   private async cleanupLegacyCacheArtifacts(): Promise<void> {
     const legacyFiles = [
-      normalizePath("Auto-Linker Cache/analysis-proposal-cache.json"),
-      normalizePath("Auto-Linker Cache/semantic-embedding-cache.json"),
+      normalizePath("Omni Forge Cache/analysis-proposal-cache.json"),
+      normalizePath("Omni Forge Cache/semantic-embedding-cache.json"),
     ];
 
     for (const path of legacyFiles) {
@@ -10373,7 +10373,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       }
     }
 
-    const legacyFolder = normalizePath("Auto-Linker Cache");
+    const legacyFolder = normalizePath("Omni Forge Cache");
     try {
       if (!(await this.app.vault.adapter.exists(legacyFolder))) {
         return;
@@ -11655,7 +11655,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     return [
       "Agent tool mode is enabled.",
       shellScopeLine,
-      "If an action is required, append ONE fenced code block using language `auto-link-actions` and strict JSON:",
+      "If an action is required, append ONE fenced code block using language `omni-forge-actions` and strict JSON:",
       "{ \"actions\": [ ... ] }",
       "Supported actions:",
       "- read_note: read file content (`path` required; vault-relative or allowed absolute path).",
@@ -11669,7 +11669,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       "{ \"type\": \"write_note\", \"path\": \"Projects/plan.md\", \"content\": \"# Plan\" }",
       "{ \"type\": \"append_note\", \"path\": \"Daily/2026-02-16.md\", \"content\": \"\\n- done\" }",
       "{ \"type\": \"list_folder\", \"path\": \".\" }",
-      "{ \"type\": \"run_shell\", \"command\": \"npm run check\", \"cwd\": \"obsidian-plugin/auto-link\", \"timeoutSec\": 20 }",
+      "{ \"type\": \"run_shell\", \"command\": \"npm run check\", \"cwd\": \"obsidian-plugin/omni-forge\", \"timeoutSec\": 20 }",
       "When actions are included, keep non-action answer brief and focused.",
       "Never include multiple action blocks.",
     ];
@@ -12640,7 +12640,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     warning?: string;
   } {
     const { answer, question, model } = params;
-    const blockRegex = /```auto-link-actions\s*([\s\S]*?)```/i;
+    const blockRegex = /```omni-forge-actions\s*([\s\S]*?)```/i;
     const match = blockRegex.exec(answer);
     const answerWithoutPlan = answer.replace(blockRegex, "").trim();
     if (!match) {
@@ -13711,7 +13711,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
       const hasAgentActionBlock =
         this.settings.qaAgentToolModeEnabled &&
-        /```auto-link-actions[\s\S]*?```/i.test(initialAnswer);
+        /```omni-forge-actions[\s\S]*?```/i.test(initialAnswer);
       let finalAnswer = initialAnswer;
       if (!hasSourceContext) {
         this.emitQaEvent(
@@ -13817,7 +13817,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
 
       const shouldSkipLanguageGuard =
         this.settings.qaAgentToolModeEnabled &&
-        /```auto-link-actions[\s\S]*?```/i.test(finalAnswer);
+        /```omni-forge-actions[\s\S]*?```/i.test(finalAnswer);
       if (!shouldSkipLanguageGuard) {
         throwIfAborted();
         finalAnswer = await this.enforcePreferredLanguageIfNeeded({
@@ -13985,7 +13985,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     try {
       const chatRoot = this.resolveSafeFolderPath(
         this.settings.chatTranscriptRootPath,
-        "Auto Link Chats",
+        "Omni Forge Chats",
         "Chat transcript",
       );
       if (this.isPathInsideFolder(path, chatRoot)) {
@@ -13998,7 +13998,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     try {
       const reportRoot = this.resolveSafeFolderPath(
         this.settings.cleanupReportRootPath,
-        "Auto Link Reports",
+        "Omni Forge Reports",
         "Cleanup dry-run report",
       );
       if (this.isPathInsideFolder(path, reportRoot)) {
@@ -14011,7 +14011,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
     try {
       const backupRoot = this.resolveSafeFolderPath(
         this.settings.backupRootPath,
-        "Auto Link Backups",
+        "Omni Forge Backups",
         "Backup root",
       );
       if (this.isPathInsideFolder(path, backupRoot)) {
@@ -14566,7 +14566,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
         : "(none)";
 
       const lines: string[] = [];
-      lines.push("# Auto Link Cleanup Dry-Run Report");
+      lines.push("# Omni Forge Cleanup Dry-Run Report");
       lines.push("");
       lines.push(`Generated: ${new Date().toISOString()}`);
       lines.push(`Selected files: ${selectedFiles.length}`);
@@ -14587,7 +14587,7 @@ export default class KnowledgeWeaverPlugin extends Plugin {
       try {
         const reportFolder = this.resolveSafeFolderPath(
           this.settings.cleanupReportRootPath,
-          "Auto Link Reports",
+          "Omni Forge Reports",
           "Cleanup dry-run report",
         );
         reportPath = normalizePath(

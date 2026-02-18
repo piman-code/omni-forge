@@ -1,21 +1,21 @@
-# Auto Link (한국어)
+# Omni Forge (한국어)
 
 언어: [English](README.md) | [한국어](README_KO.md)
 
-Auto Link는 보안 기본값을 강하게 유지하면서, 선택한 노트 범위에서만 AI 메타데이터 분석과 로컬 Q&A를 수행하도록 설계된 Obsidian 플러그인입니다.
+Omni Forge는 보안 기본값을 강하게 유지하면서, 선택한 노트 범위에서만 AI 메타데이터 분석과 로컬 Q&A를 수행하도록 설계된 Obsidian 플러그인입니다.
 
 다음이 필요한 사용자에게 맞춰져 있습니다.
 - 선택 범위 기반 AI 메타데이터 분석 (`tags`, `topic`, `linked`, `index`)
 - 소스 링크와 진행 타임라인이 있는 로컬 노트 챗
 - 백업/정리 중심의 안전한 일괄 작업
 
-## 왜 Auto Link인가
+## 왜 Omni Forge인가
 
 일반적인 AI 노트 워크플로우는 보통 두 가지 문제가 있습니다.
 - 범위가 너무 넓어 전체를 매번 재분석함
 - 외부 전송이 기본이라 보안 통제가 약함
 
-Auto Link는 반대로 동작합니다.
+Omni Forge는 반대로 동작합니다.
 - 먼저 분석 대상(파일/폴더)을 명시적으로 선택
 - 로컬 엔드포인트를 기본값으로 사용
 - 채팅/리포트/백업 경로는 안전한 vault-relative 검증 수행
@@ -56,8 +56,8 @@ Auto Link는 반대로 동작합니다.
 ### A. BRAT 설치(권장)
 
 1. Obsidian에 BRAT 설치
-2. 플러그인 저장소 추가: `piman-code/auto-link`
-3. **Auto Link** 활성화
+2. 플러그인 저장소 추가: `piman-code/omni-forge`
+3. **Omni Forge** 활성화
 4. 설정에서 초기 구성
 
 ### B. 수동 설치(릴리즈 파일)
@@ -66,12 +66,12 @@ Auto Link는 반대로 동작합니다.
    - `manifest.json`
    - `main.js`
    - `styles.css`
-2. `.obsidian/plugins/auto-link/` 경로에 배치
-3. Obsidian 재시작 후 **Auto Link** 활성화
+2. `.obsidian/plugins/omni-forge/` 경로에 배치
+3. Obsidian 재시작 후 **Omni Forge** 활성화
 
 ## 5분 빠른 시작
 
-1. `설정 -> Auto Link` 열기
+1. `설정 -> Omni Forge` 열기
    - `Settings view mode`를 `Simple / 간결`로 두면 핵심 항목만 깔끔하게 볼 수 있습니다.
    - 필요할 때만 `Open Full / 전체 열기`로 고급 항목을 펼치세요.
    - 상단 탭(`Quick/Models/Chat/Workflow/Advanced`)으로 설정 영역을 분리해 볼 수 있습니다.
@@ -105,7 +105,7 @@ Auto Link는 반대로 동작합니다.
 
 ## Ollama Agent 모델 가이드 (M4 Pro 48GB)
 
-현재 Auto Link의 로컬 Q&A는 노트 RAG + 첨부 문서/이미지 기반 흐름입니다.
+현재 Omni Forge의 로컬 Q&A는 노트 RAG + 첨부 문서/이미지 기반 흐름입니다.
 채팅 UI는 Ollama `/api/chat`, `/api/generate`를 사용하며, 이미지 첨부가 있으면 비전 모델 우선으로 `/api/generate` 경로를 사용합니다.
 
 | Agent 역할 | 기본 권장 모델 | 경량 대안 | 메모 |

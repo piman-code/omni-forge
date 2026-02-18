@@ -140,9 +140,9 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- Rebranded user-facing plugin name from `Auto-Linker` to `Auto Link` across UI and docs.
+- Rebranded user-facing plugin name from `Omni Forge` to `Omni Forge` across UI and docs.
 - Rewrote `README.md` and `README_KO.md` for first-time global/Korean users with clearer install, setup, workflow, and troubleshooting guidance.
-- Updated BRAT/repository references from `piman-code/auto-linker` to `piman-code/auto-link`.
+- Updated BRAT/repository references from `piman-code/omni-forge` to `piman-code/omni-forge`.
 
 ### Performance
 
@@ -227,7 +227,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Command palette labels no longer duplicate `Auto Link:` prefixes.
+- Command palette labels no longer duplicate `Omni Forge:` prefixes.
 - Cleanup dry-run report path now uses safe vault-relative validation.
 - Improved source row visibility in themes with high color-contrast differences.
 - Markdown render consistency improvements for table/checklist/blockquote/code blocks across themes.
@@ -236,7 +236,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- Ribbon icon to open `Auto Link Local Chat` quickly.
+- Ribbon icon to open `Omni Forge Local Chat` quickly.
 - Configurable `Chat transcript folder path`.
 - Configurable `Cleanup dry-run report folder`.
 - `Auto-sync chat thread` setting for continuous thread-note synchronization.
@@ -251,14 +251,14 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Command palette labels no longer show duplicated `Auto Link:` prefix.
+- Command palette labels no longer show duplicated `Omni Forge:` prefix.
 - Cleanup dry-run report output path is now safely configurable (vault-relative validation).
 
 ## [0.1.0] - 2026-02-14
 
 ### Added
 
-- Initial Obsidian community plugin scaffold for `Auto Link`.
+- Initial Obsidian community plugin scaffold for `Omni Forge`.
 - Target-note selector modal to analyze only chosen notes.
 - Suggestion-first workflow: analyze, preview, then apply.
 - Per-field rationale display for `tags`, `topic`, `linked`, and `index`.
