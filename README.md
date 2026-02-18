@@ -184,13 +184,5 @@ This helps maintain metadata freshness without full rescans.
 - If you use cloud providers, your provider policy applies.
 - Do not enable non-local endpoints unless you understand data flow and trust boundary.
 
-## Development
-
-```bash
-npm install
-npm run release:check
-```
-
 Related docs:
 - [README_KO.md](README_KO.md)
-- [CHANGELOG.md](CHANGELOG.md)

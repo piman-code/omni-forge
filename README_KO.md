@@ -187,13 +187,5 @@ Omni Forge는 반대로 동작합니다.
 - 클라우드 Provider를 사용하면 해당 Provider 정책이 적용됩니다.
 - non-local endpoint 허용은 신뢰 경계를 이해한 경우에만 사용하세요.
 
-## 개발
-
-```bash
-npm install
-npm run release:check
-```
-
 관련 문서:
 - [README.md](README.md)
-- [CHANGELOG.md](CHANGELOG.md)
