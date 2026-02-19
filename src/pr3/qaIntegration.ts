@@ -29,12 +29,6 @@ function saturatingCountFactor(count: number, pivot: number): number {
   return count / (count + safePivot);
 }
 
-function saturatingCountFactor(count: number, pivot: number): number {
-  if (!Number.isFinite(count) || count <= 0) return 0;
-  const safePivot = pivot > 0 ? pivot : 1;
-  return count / (count + safePivot);
-}
-
 export async function runQA(input: RetrievalInput): Promise<string> {
   const result = await retrieveByVector(input);
 
