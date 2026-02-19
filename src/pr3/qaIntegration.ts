@@ -23,12 +23,6 @@ function normalizeConfidenceScore(score: number): number {
   return score / (1 + score);
 }
 
-function saturatingCountFactor(count: number, pivot: number): number {
-  if (!Number.isFinite(count) || count <= 0) return 0;
-  const safePivot = pivot > 0 ? pivot : 1;
-  return count / (count + safePivot);
-}
-
 export async function runQA(input: RetrievalInput): Promise<string> {
   const result = await retrieveByVector(input);
 
@@ -92,12 +86,17 @@ export async function runQA(input: RetrievalInput): Promise<string> {
     .map((docPath) => `- [[${docPath}]]`)
     .join("\n");
 
+<<<<<<< HEAD
   // 6) 신뢰도: maxScore + 근거 개수 + 서로 다른 docPath 개수 반영
+=======
+  // 6) 신뢰도: 0..1은 그대로, 그 외 score는 완만한 변환 적용
+>>>>>>> origin/main
   const scores = evidenceItems
     .map((item) => item.score)
     .filter((s): s is number => typeof s === "number");
 
   const maxScore = scores.length > 0 ? Math.max(...scores) : Number.NaN;
+<<<<<<< HEAD
   const maxScoreFactor = normalizeConfidenceScore(maxScore);
   const evidenceCountFactor = saturatingCountFactor(evidenceItems.length, 3);
   const docPathDiversityFactor = saturatingCountFactor(referencePathSet.size, 2);
@@ -105,6 +104,9 @@ export async function runQA(input: RetrievalInput): Promise<string> {
   const confidenceRaw =
     maxScoreFactor * 0.6 + evidenceCountFactor * 0.25 + docPathDiversityFactor * 0.15;
   const confidence = Math.max(0, Math.min(100, Math.round(confidenceRaw * 100)));
+=======
+  const confidence = Math.round(normalizeConfidenceScore(maxScore) * 100);
+>>>>>>> origin/main
 
   // 7) 스펙 템플릿으로 최종 문자열 반환
   return [
