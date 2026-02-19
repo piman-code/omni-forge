@@ -78,3 +78,11 @@ export function formatEvidenceMarkdown(evidence: ReadonlyArray<Evidence>): strin
     )
     .join("\n");
 }
+
+export function toEvidenceMarkdownFromHits(hits: ReadonlyArray<RetrievalHitLike>): string {
+  if (hits.length === 0) {
+    return "";
+  }
+  const evidence = toEvidence(hits);
+  return formatEvidenceMarkdown(evidence);
+}
