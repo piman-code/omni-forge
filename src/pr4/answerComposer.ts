@@ -100,7 +100,7 @@ export function composeAnswer({ question, hits }: ComposeAnswerInput): string {
   const rankedHits = rankHits(hits);
 
   if (rankedHits.length === 0) {
-    return "관련 근거를 기반으로 답변을 구성했습니다.";
+    return "관련 근거가 충분하지 않습니다. (근거 부족)";
   }
 
   const topHits = pickTopDistinctDocPaths(rankedHits, 2);
@@ -109,7 +109,10 @@ export function composeAnswer({ question, hits }: ComposeAnswerInput): string {
   const questionLine =
     normalizedQuestion.length > 0 ? `질문: ${normalizedQuestion}` : "질문: (미입력)";
 
-  const evidenceLine = `근거 ${rankedHits.length}건 기반 요약`;
+  const insufficient = rankedHits.length < 2;
+  const evidenceLine = insufficient
+    ? `근거 ${rankedHits.length}건 기반 요약 (근거 부족)`
+    : `근거 ${rankedHits.length}건 기반 요약`;
   const topLine = `핵심 근거: ${formatTopEvidence(topHits[0])}`;
 
   if (topHits.length === 1) {
