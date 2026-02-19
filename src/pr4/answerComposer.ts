@@ -21,6 +21,13 @@ function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function isTombstonedDocPath(docPath: string): boolean {
+  const normalized = normalizeText(docPath).toLowerCase();
+  if (normalized === "tombstoned") return true;
+  if (normalized.startsWith("tombstoned ")) return true;
+  return false;
+}
+
 function normalizeScore(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
@@ -39,6 +46,11 @@ function rankHits(hits: ReadonlyArray<HitLike>): RankedHit[] {
       typeof rawDocPath === "string" && rawDocPath.trim().length > 0
         ? normalizeText(rawDocPath)
         : "unknown";
+
+    if (isTombstonedDocPath(docPath)) {
+      continue;
+    }
+
     const chunkId =
       typeof rawChunkId === "string" && rawChunkId.trim().length > 0
         ? normalizeText(rawChunkId)
@@ -70,6 +82,20 @@ function formatTopEvidence(hit: RankedHit): string {
   return `${hit.docPath} (${hit.chunkId}, score ${scoreText})`;
 }
 
+function pickTopDistinctDocPaths(rankedHits: ReadonlyArray<RankedHit>, max: number): RankedHit[] {
+  const picked: RankedHit[] = [];
+  const seen = new Set<string>();
+
+  for (const hit of rankedHits) {
+    if (seen.has(hit.docPath)) continue;
+    seen.add(hit.docPath);
+    picked.push(hit);
+    if (picked.length >= max) break;
+  }
+
+  return picked;
+}
+
 export function composeAnswer({ question, hits }: ComposeAnswerInput): string {
   const rankedHits = rankHits(hits);
 
@@ -77,17 +103,19 @@ export function composeAnswer({ question, hits }: ComposeAnswerInput): string {
     return "관련 근거를 기반으로 답변을 구성했습니다.";
   }
 
+  const topHits = pickTopDistinctDocPaths(rankedHits, 2);
+
   const normalizedQuestion = normalizeText(question);
   const questionLine =
     normalizedQuestion.length > 0 ? `질문: ${normalizedQuestion}` : "질문: (미입력)";
 
   const evidenceLine = `근거 ${rankedHits.length}건 기반 요약`;
-  const topLine = `핵심 근거: ${formatTopEvidence(rankedHits[0])}`;
+  const topLine = `핵심 근거: ${formatTopEvidence(topHits[0])}`;
 
-  if (rankedHits.length === 1) {
+  if (topHits.length === 1) {
     return [questionLine, evidenceLine, topLine].join("\n");
   }
 
-  const secondLine = `보조 근거: ${formatTopEvidence(rankedHits[1])}`;
+  const secondLine = `보조 근거: ${formatTopEvidence(topHits[1])}`;
   return [questionLine, evidenceLine, topLine, secondLine].join("\n");
 }
