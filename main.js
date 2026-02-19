@@ -1556,6 +1556,8 @@ var CODER_PROMPT_CONTRACT_VERSION = "v1.0";
 var CODER_PROMPT_CONTRACT_SELECTION_HEADER = "CURRENT_SELECTION";
 var FRONTMATTER_GUARD_ALLOWED_KEYS = ["linked", "tags", "topic", "index", "created", "updated"];
 var FRONTMATTER_GUARD_ALLOWED_KEY_SET = new Set(FRONTMATTER_GUARD_ALLOWED_KEYS);
+var DEFAULT_DENY_SCOPE_VIOLATION = "DEFAULT_DENY_SCOPE_VIOLATION";
+var CONTRACT_INVALID_PATH = "CONTRACT_INVALID_PATH";
 var ROUTER_TASK_ROLE_PIPELINE = {
   EDIT_NOTE: ["Architect", "Coder", "Reviewer", "Safeguard"],
   DOC_PIPELINE: ["Orchestrator", "Coder", "Reviewer", "Safeguard"],
@@ -2502,6 +2504,41 @@ var PatchPreviewModal = class _PatchPreviewModal extends import_obsidian4.Modal 
       if (/fuzzy/i.test(badge)) {
         badgeEl.addClass("is-warning");
       }
+      if (/failed/i.test(badge)) {
+        badgeEl.addClass("is-danger");
+      }
+    }
+    const dryRunSummary = this.model.dryRunSummary && typeof this.model.dryRunSummary === "object" ? this.model.dryRunSummary : null;
+    const guardResult = this.model.guardResult && typeof this.model.guardResult === "object" ? this.model.guardResult : null;
+    if (dryRunSummary || guardResult) {
+      const checks = header.createDiv({ cls: "omni-forge-patch-preview-checks" });
+      if (dryRunSummary) {
+        const dryRunLine = checks.createDiv({
+          cls: `omni-forge-patch-preview-check ${dryRunSummary.ok ? "is-pass" : "is-fail"}`
+        });
+        const dryRunMode = dryRunSummary.mode || "none";
+        const dryRunChanged = Number.isFinite(dryRunSummary.changedLines) ? dryRunSummary.changedLines : 0;
+        dryRunLine.setText(`Dry-run: ${dryRunSummary.ok ? "PASS" : "FAIL"} | mode=${dryRunMode} | changed=${dryRunChanged}`);
+        if (!dryRunSummary.ok && dryRunSummary.error) {
+          dryRunLine.setAttr("title", dryRunSummary.error);
+        }
+      }
+      if (guardResult) {
+        const guardLine = checks.createDiv({
+          cls: `omni-forge-patch-preview-check ${guardResult.ok ? "is-pass" : "is-fail"}`
+        });
+        guardLine.setText(`FrontmatterGuard: ${guardResult.ok ? "PASS" : "FAIL"}`);
+        if (!guardResult.ok && guardResult.error) {
+          guardLine.setAttr("title", guardResult.error);
+        }
+      }
+    }
+    if (!this.model.canApply && this.model.blockReason) {
+      const blocked = header.createDiv({
+        cls: "omni-forge-patch-preview-warning is-blocked"
+      });
+      blocked.createEl("strong", { text: "PR-0 적용 차단" });
+      blocked.createEl("div", { text: this.model.blockReason });
     }
     if (this.model.riskLevel !== "low") {
       const warning = header.createDiv({
@@ -2662,6 +2699,10 @@ var PatchPreviewModal = class _PatchPreviewModal extends import_obsidian4.Modal 
     }
   }
   requestApply() {
+    if (!this.model.canApply) {
+      new import_obsidian4.Notice(this.model.blockReason || "PR-0 보안 가드에 의해 적용이 차단되었습니다.", 4e3);
+      return;
+    }
     if (this.model.requireExtraConfirm && (!this.confirmCheckboxEl || !this.confirmCheckboxEl.checked)) {
       new import_obsidian4.Notice("위험 변경은 확인 체크 후 적용할 수 있습니다.", 3500);
       return;
@@ -2670,6 +2711,10 @@ var PatchPreviewModal = class _PatchPreviewModal extends import_obsidian4.Modal 
   }
   updateApplyButtonState() {
     if (!this.applyButtonEl) {
+      return;
+    }
+    if (!this.model.canApply) {
+      this.applyButtonEl.disabled = true;
       return;
     }
     if (!this.model.requireExtraConfirm) {
@@ -8883,6 +8928,61 @@ var PatchApplier = class {
     };
   }
 };
+var ScopedVault = class {
+  constructor(allowRoots) {
+    const roots = Array.isArray(allowRoots) ? allowRoots : [];
+    this.allowRoots = roots.map((root) => this.normalizeVaultRelativePath(root, "scopeRoot")).filter((root, index, arr) => root.length > 0 && arr.indexOf(root) === index);
+  }
+  buildScopeError(code, message, pathValue) {
+    const detail = pathValue ? `${message} (${pathValue})` : message;
+    const error = new Error(`${code}: ${detail}`);
+    error.code = code;
+    error.path = pathValue || "";
+    return error;
+  }
+  normalizeVaultRelativePath(rawPath, label = "path") {
+    const source = (rawPath != null ? String(rawPath) : "").replace(/\\/g, "/").trim();
+    if (label === "scopeRoot" && (source === "." || source === "./")) {
+      return ".";
+    }
+    if (!source) {
+      throw this.buildScopeError(CONTRACT_INVALID_PATH, `${label} is empty.`, source);
+    }
+    if (source.includes("\0")) {
+      throw this.buildScopeError(CONTRACT_INVALID_PATH, `${label} contains null byte.`, source);
+    }
+    if (source.startsWith("/") || /^[A-Za-z]:/.test(source)) {
+      throw this.buildScopeError(CONTRACT_INVALID_PATH, `${label} must be vault-relative.`, source);
+    }
+    const normalized = (0, import_obsidian4.normalizePath)(source);
+    if (!normalized || normalized === "." || normalized === ".." || normalized.startsWith("../") || normalized.includes("/../")) {
+      throw this.buildScopeError(CONTRACT_INVALID_PATH, `${label} contains invalid traversal.`, source);
+    }
+    return normalized;
+  }
+  isInsideAllowedRoots(pathValue) {
+    if (this.allowRoots.length === 0) {
+      return false;
+    }
+    return this.allowRoots.some((root) => {
+      if (root === ".") {
+        return true;
+      }
+      return pathValue === root || pathValue.startsWith(`${root}/`);
+    });
+  }
+  assertPathInScope(rawPath, label = "path") {
+    const normalized = this.normalizeVaultRelativePath(rawPath, label);
+    if (!this.isInsideAllowedRoots(normalized)) {
+      throw this.buildScopeError(
+        DEFAULT_DENY_SCOPE_VIOLATION,
+        `${label} is outside scoped roots: ${this.allowRoots.join(", ") || "(none)"}.`,
+        normalized
+      );
+    }
+    return normalized;
+  }
+};
 var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
@@ -12313,14 +12413,26 @@ ${diffBody}`,
         error: "Action type must be apply_selection_diff."
       };
     }
-    if (typeof action.path === "string" && action.path.trim().length > 0) {
-      const normalizedPath = (0, import_obsidian4.normalizePath)(action.path.trim());
-      if (normalizedPath !== openSelection.filePath) {
-        return {
-          ok: false,
-          error: `apply_selection_diff path mismatch (${normalizedPath} != ${openSelection.filePath}).`
-        };
-      }
+    const scopeRoot = (0, import_obsidian4.normalizePath)(nodePath.posix.dirname(openSelection.filePath || "") || ".");
+    const scopedVault = new ScopedVault([scopeRoot]);
+    let normalizedPath = openSelection.filePath;
+    try {
+      normalizedPath = scopedVault.assertPathInScope(
+        (action.path != null ? action.path : openSelection.filePath) || openSelection.filePath,
+        "apply_selection_diff.path"
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        error: message
+      };
+    }
+    if (normalizedPath !== openSelection.filePath) {
+      return {
+        ok: false,
+        error: `apply_selection_diff path mismatch (${normalizedPath} != ${openSelection.filePath}).`
+      };
     }
     const expectedHash = typeof action.expectedSelectionHash === "string" ? action.expectedSelectionHash.trim() : "";
     if (!expectedHash) {
@@ -12363,7 +12475,8 @@ ${diffBody}`,
     const frontmatterCheck = this.detectFrontmatterMutationInSelectionDiff(
       openSelection.selectedText || "",
       contractDiff.diffBody,
-      contractDiff.parsedDiff
+      contractDiff.parsedDiff,
+      { allowFuzzy: Boolean(action.allowFuzzy) }
     );
     if (!frontmatterCheck.ok) {
       return {
@@ -12388,6 +12501,7 @@ ${diffBody}`,
           path: openSelection.filePath,
           expectedSelectionHash: openSelection.selectionHash,
           diff: diffWithHeader,
+          allowFuzzy: false,
           maxChangedLines: MAX_SELECTION_DIFF_CHANGED_LINES,
           maxHunks: MAX_SELECTION_DIFF_HUNKS
         }
@@ -13062,6 +13176,7 @@ ${JSON.stringify(payload, null, 2)}
       "- apply_selection_diff: apply unified diff to CURRENT open selection only (`diff` required, `path` optional).",
       `- apply_selection_diff diff must start with header line: ${CODER_PROMPT_CONTRACT_SELECTION_HEADER}.`,
       "- apply_selection_diff must be selection-only patch: no `diff --git`, `---`, `+++` path headers.",
+      "- apply_selection_diff default is strict dry-run; fuzzy apply is blocked unless `allowFuzzy: true` is explicitly set.",
       shellLine,
       "Action schema examples:",
       '{ "type": "read_note", "path": "Projects/TODO.md" }',
@@ -13070,7 +13185,7 @@ ${JSON.stringify(payload, null, 2)}
       '{ "type": "append_note", "path": "Daily/2026-02-16.md", "content": "\\n- done" }',
       '{ "type": "delete_note", "path": "Daily/old-note.md" }',
       '{ "type": "list_folder", "path": "." }',
-      `{ "type": "apply_selection_diff", "path": "Notes/active.md", "expectedSelectionHash": "abcd1234", "diff": "${CODER_PROMPT_CONTRACT_SELECTION_HEADER}\\n@@ -1,2 +1,2 @@\\n-old\\n+new" }`,
+      `{ "type": "apply_selection_diff", "path": "Notes/active.md", "expectedSelectionHash": "abcd1234", "diff": "${CODER_PROMPT_CONTRACT_SELECTION_HEADER}\\n@@ -1,2 +1,2 @@\\n-old\\n+new", "allowFuzzy": false }`,
       '{ "type": "run_shell", "command": "npm run check", "cwd": "obsidian-plugin/omni-forge", "timeoutSec": 20 }',
       "If prompt includes an active open markdown file path and user says 'this note/current note/이 노트', use that exact path.",
       `For selection edits, use apply_selection_diff + unified diff with ${CODER_PROMPT_CONTRACT_SELECTION_HEADER} header. Do not rewrite whole file.`,
@@ -14220,6 +14335,9 @@ ${roleSystemPrompt}` : ""
     if (typeof parsed.maxHunks === "number" && Number.isFinite(parsed.maxHunks)) {
       action.maxHunks = Math.max(1, Math.floor(parsed.maxHunks));
     }
+    if (typeof parsed.allowFuzzy === "boolean") {
+      action.allowFuzzy = parsed.allowFuzzy;
+    }
     return action;
   }
   summarizeQaAgentAction(action) {
@@ -14235,7 +14353,7 @@ ${roleSystemPrompt}` : ""
       case "list_folder":
         return `list_folder path=${action.path || "(missing)"}`;
       case "apply_selection_diff":
-        return `apply_selection_diff path=${action.path || "(selection-context)"}`;
+        return `apply_selection_diff path=${action.path || "(selection-context)"}${action.allowFuzzy ? " allowFuzzy=true" : ""}`;
       case "run_shell":
         return `run_shell command=${action.command || "(missing)"}`;
       default:
@@ -14522,6 +14640,19 @@ ${hunk.lines.map((line) => `${line.prefix}${line.text}`).join("\n")}`.toLowerCas
     if (strictError && applyMode === "fuzzy") {
       strategyParts.push(`strict 실패: ${this.trimQaToolText(strictError, 160)}`);
     }
+    const dryRunSummary = params.dryRunSummary && typeof params.dryRunSummary === "object" ? params.dryRunSummary : null;
+    const guardResult = params.guardResult && typeof params.guardResult === "object" ? params.guardResult : null;
+    const canApply = typeof params.canApply === "boolean" ? params.canApply : true;
+    if (dryRunSummary && !dryRunSummary.ok) {
+      badges.push("dryrun-failed");
+    }
+    if (guardResult && !guardResult.ok) {
+      badges.push("guard-failed");
+    }
+    const blockReason = canApply ? "" : this.trimQaToolText(
+      guardResult && !guardResult.ok ? guardResult.error || "Frontmatter guard failed." : dryRunSummary && !dryRunSummary.ok ? dryRunSummary.error || "Patch dry-run failed." : "Patch apply is blocked by PR-0 guard.",
+      240
+    );
     return {
       title: "Patch Preview / 선택영역 패치 미리보기",
       scopeText: `Scope: ${filePath} | offset ${fromOffset}-${toOffset}`,
@@ -14537,6 +14668,10 @@ ${hunk.lines.map((line) => `${line.prefix}${line.text}`).join("\n")}`.toLowerCas
         changed: summaryBase.changed,
         badges
       },
+      dryRunSummary,
+      guardResult,
+      canApply,
+      blockReason,
       hunks
     };
   }
@@ -14546,7 +14681,7 @@ ${hunk.lines.map((line) => `${line.prefix}${line.text}`).join("\n")}`.toLowerCas
   applyParsedUnifiedDiffFuzzyToText(sourceText, parsedDiff) {
     return this.getPatchApplier().applyFuzzy(sourceText, parsedDiff);
   }
-  applySelectionPatchWithPatchApplier(sourceText, diffText, parsedDiff = null) {
+  applySelectionPatchWithPatchApplier(sourceText, diffText, parsedDiff = null, options = {}) {
     const parsed = parsedDiff || this.parseUnifiedDiffHunks(diffText);
     if (parsed.error) {
       return {
@@ -14570,7 +14705,43 @@ ${hunk.lines.map((line) => `${line.prefix}${line.text}`).join("\n")}`.toLowerCas
         outOfRange: true
       };
     }
-    return this.getPatchApplier().apply(sourceText, diffText, parsed);
+    const strictResult = this.getPatchApplier().applyStrict(sourceText, parsed);
+    if (strictResult.ok) {
+      return {
+        ...strictResult,
+        mode: "strict",
+        strictError: "",
+        fuzzyError: ""
+      };
+    }
+    const allowFuzzy = Boolean(options && options.allowFuzzy === true);
+    if (!allowFuzzy) {
+      return {
+        ok: false,
+        mode: "none",
+        error: `Strict apply failed: ${strictResult.error || "unknown"} (fuzzy disabled).`,
+        changedLines: this.countParsedUnifiedDiffChangedLines(parsed),
+        strictError: strictResult.error || "",
+        fuzzyError: "Fuzzy apply disabled. Set allowFuzzy=true to opt-in."
+      };
+    }
+    const fuzzyResult = this.getPatchApplier().applyFuzzy(sourceText, parsed);
+    if (fuzzyResult.ok) {
+      return {
+        ...fuzzyResult,
+        mode: "fuzzy",
+        strictError: strictResult.error || "",
+        fuzzyError: ""
+      };
+    }
+    return {
+      ok: false,
+      mode: "none",
+      error: `Strict apply failed: ${strictResult.error || "unknown"} | Fuzzy apply failed: ${fuzzyResult.error || "unknown"}`,
+      changedLines: this.countParsedUnifiedDiffChangedLines(parsed),
+      strictError: strictResult.error || "",
+      fuzzyError: fuzzyResult.error || ""
+    };
   }
   applyUnifiedDiffToText(sourceText, diffText) {
     const parsed = this.parseUnifiedDiffHunks(diffText);
@@ -14601,6 +14772,514 @@ ${hunk.lines.map((line) => `${line.prefix}${line.text}`).join("\n")}`.toLowerCas
     }
     return null;
   }
+  buildSelectionScopeRoots(filePath) {
+    const normalized = (0, import_obsidian4.normalizePath)((filePath != null ? filePath : "").trim());
+    if (!normalized) {
+      return ["."];
+    }
+    const root = (0, import_obsidian4.normalizePath)(nodePath.posix.dirname(normalized) || ".");
+    return [root || "."];
+  }
+  summarizePr0GuardResult(rawGuard) {
+    return {
+      ok: Boolean(rawGuard && rawGuard.ok),
+      error: rawGuard && typeof rawGuard.error === "string" ? rawGuard.error : "",
+      guardApplied: Boolean(rawGuard && rawGuard.guardApplied),
+      frontmatterChangedByPatch: Boolean(rawGuard && rawGuard.frontmatterChangedByPatch)
+    };
+  }
+  summarizePr0DryRunResult(rawDryRun, allowFuzzy) {
+    return {
+      ok: Boolean(rawDryRun && rawDryRun.ok),
+      mode: rawDryRun && typeof rawDryRun.mode === "string" ? rawDryRun.mode : "none",
+      changedLines: rawDryRun && Number.isFinite(rawDryRun.changedLines) ? rawDryRun.changedLines : 0,
+      error: rawDryRun && typeof rawDryRun.error === "string" ? rawDryRun.error : "",
+      strictError: rawDryRun && typeof rawDryRun.strictError === "string" ? rawDryRun.strictError : "",
+      fuzzyError: rawDryRun && typeof rawDryRun.fuzzyError === "string" ? rawDryRun.fuzzyError : "",
+      allowFuzzy: Boolean(allowFuzzy)
+    };
+  }
+  async applyPatchFlow(scope, patchPayload) {
+    const selection = scope && scope.selection ? scope.selection : null;
+    if (!selection) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "No active open selection snapshot is available.",
+        audit: { resultCode: "REJECTED" }
+      };
+    }
+    const scopeRoots = Array.isArray(scope == null ? void 0 : scope.scopeRoots) && scope.scopeRoots.length > 0 ? scope.scopeRoots : this.buildSelectionScopeRoots(selection.filePath);
+    let scopedVault;
+    try {
+      scopedVault = new ScopedVault(scopeRoots);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: message,
+        audit: {
+          scopeRoots,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const allowFuzzy = Boolean(patchPayload && patchPayload.allowFuzzy === true);
+    let targetPath = "";
+    try {
+      targetPath = scopedVault.assertPathInScope(
+        (((patchPayload == null ? void 0 : patchPayload.path) != null ? patchPayload.path : selection.filePath) || selection.filePath),
+        "apply_selection_diff.path"
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: message,
+        audit: {
+          targetPath,
+          scopeRoots,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    if (targetPath !== selection.filePath) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: `Target path mismatch. selection=${selection.filePath}, action=${targetPath}`,
+        audit: {
+          targetPath,
+          scopeRoots,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const editorContext = this.resolveOpenMarkdownEditorForPath(targetPath);
+    if (!editorContext) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "Target markdown note is not open in editor.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const editor = editorContext.editor;
+    const readSelectionSnapshot = () => {
+      const fullText = editor.getValue();
+      if (selection.toOffset > fullText.length || selection.fromOffset < 0 || selection.fromOffset >= selection.toOffset) {
+        return {
+          ok: false,
+          error: "Selection offsets are out of current editor range."
+        };
+      }
+      const selectedText = fullText.slice(selection.fromOffset, selection.toOffset);
+      const selectionHash = this.hashString(`${selection.filePath}
+${selectedText}`);
+      return {
+        ok: true,
+        fullText,
+        selectedText,
+        selectionHash
+      };
+    };
+    const initialSnapshot = readSelectionSnapshot();
+    if (!initialSnapshot.ok) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: initialSnapshot.error,
+        audit: {
+          targetPath,
+          scopeRoots,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const expectedHash = ((patchPayload == null ? void 0 : patchPayload.expectedSelectionHash) || selection.selectionHash || "").trim();
+    if (expectedHash && initialSnapshot.selectionHash !== expectedHash) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "Selection hash mismatch. Re-open and reselect target range.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: initialSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    if (typeof (patchPayload == null ? void 0 : patchPayload.expectedSelectionText) === "string" && patchPayload.expectedSelectionText.length > 0 && patchPayload.expectedSelectionText !== initialSnapshot.selectedText) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "Selection text mismatch. Re-open and reselect target range.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: initialSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const contractValidation = this.validateSelectionDiffActionAgainstOpenSelection(
+      patchPayload,
+      {
+        filePath: selection.filePath,
+        selectedText: initialSnapshot.selectedText,
+        selectionHash: initialSnapshot.selectionHash
+      }
+    );
+    if (!contractValidation.ok) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: `${contractValidation.error || "Invalid selection diff contract."} Re-generate unified diff.`,
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: initialSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const diff = contractValidation.diffBody;
+    const parsedDiff = contractValidation.parsedDiff;
+    const limits = contractValidation.limits;
+    const limitCheck = contractValidation.limitCheck;
+    const preflightDryRunRaw = this.applySelectionPatchWithPatchApplier(
+      initialSnapshot.selectedText,
+      diff,
+      parsedDiff,
+      { allowFuzzy }
+    );
+    const preflightDryRun = this.summarizePr0DryRunResult(preflightDryRunRaw, allowFuzzy);
+    let preflightGuard = {
+      ok: false,
+      error: preflightDryRun.ok ? "" : "Dry-run failed. Frontmatter guard check skipped.",
+      guardApplied: false,
+      frontmatterChangedByPatch: false
+    };
+    if (preflightDryRunRaw.ok) {
+      const preflightPatchedFullText = `${initialSnapshot.fullText.slice(0, selection.fromOffset)}${preflightDryRunRaw.text}${initialSnapshot.fullText.slice(selection.toOffset)}`;
+      preflightGuard = this.summarizePr0GuardResult(
+        this.runFrontmatterLintGuardAfterPatch({
+          beforeText: initialSnapshot.fullText,
+          patchedText: preflightPatchedFullText,
+          mode: "selection"
+        })
+      );
+    }
+    const previewModel = this.buildPatchPreviewModel({
+      filePath: selection.filePath,
+      fromOffset: selection.fromOffset,
+      toOffset: selection.toOffset,
+      applyMode: preflightDryRunRaw.ok ? preflightDryRunRaw.mode || "strict" : "none",
+      strictError: preflightDryRunRaw.strictError || "",
+      parsedDiff,
+      dryRunSummary: preflightDryRun,
+      guardResult: preflightGuard,
+      canApply: preflightDryRun.ok && preflightGuard.ok
+    });
+    const preview = await PatchPreviewModal.ask(this.app, previewModel);
+    if (preview.decision !== "apply") {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "Patch preview cancelled by user.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: initialSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: limitCheck.changedLines,
+          applyMode: preflightDryRun.mode || "none",
+          previewDecision: "cancel",
+          dryRunSummary: preflightDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "CANCELED"
+        }
+      };
+    }
+    if (!previewModel.canApply) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: previewModel.blockReason || "PR-0 guard blocked patch apply.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: initialSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: limitCheck.changedLines,
+          applyMode: preflightDryRun.mode || "none",
+          previewDecision: "apply",
+          dryRunSummary: preflightDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const latestSnapshot = readSelectionSnapshot();
+    if (!latestSnapshot.ok) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "Selection offsets changed while preview was open. Re-open and reselect target range.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: initialSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: limitCheck.changedLines,
+          previewDecision: "apply",
+          dryRunSummary: preflightDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    if (expectedHash && latestSnapshot.selectionHash !== expectedHash) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "Selection hash mismatch after preview. Re-open and reselect target range.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: latestSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: limitCheck.changedLines,
+          previewDecision: "apply",
+          dryRunSummary: preflightDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    if (!expectedHash && latestSnapshot.selectionHash !== initialSnapshot.selectionHash) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "Selection changed while preview was open. Regenerate unified diff.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: latestSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: limitCheck.changedLines,
+          previewDecision: "apply",
+          dryRunSummary: preflightDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    if (typeof (patchPayload == null ? void 0 : patchPayload.expectedSelectionText) === "string" && patchPayload.expectedSelectionText.length > 0 && patchPayload.expectedSelectionText !== latestSnapshot.selectedText) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: "Selection text mismatch after preview. Re-open and reselect target range.",
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: latestSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: limitCheck.changedLines,
+          previewDecision: "apply",
+          dryRunSummary: preflightDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const latestRangeCheck = this.validateSelectionDiffRange(parsedDiff, latestSnapshot.selectedText);
+    if (!latestRangeCheck.ok) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: `${latestRangeCheck.error} Re-select target range and regenerate unified diff.`,
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: latestSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: limitCheck.changedLines,
+          previewDecision: "apply",
+          dryRunSummary: preflightDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const liveLimitCheck = this.validateSelectionDiffLimits(parsedDiff, limits);
+    if (!liveLimitCheck.ok) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: `${liveLimitCheck.error} Re-generate unified diff.`,
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: latestSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: liveLimitCheck.changedLines,
+          previewDecision: "apply",
+          dryRunSummary: preflightDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const applied = this.applySelectionPatchWithPatchApplier(
+      latestSnapshot.selectedText,
+      diff,
+      parsedDiff,
+      { allowFuzzy }
+    );
+    const liveDryRun = this.summarizePr0DryRunResult(applied, allowFuzzy);
+    if (!applied.ok) {
+      return {
+        status: applied.outOfRange ? "blocked" : "error",
+        title: "apply_selection_diff",
+        detail: `${applied.error || "Failed to apply unified diff."} Regenerate unified diff.`,
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: latestSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: liveLimitCheck.changedLines,
+          applyMode: applied.mode || "none",
+          strictError: applied.strictError || "",
+          fuzzyError: applied.fuzzyError || "",
+          previewDecision: "apply",
+          dryRunSummary: liveDryRun,
+          guardResult: preflightGuard,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: applied.outOfRange ? "REJECTED" : "FAILED"
+        }
+      };
+    }
+    const patchedFullText = `${latestSnapshot.fullText.slice(0, selection.fromOffset)}${applied.text}${latestSnapshot.fullText.slice(selection.toOffset)}`;
+    const guardRaw = this.runFrontmatterLintGuardAfterPatch({
+      beforeText: latestSnapshot.fullText,
+      patchedText: patchedFullText,
+      mode: "selection"
+    });
+    const guardResult = this.summarizePr0GuardResult(guardRaw);
+    if (!guardRaw.ok) {
+      return {
+        status: "blocked",
+        title: "apply_selection_diff",
+        detail: `${guardRaw.error} Re-generate unified diff.`,
+        audit: {
+          targetPath,
+          scopeRoots,
+          currentSelectionHash: latestSnapshot.selectionHash,
+          expectedSelectionHash: expectedHash,
+          diffHash: this.hashString(contractValidation.diffWithHeader),
+          changedLines: liveLimitCheck.changedLines,
+          applyMode: applied.mode || "none",
+          strictError: applied.strictError || "",
+          fuzzyError: applied.fuzzyError || "",
+          previewDecision: "apply",
+          dryRunSummary: liveDryRun,
+          guardResult,
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks,
+          resultCode: "REJECTED"
+        }
+      };
+    }
+    const finalFullText = guardRaw.text;
+    const patchedFromOffset = selection.fromOffset;
+    const patchedToOffset = selection.fromOffset + applied.text.length;
+    let finalFromOffset = this.mapOffsetAfterFrontmatterGuard(
+      patchedFromOffset,
+      guardRaw.beforeBodyStartOffset,
+      guardRaw.bodyOffsetDelta
+    );
+    let finalToOffset = this.mapOffsetAfterFrontmatterGuard(
+      patchedToOffset,
+      guardRaw.beforeBodyStartOffset,
+      guardRaw.bodyOffsetDelta
+    );
+    finalFromOffset = Math.max(0, Math.min(finalFullText.length, finalFromOffset));
+    finalToOffset = Math.max(finalFromOffset, Math.min(finalFullText.length, finalToOffset));
+    editor.setValue(finalFullText);
+    editor.setSelection(editor.offsetToPos(finalFromOffset), editor.offsetToPos(finalToOffset));
+    const finalSelectedText = finalFullText.slice(finalFromOffset, finalToOffset);
+    const nextSelection = {
+      ...selection,
+      fromOffset: finalFromOffset,
+      toOffset: finalToOffset,
+      selectedText: finalSelectedText,
+      selectionHash: this.hashString(`${selection.filePath}
+${finalSelectedText}`),
+      capturedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    return {
+      status: "ok",
+      title: `apply_selection_diff ${selection.filePath}`,
+      detail: `Applied unified diff to selection (${selection.fromOffset}-${selection.toOffset}), changed lines=${applied.changedLines}, hunks=${liveLimitCheck.hunks}, mode=${applied.mode || "strict"}.`,
+      nextSelection,
+      audit: {
+        targetPath,
+        scopeRoots,
+        currentSelectionHash: nextSelection.selectionHash,
+        expectedSelectionHash: expectedHash,
+        diffHash: this.hashString(contractValidation.diffWithHeader),
+        changedLines: liveLimitCheck.changedLines,
+        applyMode: applied.mode || "strict",
+        usedTrimmedMatch: Boolean(applied.usedTrimmedMatch),
+        strictError: applied.strictError || "",
+        previewDecision: "apply",
+        dryRunSummary: liveDryRun,
+        guardResult,
+        frontmatterGuardApplied: Boolean(guardRaw.guardApplied),
+        frontmatterUpdated: true,
+        maxChangedLines: limits.maxChangedLines,
+        maxHunks: limits.maxHunks,
+        resultCode: "APPLIED"
+      }
+    };
+  }
   async executeSelectionDiffAction(action, executionContext) {
     const selection = executionContext.openSelection;
     const routingLog = executionContext.routingLog && typeof executionContext.routingLog === "object" ? executionContext.routingLog : null;
@@ -14613,9 +15292,9 @@ ${hunk.lines.map((line) => `${line.prefix}${line.text}`).join("\n")}`.toLowerCas
       fallbackUsed: Boolean(routingLog && routingLog.fallbackUsed),
       safeguardPassed: Boolean(routingLog && routingLog.safeguardPassed),
       actionType: "apply_selection_diff",
-      filePath: "",
-      selectionFrom: null,
-      selectionTo: null,
+      filePath: selection ? selection.filePath : "",
+      selectionFrom: selection ? selection.fromOffset : null,
+      selectionTo: selection ? selection.toOffset : null,
       expectedSelectionHash: "",
       currentSelectionHash: "",
       diffHash: "",
@@ -14624,222 +15303,62 @@ ${hunk.lines.map((line) => `${line.prefix}${line.text}`).join("\n")}`.toLowerCas
     };
     const finalize = async (status, title, detail, extra = {}) => {
       const result = { status, title, detail };
-      if (status === "ok") {
-        await this.appendSelectionDiffAuditLog({
-          ...auditState,
-          ...extra,
-          status,
-          title,
-          detail
-        });
-      }
+      const resultCode = typeof extra.resultCode === "string" && extra.resultCode.length > 0 ? extra.resultCode : status === "ok" ? "APPLIED" : status === "error" ? "FAILED" : /cancel/i.test(detail) ? "CANCELED" : "REJECTED";
+      await this.appendSelectionDiffAuditLog({
+        ts: (/* @__PURE__ */ new Date()).toISOString(),
+        ...auditState,
+        ...extra,
+        status,
+        title,
+        detail,
+        scope: Array.isArray(extra.scopeRoots) ? extra.scopeRoots : [],
+        paths: {
+          target: typeof extra.targetPath === "string" && extra.targetPath.length > 0 ? extra.targetPath : auditState.filePath,
+          selection: selection ? selection.filePath : ""
+        },
+        guard: extra.guardResult && typeof extra.guardResult === "object" ? extra.guardResult : null,
+        dryRun: extra.dryRunSummary && typeof extra.dryRunSummary === "object" ? extra.dryRunSummary : null,
+        result: resultCode
+      });
       return result;
     };
     if (!selection) {
       return finalize("blocked", "apply_selection_diff", "No active open selection snapshot is available.");
     }
-    auditState.filePath = selection.filePath;
-    auditState.selectionFrom = selection.fromOffset;
-    auditState.selectionTo = selection.toOffset;
-    const targetPath = (0, import_obsidian4.normalizePath)(((action.path != null ? action.path : selection.filePath) || "").trim());
-    auditState.filePath = targetPath || selection.filePath;
-    if (!targetPath) {
-      return finalize("error", "apply_selection_diff", "Target path is empty.");
-    }
-    if (targetPath !== selection.filePath) {
-      return finalize(
-        "blocked",
-        "apply_selection_diff",
-        `Target path mismatch. selection=${selection.filePath}, action=${targetPath}`
-      );
-    }
-    const editorContext = this.resolveOpenMarkdownEditorForPath(targetPath);
-    if (!editorContext) {
-      return finalize("blocked", "apply_selection_diff", "Target markdown note is not open in editor.");
-    }
-    const editor = editorContext.editor;
-    const fullText = editor.getValue();
-    if (selection.toOffset > fullText.length || selection.fromOffset < 0 || selection.fromOffset >= selection.toOffset) {
-      return finalize("blocked", "apply_selection_diff", "Selection offsets are out of current editor range.");
-    }
-    const currentSelectionText = fullText.slice(selection.fromOffset, selection.toOffset);
-    const currentHash = this.hashString(`${selection.filePath}
-${currentSelectionText}`);
-    auditState.currentSelectionHash = currentHash;
-    const expectedHash = (action.expectedSelectionHash || selection.selectionHash || "").trim();
-    auditState.expectedSelectionHash = expectedHash;
-    if (expectedHash && currentHash !== expectedHash) {
-      return finalize("blocked", "apply_selection_diff", "Selection hash mismatch. Re-open and reselect target range.");
-    }
-    if (typeof action.expectedSelectionText === "string" && action.expectedSelectionText.length > 0 && action.expectedSelectionText !== currentSelectionText) {
-      return finalize("blocked", "apply_selection_diff", "Selection text mismatch. Re-open and reselect target range.");
-    }
-    const contractValidation = this.validateSelectionDiffActionAgainstOpenSelection(
-      action,
+    const flowResult = await this.applyPatchFlow(
       {
-        filePath: selection.filePath,
-        selectedText: currentSelectionText,
-        selectionHash: currentHash
-      }
+        selection,
+        scopeRoots: Array.isArray(executionContext.scopeRoots) ? executionContext.scopeRoots : this.buildSelectionScopeRoots(selection.filePath)
+      },
+      action
     );
-    if (!contractValidation.ok) {
-      return finalize(
-        "blocked",
-        "apply_selection_diff",
-        `${contractValidation.error || "Invalid selection diff contract."} Re-generate unified diff.`
-      );
+    const flowAudit = flowResult.audit && typeof flowResult.audit === "object" ? flowResult.audit : {};
+    if (typeof flowAudit.currentSelectionHash === "string") {
+      auditState.currentSelectionHash = flowAudit.currentSelectionHash;
     }
-    const diff = contractValidation.diffBody;
-    const parsedDiff = contractValidation.parsedDiff;
-    const limits = contractValidation.limits;
-    const limitCheck = contractValidation.limitCheck;
-    auditState.diffHash = this.hashString(contractValidation.diffWithHeader);
-    auditState.changedLines = limitCheck.changedLines;
-    const preflight = this.applySelectionPatchWithPatchApplier(currentSelectionText, diff, parsedDiff);
-    if (!preflight.ok) {
-      return finalize(
-        preflight.outOfRange ? "blocked" : "error",
-        "apply_selection_diff",
-        `${preflight.error || "Failed to apply unified diff."} Regenerate unified diff.`,
-        {
-          applyMode: preflight.mode || "none",
-          strictError: preflight.strictError || "",
-          fuzzyError: preflight.fuzzyError || "",
-          maxChangedLines: limits.maxChangedLines,
-          maxHunks: limits.maxHunks
-        }
-      );
+    if (typeof flowAudit.expectedSelectionHash === "string") {
+      auditState.expectedSelectionHash = flowAudit.expectedSelectionHash;
     }
-    const previewModel = this.buildPatchPreviewModel({
-      filePath: selection.filePath,
-      fromOffset: selection.fromOffset,
-      toOffset: selection.toOffset,
-      applyMode: preflight.mode || "strict",
-      strictError: preflight.strictError || "",
-      parsedDiff
-    });
-    const preview = await PatchPreviewModal.ask(this.app, previewModel);
-    if (preview.decision !== "apply") {
-      return finalize(
-        "blocked",
-        "apply_selection_diff",
-        "Patch preview cancelled by user.",
-        { applyMode: preflight.mode || "strict", previewDecision: "cancel" }
-      );
+    if (typeof flowAudit.diffHash === "string") {
+      auditState.diffHash = flowAudit.diffHash;
     }
-    const latestFullText = editor.getValue();
-    if (selection.toOffset > latestFullText.length || selection.fromOffset < 0 || selection.fromOffset >= selection.toOffset) {
-      return finalize("blocked", "apply_selection_diff", "Selection offsets changed while preview was open. Re-open and reselect target range.");
+    if (Number.isFinite(flowAudit.changedLines)) {
+      auditState.changedLines = flowAudit.changedLines;
     }
-    const latestSelectionText = latestFullText.slice(selection.fromOffset, selection.toOffset);
-    const latestHash = this.hashString(`${selection.filePath}
-${latestSelectionText}`);
-    auditState.currentSelectionHash = latestHash;
-    if (expectedHash && latestHash !== expectedHash) {
-      return finalize("blocked", "apply_selection_diff", "Selection hash mismatch after preview. Re-open and reselect target range.");
+    if (typeof flowAudit.applyMode === "string") {
+      auditState.applyMode = flowAudit.applyMode;
     }
-    if (!expectedHash && latestHash !== currentHash) {
-      return finalize("blocked", "apply_selection_diff", "Selection changed while preview was open. Regenerate unified diff.");
+    if (flowResult.nextSelection) {
+      executionContext.openSelection = flowResult.nextSelection;
+      auditState.selectionFrom = flowResult.nextSelection.fromOffset;
+      auditState.selectionTo = flowResult.nextSelection.toOffset;
+      auditState.filePath = flowResult.nextSelection.filePath || auditState.filePath;
     }
-    if (typeof action.expectedSelectionText === "string" && action.expectedSelectionText.length > 0 && action.expectedSelectionText !== latestSelectionText) {
-      return finalize("blocked", "apply_selection_diff", "Selection text mismatch after preview. Re-open and reselect target range.");
-    }
-    const latestRangeCheck = this.validateSelectionDiffRange(parsedDiff, latestSelectionText);
-    if (!latestRangeCheck.ok) {
-      return finalize(
-        "blocked",
-        "apply_selection_diff",
-        `${latestRangeCheck.error} Re-select target range and regenerate unified diff.`
-      );
-    }
-    const liveLimitCheck = this.validateSelectionDiffLimits(parsedDiff, limits);
-    if (!liveLimitCheck.ok) {
-      return finalize(
-        "blocked",
-        "apply_selection_diff",
-        `${liveLimitCheck.error} Re-generate unified diff.`,
-        {
-          maxChangedLines: limits.maxChangedLines,
-          maxHunks: limits.maxHunks
-        }
-      );
-    }
-    const applied = this.applySelectionPatchWithPatchApplier(latestSelectionText, diff, parsedDiff);
-    if (!applied.ok) {
-      return finalize(
-        applied.outOfRange ? "blocked" : "error",
-        "apply_selection_diff",
-        `${applied.error || "Failed to apply unified diff."} Regenerate unified diff.`,
-        {
-          applyMode: applied.mode || "none",
-          strictError: applied.strictError || "",
-          fuzzyError: applied.fuzzyError || "",
-          maxChangedLines: limits.maxChangedLines,
-          maxHunks: limits.maxHunks
-        }
-      );
-    }
-    auditState.applyMode = applied.mode || "strict";
-    const patchedFullText = `${latestFullText.slice(0, selection.fromOffset)}${applied.text}${latestFullText.slice(selection.toOffset)}`;
-    const guardResult = this.runFrontmatterLintGuardAfterPatch({
-      beforeText: latestFullText,
-      patchedText: patchedFullText,
-      mode: "selection"
-    });
-    if (!guardResult.ok) {
-      return finalize(
-        "blocked",
-        "apply_selection_diff",
-        `${guardResult.error} Re-generate unified diff.`,
-        {
-          applyMode: applied.mode || "none",
-          strictError: applied.strictError || "",
-          maxChangedLines: limits.maxChangedLines,
-          maxHunks: limits.maxHunks
-        }
-      );
-    }
-    const finalFullText = guardResult.text;
-    const patchedFromOffset = selection.fromOffset;
-    const patchedToOffset = selection.fromOffset + applied.text.length;
-    let finalFromOffset = this.mapOffsetAfterFrontmatterGuard(
-      patchedFromOffset,
-      guardResult.beforeBodyStartOffset,
-      guardResult.bodyOffsetDelta
-    );
-    let finalToOffset = this.mapOffsetAfterFrontmatterGuard(
-      patchedToOffset,
-      guardResult.beforeBodyStartOffset,
-      guardResult.bodyOffsetDelta
-    );
-    finalFromOffset = Math.max(0, Math.min(finalFullText.length, finalFromOffset));
-    finalToOffset = Math.max(finalFromOffset, Math.min(finalFullText.length, finalToOffset));
-    editor.setValue(finalFullText);
-    editor.setSelection(editor.offsetToPos(finalFromOffset), editor.offsetToPos(finalToOffset));
-    const finalSelectedText = finalFullText.slice(finalFromOffset, finalToOffset);
-    executionContext.openSelection = {
-      ...selection,
-      fromOffset: finalFromOffset,
-      toOffset: finalToOffset,
-      selectedText: finalSelectedText,
-      selectionHash: this.hashString(`${selection.filePath}
-${finalSelectedText}`),
-      capturedAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
     return finalize(
-      "ok",
-      `apply_selection_diff ${selection.filePath}`,
-      `Applied unified diff to selection (${selection.fromOffset}-${selection.toOffset}), changed lines=${applied.changedLines}, hunks=${liveLimitCheck.hunks}, mode=${applied.mode || "strict"}.`,
-      {
-        applyMode: applied.mode || "strict",
-        usedTrimmedMatch: Boolean(applied.usedTrimmedMatch),
-        strictError: applied.strictError || "",
-        previewDecision: "apply",
-        frontmatterGuardApplied: Boolean(guardResult.guardApplied),
-        frontmatterUpdated: true,
-        maxChangedLines: limits.maxChangedLines,
-        maxHunks: limits.maxHunks
-      }
+      flowResult.status || "error",
+      flowResult.title || "apply_selection_diff",
+      flowResult.detail || "Unknown apply_patch_flow error.",
+      flowAudit
     );
   }
   evaluateQaActionPlanSafeguard(plan, context = {}) {
@@ -15050,6 +15569,13 @@ ${finalSelectedText}`),
   async executeQaAgentAction(action, executionContext = {}) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     try {
+      if ((executionContext.taskType || "QA_CHAT") === "EDIT_NOTE" && action.type !== "apply_selection_diff") {
+        return {
+          status: "blocked",
+          title: this.summarizeQaAgentAction(action),
+          detail: "EDIT_NOTE task only allows apply_selection_diff. Other mutating routes are blocked by PR-0 flow."
+        };
+      }
       if (action.type === "read_note") {
         const target = this.resolveQaAgentPathTarget(
           action.path || "",
