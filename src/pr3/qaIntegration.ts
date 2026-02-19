@@ -1,5 +1,27 @@
 import { retrieveByVector, type RetrievalInput } from "../pr2/retrievalBridge.ts";
-import { toEvidenceMarkdownFromHits } from "./qaBridge.ts";
+import { composeAnswer } from "../pr4/answerComposer.ts";
+
+type HitLike = {
+  docPath?: unknown;
+  path?: unknown;
+  chunkId?: unknown;
+  id?: unknown;
+  score?: unknown;
+};
+
+type EvidenceItem = {
+  docPath: string;
+  chunkId: string;
+  score: number | null;
+};
+
+function normalizeConfidenceScore(score: number): number {
+  if (!Number.isFinite(score)) return 0;
+  if (score >= 0 && score <= 1) return score;
+  if (score <= 0) return 0;
+  // 0..1 범위를 벗어난 양수 score는 완만하게 1에 수렴
+  return score / (1 + score);
+}
 
 type HitLike = {
   docPath?: unknown;
@@ -27,23 +49,12 @@ export async function runQA(input: RetrievalInput): Promise<string> {
   const result = await retrieveByVector(input);
 
   // 1) 기존 동작(근거 마크다운 생성)은 그대로 유지
-  const evidenceMarkdown = toEvidenceMarkdownFromHits(result.hits);
 
   // 2) hits를 안전하게 가져오기
   const hits = (result.hits ?? []) as HitLike[];
 
   // 3) 요약: evidenceMarkdown의 앞부분 2~3줄만 뽑기
-  const summaryLines = evidenceMarkdown
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-    .slice(0, 3)
-    .map((l) => l.replace(/^[-*]\s+/, ""));
-
-  const summary =
-    summaryLines.length > 0
-      ? summaryLines.join("\n")
-      : "관련 근거를 기반으로 답변을 구성했습니다.";
+  const summary = composeAnswer({ question: input.query, hits });
 
   // 4) 근거 bullet: (docPath, chunkId) 중복 제거 + score 내림차순 정렬
   const evidenceMap = new Map<string, EvidenceItem>();
