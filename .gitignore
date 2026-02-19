@@ -1,6 +1,19 @@
-node_modules
-data.json
-.env
-.env.local
+node_modules/
+dist/
 .DS_Store
-dist
+*.log
+.env
+.obsidian/workspace*
+.obsidian/cache/
+
+# Local runtime/config artifacts
+data.json
+data.data.backup-*.json
+backups/
+
+# Local development scratch outputs
+diff/
+lint/
+security/
+ui/
+styles/

@@ -1429,7 +1429,7 @@ var DEFAULT_SETTINGS = {
   lmStudioModel: "local-model",
   lmStudioApiKey: "",
   openAIBaseUrl: "https://api.openai.com/v1",
-  openAIModel: "gpt-5-mini",
+  openAIModel: "gpt-5.3-codex",
   openAIApiKey: "",
   anthropicModel: "claude-3-7-sonnet-latest",
   anthropicApiKey: "",
@@ -1456,6 +1456,10 @@ var DEFAULT_SETTINGS = {
   semanticMaxChars: 5e3,
   qaOllamaBaseUrl: "http://127.0.0.1:11434",
   qaOllamaModel: "",
+  qaChatModelFamily: "local",
+  qaChatModelProfile: "local-flash",
+  qaChatFontSize: 14,
+  qaShowSystemMessages: false,
   qaTopK: 5,
   qaMaxContextChars: 12e3,
   qaAllowNonLocalEndpoint: false,
@@ -1477,6 +1481,7 @@ var DEFAULT_SETTINGS = {
   qaAskVisionModel: "",
   qaImageGeneratorModel: "",
   qaCoderModel: "",
+  qaDebuggerModel: "",
   qaArchitectModel: "",
   qaOrchestratorModel: "",
   qaSafeguardModel: "",
@@ -1489,7 +1494,7 @@ var DEFAULT_SETTINGS = {
   qaAskSystemPrompt: "\uB108\uB294 \uB85C\uCEEC \uB178\uD2B8 \uAE30\uBC18 Ask \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uADFC\uAC70\uAC00 \uBD80\uC871\uD558\uBA74 '\uC815\uBCF4 \uBD80\uC871'\uC744 \uBA85\uC2DC\uD558\uACE0, \uD575\uC2EC\uB9CC \uC815\uD655\uD558\uAC8C \uC804\uB2EC\uD55C\uB2E4.",
   qaAskVisionSystemPrompt: '\uB108\uB294 Ask(vision) \uC5ED\uD560\uC774\uC9C0\uB9CC, \uD604\uC7AC \uD30C\uC774\uD504\uB77C\uC778\uC740 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC784\uC744 \uC804\uC81C\uB85C \uB3D9\uC791\uD55C\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uC2E4\uC81C \uC774\uBBF8\uC9C0\uB97C \uC9C1\uC811 \uBCF8 \uAC83\uCC98\uB7FC \uB9D0\uD558\uC9C0 \uC54A\uB294\uB2E4. \uC774\uBBF8\uC9C0 \uC790\uCCB4\uAC00 \uC785\uB825\uB418\uC9C0 \uC54A\uC558\uC73C\uBA74 "\uC774\uBBF8\uC9C0 \uC6D0\uBCF8 \uD655\uC778 \uBD88\uAC00"\uB97C \uBA85\uC2DC\uD558\uACE0, \uD14D\uC2A4\uD2B8 \uAE30\uBC18\uC73C\uB85C \uAC00\uB2A5\uD55C \uD574\uC11D/\uC694\uCCAD\uC0AC\uD56D/\uB2E4\uC74C \uD655\uC778 \uC808\uCC28\uB97C \uC81C\uC2DC\uD55C\uB2E4. \uB2F5\uBCC0 \uD615\uC2DD: 1) \uD604\uC7AC \uD655\uC778 \uAC00\uB2A5\uD55C \uC0AC\uC2E4 2) \uD655\uC778 \uBD88\uAC00\uB2A5\uD55C \uD56D\uBAA9 3) \uCD94\uAC00\uB85C \uBC1B\uC73C\uBA74 \uC815\uD655\uB3C4\uAC00 \uC62C\uB77C\uAC00\uB294 \uC785\uB825 \uBAA9\uB85D',
   qaImageGeneratorSystemPrompt: '\uB108\uB294 \uC774\uBBF8\uC9C0 \uC0DD\uC131 \uC6CC\uD06C\uD50C\uB85C \uC124\uACC4 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uC2E4\uC81C \uC774\uBBF8\uC9C0\uB97C \uC0DD\uC131\uD588\uB2E4\uACE0 \uC8FC\uC7A5\uD558\uC9C0 \uB9D0\uACE0, "\uC0DD\uC131\uC6A9 \uD504\uB86C\uD504\uD2B8 \uC124\uACC4"\uB9CC \uC81C\uACF5\uD55C\uB2E4. \uCD9C\uB825 \uD615\uC2DD: 1) \uBAA9\uC801 \uC694\uC57D 2) Positive prompt 3) Negative prompt 4) \uC2A4\uD0C0\uC77C/\uAD6C\uB3C4/\uC870\uBA85/\uC0C9\uAC10 \uC9C0\uC2DC 5) \uAD8C\uC7A5 \uD30C\uB77C\uBBF8\uD130(\uBE44\uC728, \uC2A4\uD15D, \uC2DC\uB4DC \uC804\uB7B5) \uC694\uCCAD\uC774 \uBD88\uBA85\uD655\uD558\uBA74 \uAE30\uBCF8\uAC12\uC744 \uBA85\uC2DC\uD558\uACE0 \uBCF4\uC218\uC801\uC73C\uB85C \uC81C\uC548\uD55C\uB2E4.',
-  qaCoderSystemPrompt: '\uB108\uB294 \uAD6C\uD604 \uC911\uC2EC \uCF54\uB354 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uC124\uACC4 \uC124\uBA85\uBCF4\uB2E4 "\uBC14\uB85C \uC801\uC6A9 \uAC00\uB2A5\uD55C \uBCC0\uACBD\uC548"\uC744 \uC6B0\uC120\uD55C\uB2E4. \uADDC\uCE59: - \uC694\uAD6C\uC0AC\uD56D\uC5D0 \uC9C1\uC811 \uC5F0\uACB0\uB41C \uCF54\uB4DC/\uAD6C\uC870\uB9CC \uC81C\uC2DC - \uBD88\uD655\uC2E4\uD55C \uBD80\uBD84\uC740 \uAC00\uC815\uC744 \uBA85\uC2DC - \uD14C\uC2A4\uD2B8/\uAC80\uC99D \uC808\uCC28\uB97C \uBC18\uB4DC\uC2DC \uD3EC\uD568 \uCD9C\uB825 \uD615\uC2DD: 1) \uBCC0\uACBD \uC694\uC57D 2) \uD30C\uC77C \uB2E8\uC704 \uC218\uC815 \uACC4\uD68D 3) \uD575\uC2EC \uCF54\uB4DC \uC2A4\uB2C8\uD3AB \uB610\uB294 \uD328\uCE58 \uD615\uD0DC \uC81C\uC548 4) \uD14C\uC2A4\uD2B8 \uD56D\uBAA9(\uC815\uC0C1/\uC5E3\uC9C0/\uD68C\uADC0) 5) \uB864\uBC31 \uBC29\uBC95',
+  qaCoderSystemPrompt: "You are an implementation-focused Omni-Forge Coder. Always answer in Korean. For EDIT_NOTE tasks, follow Coder Prompt Contract strictly: output unified diff only; the first non-empty line must be CURRENT_SELECTION; after the header emit only @@ hunks with diff prefixes (space/+/-); forbid path headers (diff --git, index, ---, +++); patch scope is CURRENT_SELECTION only; never modify frontmatter; if validation fails, regenerate once with a single fallback attempt.",
   qaDebuggerSystemPrompt: "\uB108\uB294 \uB514\uBC84\uAE45 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uBAA9\uD45C: \uC7AC\uD604 \uAC00\uB2A5\uC131, \uC6D0\uC778 \uBD84\uB9AC, \uC548\uC804\uD55C \uC218\uC815. \uADDC\uCE59: - \uC6D0\uC778 \uD6C4\uBCF4\uB97C \uC6B0\uC120\uC21C\uC704\uB85C \uC815\uB9AC - \uAC01 \uD6C4\uBCF4\uBCC4 \uAC80\uC99D \uC2E4\uD5D8\uC744 \uC81C\uC2DC - \uD655\uC815\uB418\uC9C0 \uC54A\uC740 \uC6D0\uC778\uC744 \uB2E8\uC815\uD558\uC9C0 \uC54A\uB294\uB2E4 \uCD9C\uB825 \uD615\uC2DD: 1) \uC99D\uC0C1 \uC815\uB9AC 2) \uC6D0\uC778 \uAC00\uC124 Top 3 3) \uAC00\uC124\uBCC4 \uAC80\uC99D \uC808\uCC28 4) \uCD5C\uC18C \uC218\uC815\uC548 5) \uC218\uC815 \uD6C4 \uAC80\uC99D \uCCB4\uD06C\uB9AC\uC2A4\uD2B8",
   qaArchitectSystemPrompt: "\uB108\uB294 \uC2DC\uC2A4\uD15C \uC544\uD0A4\uD14D\uD2B8 \uC5D0\uC774\uC804\uD2B8\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uBAA9\uD45C: \uC7A5\uAE30 \uC720\uC9C0\uBCF4\uC218 \uAC00\uB2A5\uD55C \uAD6C\uC870\uC640 \uD2B8\uB808\uC774\uB4DC\uC624\uD504 \uC81C\uC2DC. \uADDC\uCE59: - \uB300\uC548 \uCD5C\uC18C 2\uAC1C \uC81C\uC2DC - \uC131\uB2A5/\uBCF5\uC7A1\uB3C4/\uC6B4\uC601\uBE44/\uBCF4\uC548 \uAD00\uC810 \uBE44\uAD50 - \uC758\uC0AC\uACB0\uC815 \uAE30\uC900\uC744 \uBA85\uD655\uD788 \uC81C\uC2DC \uCD9C\uB825 \uD615\uC2DD: 1) \uC694\uAD6C\uC0AC\uD56D/\uC81C\uC57D \uC694\uC57D 2) \uC544\uD0A4\uD14D\uCC98 \uC635\uC158 \uBE44\uAD50\uD45C 3) \uAD8C\uC7A5\uC548\uACFC \uC120\uD0DD \uC774\uC720 4) \uB2E8\uACC4\uC801 \uC774\uD589 \uACC4\uD68D 5) \uB9AC\uC2A4\uD06C\uC640 \uBAA8\uB2C8\uD130\uB9C1 \uD3EC\uC778\uD2B8",
   qaOrchestratorSystemPrompt: '\uB108\uB294 \uBA40\uD2F0 \uC5D0\uC774\uC804\uD2B8 \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uD130\uB2E4. \uD56D\uC0C1 \uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD55C\uB2E4. \uBAA9\uD45C: \uC9C8\uBB38\uC744 \uC2E4\uD589 \uAC00\uB2A5\uD55C \uC791\uC5C5 \uD750\uB984\uC73C\uB85C \uBD84\uD574\uD558\uACE0, \uD544\uC694\uD55C \uD558\uC704 \uC5ED\uD560(architect/coder/debugger/safeguard)\uC744 \uC9C0\uC815\uD55C\uB2E4. \uADDC\uCE59: - \uC0AC\uC2E4 \uC0DD\uC131 \uAE08\uC9C0, \uADFC\uAC70 \uBD80\uC871 \uC2DC "\uC815\uBCF4 \uBD80\uC871" \uD45C\uAE30 - \uACFC\uB3C4\uD55C \uC7A5\uBB38 \uAE08\uC9C0, \uD575\uC2EC \uC758\uC0AC\uACB0\uC815 \uC911\uC2EC - \uCCA8\uBD80\uAC00 \uC788\uC73C\uBA74 \uCCA8\uBD80\uB97C 1\uC21C\uC704 \uADFC\uAC70\uB85C \uC0AC\uC6A9 \uCD9C\uB825 \uD615\uC2DD: 1) \uC791\uC5C5 \uBAA9\uD45C/\uBC94\uC704 2) \uB2E8\uACC4\uBCC4 \uACC4\uD68D(\uC21C\uC11C/\uC758\uC874\uC131/\uC644\uB8CC\uC870\uAC74) 3) \uC5ED\uD560 \uB77C\uC6B0\uD305 \uD45C (\uC5ED\uD560 | \uB9E1\uAE38 \uC77C | \uAE30\uB300 \uC0B0\uCD9C\uBB3C) 4) \uC5ED\uD560 \uC2E4\uD589 \uC694\uC57D (\uC5ED\uD560 | \uC2E4\uC81C \uAE30\uC5EC | \uC0B0\uCD9C\uBB3C | \uC870\uC728 \uBA54\uBAA8 | \uBBF8\uD574\uACB0 \uC774\uC288) 5) \uC704\uD5D8\uC694\uC18C\uC640 \uC644\uD654\uCC45 6) \uC989\uC2DC \uC2E4\uD589\uD560 3\uB2E8\uACC4',
@@ -1511,6 +1516,7 @@ var DEFAULT_SETTINGS = {
   qaAgentShellCwdPath: "",
   qaAgentPathAllowlist: "",
   qaAttachmentIngestRootPath: "Omni Forge Ingest",
+  qaSkillsRootPath: "",
   autoTagActiveNoteEnabled: false,
   autoTagActiveNoteCooldownSec: 90,
   watchNewNotesEnabled: false,
@@ -1535,12 +1541,45 @@ var DEFAULT_SETTINGS = {
 };
 var LOCAL_QA_VIEW_TYPE = "omni-forge-local-qa-view";
 var LOCAL_QA_MAX_ATTACHMENTS = 10;
-var LOCAL_QA_PDF_OCR_MAX_PAGES_FAST = 3;
-var LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED = 8;
+var LOCAL_QA_MAX_PANES = 3;
+var LOCAL_QA_PDF_OCR_MAX_PAGES_FAST = 6;
+var LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED = 16;
 var ANALYSIS_CACHE_FILE = "analysis-proposal-cache.json";
+var SELECTION_DIFF_AUDIT_LOG_FILE = "selection-diff-audit.jsonl";
 var ANALYSIS_CACHE_VERSION = 1;
 var ANALYSIS_CACHE_MAX_ENTRIES = 4e3;
 var ANALYSIS_HARD_MAX_CANDIDATES = 120;
+var MAX_SELECTION_DIFF_CONTEXT_CHARS = 4e3;
+var MAX_SELECTION_DIFF_CHANGED_LINES = 200;
+var MAX_SELECTION_DIFF_HUNKS = 20;
+var CODER_PROMPT_CONTRACT_VERSION = "v1.0";
+var CODER_PROMPT_CONTRACT_SELECTION_HEADER = "CURRENT_SELECTION";
+var FRONTMATTER_GUARD_ALLOWED_KEYS = ["linked", "tags", "topic", "index", "created", "updated"];
+var FRONTMATTER_GUARD_ALLOWED_KEY_SET = new Set(FRONTMATTER_GUARD_ALLOWED_KEYS);
+var ROUTER_TASK_ROLE_PIPELINE = {
+  EDIT_NOTE: ["Architect", "Coder", "Reviewer", "Safeguard"],
+  DOC_PIPELINE: ["Orchestrator", "Coder", "Reviewer", "Safeguard"],
+  AUTOLINK_GRAPH: ["Architect", "Orchestrator", "Reviewer", "Safeguard"],
+  QA_CHAT: ["Architect", "Reviewer"],
+  GENERATE_PROJECT: ["Architect", "Coder", "Reviewer", "Safeguard"],
+  EXPORT: ["Orchestrator", "Reviewer", "Safeguard"]
+};
+var ROUTER_ROLE_STAGE_MAP = {
+  Architect: "architect",
+  Orchestrator: "orchestrator",
+  Coder: "coder",
+  Reviewer: "debugger",
+  Safeguard: "safeguard",
+  Ask: null
+};
+var ROUTER_ROLE_MODEL_PRIORITY = {
+  Architect: ["architect", "ask"],
+  Orchestrator: ["orchestrator", "architect"],
+  Coder: ["coder", "architect"],
+  Reviewer: ["debugger", "coder"],
+  Safeguard: ["safeguard", "ask"],
+  Ask: ["ask"]
+};
 function stringifyValue(value) {
   if (value === void 0 || value === null) {
     return "(empty)";
@@ -1691,7 +1730,7 @@ function cloneSuggestionMeta(meta) {
   };
 }
 var SelectionModal = class extends import_obsidian4.Modal {
-  constructor(app, allFiles, allFolders, initialFiles, initialFolders, includeSubfolders, pathWidthPercent, onSubmit) {
+  constructor(app, allFiles, allFolders, initialFiles, initialFolders, includeSubfolders, pathWidthPercent, onSubmit, context = null) {
     super(app);
     this.searchValue = "";
     this.activeTab = "files";
@@ -1702,15 +1741,31 @@ var SelectionModal = class extends import_obsidian4.Modal {
     this.selectedFolderPaths = new Set(initialFolders);
     this.includeSubfolders = includeSubfolders;
     this.pathWidthPercent = pathWidthPercent;
+    this.context = context || {};
   }
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Select target notes and folders" });
+    if (this.context.modalWidth) {
+      this.modalEl.style.width = this.context.modalWidth;
+      this.modalEl.style.maxWidth = "96vw";
+    }
+    contentEl.createEl("h2", { text: this.context.title || "Select target notes and folders" });
     const info = contentEl.createEl("p", {
-      text: "Use tabs to switch between Files and Folders. Long paths are shown compactly with full path on hover."
+      text: this.context.description || "Use tabs to switch between Files and Folders. Long paths are shown compactly with full path on hover."
     });
     info.style.marginTop = "0";
+    if (Array.isArray(this.context.snapshotLines) && this.context.snapshotLines.length > 0) {
+      const snapshot = contentEl.createDiv();
+      snapshot.style.marginTop = "8px";
+      snapshot.style.padding = "8px 10px";
+      snapshot.style.border = "1px solid var(--background-modifier-border)";
+      snapshot.style.borderRadius = "8px";
+      snapshot.style.background = "var(--background-secondary)";
+      for (const line of this.context.snapshotLines) {
+        snapshot.createEl("div", { text: line });
+      }
+    }
     const searchWrapper = contentEl.createDiv();
     searchWrapper.createEl("label", { text: "Filter files/folders" });
     const searchInput = searchWrapper.createEl("input", {
@@ -1805,7 +1860,7 @@ var SelectionModal = class extends import_obsidian4.Modal {
       this.renderList();
     };
     this.listContainer = contentEl.createDiv();
-    this.listContainer.style.maxHeight = "48vh";
+    this.listContainer.style.maxHeight = this.context.modalWidth ? "56vh" : "48vh";
     this.listContainer.style.overflow = "auto";
     this.listContainer.style.border = "1px solid var(--background-modifier-border)";
     this.listContainer.style.borderRadius = "8px";
@@ -2381,6 +2436,278 @@ var SuggestionPreviewModal = class extends import_obsidian4.Modal {
     }
   }
 };
+var PatchPreviewModal = class _PatchPreviewModal extends import_obsidian4.Modal {
+  constructor(app, model, onResolve) {
+    super(app);
+    this.resolved = false;
+    this.searchValue = "";
+    this.selectedHunkId = "__all__";
+    this.model = model;
+    this.onResolve = onResolve;
+    this.handleKeydown = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        this.focusSearchInput();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.resolve({ decision: "cancel" });
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        this.requestApply();
+      }
+    };
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    this.modalEl.addClass("omni-forge-patch-preview-modal");
+    const root = contentEl.createDiv({ cls: "omni-forge-patch-preview-root" });
+    const header = root.createDiv({ cls: "omni-forge-patch-preview-header" });
+    const titleRow = header.createDiv({ cls: "omni-forge-patch-preview-title-row" });
+    titleRow.createEl("h2", { text: this.model.title });
+    const toolRow = titleRow.createDiv({ cls: "omni-forge-patch-preview-tools" });
+    this.searchInputEl = toolRow.createEl("input", {
+      type: "text",
+      placeholder: "Hunk 검색..."
+    });
+    this.searchInputEl.addClass("omni-forge-patch-preview-search");
+    this.searchInputEl.oninput = () => {
+      this.searchValue = this.searchInputEl.value.trim().toLowerCase();
+      this.renderHunkList();
+      this.renderDiffViewer();
+    };
+    const scopeEl = header.createDiv({
+      cls: "omni-forge-patch-preview-meta",
+      text: this.model.scopeText
+    });
+    scopeEl.setAttr("title", this.model.scopeText);
+    header.createDiv({
+      cls: "omni-forge-patch-preview-meta",
+      text: this.model.strategyText
+    });
+    const summary = header.createDiv({ cls: "omni-forge-patch-preview-summary-bar" });
+    this.appendSummaryChip(summary, "+", String(this.model.summary.added), "plus");
+    this.appendSummaryChip(summary, "-", String(this.model.summary.removed), "minus");
+    this.appendSummaryChip(summary, "hunks", String(this.model.summary.hunks), "hunks");
+    this.appendSummaryChip(summary, "risk", this.model.riskLevel.toUpperCase(), `risk-${this.model.riskLevel}`);
+    for (const badge of this.model.summary.badges) {
+      const badgeEl = summary.createDiv({
+        cls: "omni-forge-patch-preview-chip is-badge",
+        text: badge
+      });
+      if (/fuzzy/i.test(badge)) {
+        badgeEl.addClass("is-warning");
+      }
+    }
+    if (this.model.riskLevel !== "low") {
+      const warning = header.createDiv({
+        cls: "omni-forge-patch-preview-warning"
+      });
+      warning.createEl("strong", {
+        text: this.model.warningTitle
+      });
+      warning.createEl("div", {
+        text: this.model.warningDetail
+      });
+      if (this.model.requireExtraConfirm) {
+        this.confirmRowEl = warning.createDiv({
+          cls: "omni-forge-patch-preview-confirm-row"
+        });
+        this.confirmCheckboxEl = this.confirmRowEl.createEl("input", { type: "checkbox" });
+        this.confirmCheckboxEl.onchange = () => {
+          this.updateApplyButtonState();
+        };
+        this.confirmRowEl.createEl("span", {
+          text: "위험도를 이해했고 그대로 적용합니다."
+        });
+      }
+    }
+    const layout = root.createDiv({ cls: "omni-forge-patch-preview-layout" });
+    this.hunkListEl = layout.createDiv({ cls: "omni-forge-patch-preview-hunk-list" });
+    this.diffViewerEl = layout.createDiv({ cls: "omni-forge-patch-preview-diff-viewer" });
+    const footer = root.createDiv({ cls: "omni-forge-patch-preview-footer" });
+    const cancelButton = footer.createEl("button", { text: "Cancel" });
+    cancelButton.onclick = () => this.resolve({ decision: "cancel" });
+    this.applyButtonEl = footer.createEl("button", {
+      text: "Apply / 적용",
+      cls: "mod-cta"
+    });
+    this.applyButtonEl.onclick = () => this.requestApply();
+    this.renderHunkList();
+    this.renderDiffViewer();
+    this.updateApplyButtonState();
+    this.modalEl.addEventListener("keydown", this.handleKeydown);
+    this.focusSearchInput();
+  }
+  appendSummaryChip(parent, label, value, variant = "") {
+    const chip = parent.createDiv({
+      cls: "omni-forge-patch-preview-chip"
+    });
+    if (variant) {
+      chip.addClass(`is-${variant}`);
+    }
+    chip.createSpan({
+      cls: "omni-forge-patch-preview-chip-label",
+      text: label
+    });
+    chip.createSpan({
+      cls: "omni-forge-patch-preview-chip-value",
+      text: value
+    });
+  }
+  getFilteredHunks() {
+    const query = this.searchValue;
+    if (!query) {
+      return this.model.hunks;
+    }
+    return this.model.hunks.filter((hunk) => {
+      return hunk.searchText.includes(query);
+    });
+  }
+  renderHunkList() {
+    this.hunkListEl.empty();
+    const listHeader = this.hunkListEl.createDiv({
+      cls: "omni-forge-patch-preview-list-head",
+      text: "Hunks"
+    });
+    listHeader.setAttr("title", "Ctrl/Cmd+F: 검색");
+    const filtered = this.getFilteredHunks();
+    const allButton = this.hunkListEl.createEl("button", {
+      text: `All hunks (${filtered.length})`,
+      cls: "omni-forge-patch-preview-hunk-item"
+    });
+    if (this.selectedHunkId === "__all__") {
+      allButton.addClass("is-active");
+    }
+    allButton.onclick = () => {
+      this.selectedHunkId = "__all__";
+      this.renderHunkList();
+      this.renderDiffViewer();
+    };
+    if (filtered.length === 0) {
+      this.hunkListEl.createDiv({
+        cls: "omni-forge-patch-preview-empty",
+        text: "검색 결과 없음"
+      });
+      return;
+    }
+    for (const hunk of filtered) {
+      const button = this.hunkListEl.createEl("button", {
+        cls: "omni-forge-patch-preview-hunk-item"
+      });
+      if (this.selectedHunkId === hunk.id) {
+        button.addClass("is-active");
+      }
+      button.createDiv({
+        cls: "omni-forge-patch-preview-hunk-label",
+        text: hunk.label
+      });
+      button.createDiv({
+        cls: "omni-forge-patch-preview-hunk-stats",
+        text: `+${hunk.added} / -${hunk.removed} / ctx ${hunk.context}`
+      });
+      button.onclick = () => {
+        this.selectedHunkId = hunk.id;
+        this.renderHunkList();
+        this.renderDiffViewer();
+      };
+    }
+  }
+  renderDiffViewer() {
+    this.diffViewerEl.empty();
+    const filtered = this.getFilteredHunks();
+    let target = [];
+    if (this.selectedHunkId === "__all__") {
+      target = filtered;
+    } else {
+      const found = this.model.hunks.find((hunk) => hunk.id === this.selectedHunkId);
+      target = found ? [found] : filtered;
+    }
+    if (target.length === 0) {
+      this.diffViewerEl.createDiv({
+        cls: "omni-forge-patch-preview-empty",
+        text: "표시할 diff가 없습니다."
+      });
+      return;
+    }
+    for (const hunk of target) {
+      const block = this.diffViewerEl.createDiv({ cls: "omni-forge-patch-preview-hunk-block" });
+      block.createDiv({
+        cls: "omni-forge-patch-preview-hunk-header",
+        text: hunk.header
+      });
+      const pre = block.createEl("pre", { cls: "omni-forge-patch-preview-pre" });
+      const code = pre.createEl("code", { cls: "omni-forge-patch-preview-code" });
+      for (let lineIndex = 0; lineIndex < hunk.lines.length; lineIndex += 1) {
+        const line = hunk.lines[lineIndex];
+        const lineEl = code.createSpan({
+          cls: "omni-forge-patch-preview-code-line",
+          text: `${line.prefix}${line.text.length > 0 ? line.text : " "}`
+        });
+        if (line.prefix === "+") {
+          lineEl.addClass("is-add");
+        } else if (line.prefix === "-") {
+          lineEl.addClass("is-del");
+        } else {
+          lineEl.addClass("is-ctx");
+        }
+        if (lineIndex < hunk.lines.length - 1) {
+          code.appendChild(document.createTextNode("\n"));
+        }
+      }
+    }
+  }
+  requestApply() {
+    if (this.model.requireExtraConfirm && (!this.confirmCheckboxEl || !this.confirmCheckboxEl.checked)) {
+      new import_obsidian4.Notice("위험 변경은 확인 체크 후 적용할 수 있습니다.", 3500);
+      return;
+    }
+    this.resolve({ decision: "apply" });
+  }
+  updateApplyButtonState() {
+    if (!this.applyButtonEl) {
+      return;
+    }
+    if (!this.model.requireExtraConfirm) {
+      this.applyButtonEl.disabled = false;
+      return;
+    }
+    this.applyButtonEl.disabled = !(this.confirmCheckboxEl && this.confirmCheckboxEl.checked);
+  }
+  focusSearchInput() {
+    if (!this.searchInputEl) {
+      return;
+    }
+    this.searchInputEl.focus();
+    this.searchInputEl.setSelectionRange(0, this.searchInputEl.value.length);
+  }
+  resolve(decision) {
+    if (this.resolved) {
+      return;
+    }
+    this.resolved = true;
+    this.onResolve(decision);
+    this.close();
+  }
+  onClose() {
+    this.modalEl.removeEventListener("keydown", this.handleKeydown);
+    this.modalEl.removeClass("omni-forge-patch-preview-modal");
+    if (!this.resolved) {
+      this.resolved = true;
+      this.onResolve({ decision: "cancel" });
+    }
+    this.contentEl.empty();
+  }
+  static ask(app, model) {
+    return new Promise((resolve2) => {
+      new _PatchPreviewModal(app, model, resolve2).open();
+    });
+  }
+};
 var VaultTextInputModal = class extends import_obsidian4.Modal {
   constructor(app, titleText, placeholder, initialValue, submitText, onSubmitValue) {
     super(app);
@@ -2446,9 +2773,12 @@ var VaultTextInputModal = class extends import_obsidian4.Modal {
 var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
+    this.headerTitleEl = null;
     this.roleSelect = null;
     this.pipelineSelect = null;
     this.conversationModeSelect = null;
+    this.chatModelFamilySelect = null;
+    this.chatModelProfileSelect = null;
     this.pendingAttachments = [];
     this.qaContextButton = null;
     this.running = false;
@@ -2587,21 +2917,56 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     };
     return button;
   }
+  getChatUiLanguageMode() {
+    const mode = this.plugin.settings.settingsUiLanguage;
+    return mode === "en" || mode === "bilingual" ? mode : "ko";
+  }
+  localizeChatLabel(en, ko) {
+    const mode = this.getChatUiLanguageMode();
+    if (mode === "en") {
+      return en;
+    }
+    if (mode === "bilingual") {
+      return `${en} / ${ko}`;
+    }
+    return ko;
+  }
+  buildLocalizedChatProfileLabel(profile) {
+    switch (profile) {
+      case "local-pro":
+        return this.localizeChatLabel("Local Pro", "로컬 Pro");
+      case "codex":
+        return this.plugin.settings.openAIModel.trim() ? `Codex (${this.plugin.settings.openAIModel.trim()})` : "Codex";
+      case "claude":
+        return this.plugin.settings.anthropicModel.trim() ? `Claude (${this.plugin.settings.anthropicModel.trim()})` : "Claude";
+      case "gemini":
+        return this.plugin.settings.geminiModel.trim() ? `Gemini (${this.plugin.settings.geminiModel.trim()})` : "Gemini";
+      case "local-flash":
+      default:
+        if (profile && profile !== "local-flash") {
+          return profile;
+        }
+        return this.localizeChatLabel("Local Flash", "로컬 Flash");
+    }
+  }
   render() {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("omni-forge-chat-view");
     const root = contentEl.createDiv({ cls: "omni-forge-chat-root" });
+    root.style.setProperty("--omni-forge-chat-font-size", `${this.plugin.settings.qaChatFontSize}px`);
+    const t = (en, ko) => this.localizeChatLabel(en, ko);
+    const headerTitle = this.plugin.getQaChatModelFamilyForQa() === "cloud" ? t("Cloud Chat", "클라우드 채팅") : t("Local Ollama", "로컬 Ollama");
     const header = root.createDiv({ cls: "omni-forge-chat-header" });
-    header.createEl("h3", {
-      text: "Omni Forge Chat"
+    this.headerTitleEl = header.createEl("h3", {
+      text: headerTitle
     });
     this.scopeEl = header.createDiv({ cls: "omni-forge-chat-scope" });
     const actionRow = root.createDiv({ cls: "omni-forge-chat-actions" });
     this.createHeaderIconButton(
       actionRow,
       "plus-square",
-      "\uC0C8 \uC2A4\uB808\uB4DC",
+      t("New thread", "새 스레드"),
       async () => {
         await this.startNewThread();
       }
@@ -2609,7 +2974,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.createHeaderIconButton(
       actionRow,
       "files",
-      "\uB178\uD2B8 \uC120\uD0DD",
+      t("Select notes", "노트 선택"),
       async () => {
         await this.plugin.openSelectionForQa();
         await this.refreshScopeLabel();
@@ -2618,7 +2983,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.createHeaderIconButton(
       actionRow,
       "rotate-ccw",
-      "\uC120\uD0DD \uCD08\uAE30\uD654",
+      t("Reset selection", "선택 초기화"),
       async () => {
         await this.plugin.clearSelectionForQa(true);
         await this.refreshScopeLabel();
@@ -2632,7 +2997,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.createHeaderIconButton(
       actionRow,
       "refresh-cw",
-      "\uBAA8\uB378 \uAC10\uC9C0 \uC0C8\uB85C\uACE0\uCE68",
+      t("Refresh local models", "로컬 모델 새로고침"),
       async () => {
         await this.plugin.refreshOllamaDetection({ notify: false, autoApply: false });
         this.refreshModelOptions();
@@ -2642,18 +3007,69 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.createHeaderIconButton(
       actionRow,
       "file-text",
-      "\uCC44\uD305 \uB178\uD2B8 \uC5F4\uAE30",
+      t("Open chat note", "채팅 노트 열기"),
       async () => {
         await this.openThreadNote();
       }
     );
-    const newThreadButton = actionRow.createEl("button", { text: "New thread / \uC0C8 \uC2A4\uB808\uB4DC" });
+    const familyToggleButton = this.createHeaderIconButton(
+      actionRow,
+      this.plugin.getQaChatModelFamilyForQa() === "cloud" ? "cloud" : "cpu",
+      t("Toggle Local/Cloud", "로컬/클라우드 토글"),
+      async () => {
+        const currentFamily = this.plugin.getQaChatModelFamilyForQa();
+        const nextFamily = currentFamily === "cloud" ? "local" : "cloud";
+        const summary = await this.plugin.setQaChatModelFamilyForQa(nextFamily);
+        new import_obsidian4.Notice(summary, 6e3);
+        (0, import_obsidian4.setIcon)(familyToggleButton, nextFamily === "cloud" ? "cloud" : "cpu");
+        familyToggleButton.setAttr(
+          "title",
+          nextFamily === "cloud" ? t("Now Cloud mode", "현재 클라우드 모드") : t("Now Local mode", "현재 로컬 모드")
+        );
+        this.refreshRoleOptions();
+        this.refreshPipelineOptions();
+        this.refreshConversationModeOptions();
+        this.refreshModelOptions();
+        await this.refreshScopeLabel();
+      }
+    );
+    familyToggleButton.setAttr(
+      "title",
+      this.plugin.getQaChatModelFamilyForQa() === "cloud" ? t("Now Cloud mode", "현재 클라우드 모드") : t("Now Local mode", "현재 로컬 모드")
+    );
+    this.createHeaderIconButton(
+      actionRow,
+      "copy-plus",
+      t("Open new chat pane (max 3)", "새 채팅창 열기(최대 3)"),
+      async () => {
+        await this.plugin.openLocalQaWorkspaceView(true);
+      }
+    );
+    const parserDropButton = this.createHeaderIconButton(
+      actionRow,
+      "file-input",
+      t("Parser ingest (.md convert)", "파서 인게스트(.md 변환)"),
+      async () => {
+        await this.openParserIngestPicker();
+      }
+    );
+    parserDropButton.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      parserDropButton.addClass("omni-forge-chat-drop-target-active");
+    });
+    parserDropButton.addEventListener("dragleave", () => {
+      parserDropButton.removeClass("omni-forge-chat-drop-target-active");
+    });
+    parserDropButton.addEventListener("drop", (event) => {
+      void this.handleParserDrop(event, parserDropButton);
+    });
+    const newThreadButton = actionRow.createEl("button", { text: t("New thread", "새 스레드") });
     newThreadButton.addClass("omni-forge-chat-btn");
     newThreadButton.addClass("omni-forge-chat-hidden-action");
     newThreadButton.onclick = async () => {
       await this.startNewThread();
     };
-    const selectButton = actionRow.createEl("button", { text: "Select notes / \uB178\uD2B8 \uC120\uD0DD" });
+    const selectButton = actionRow.createEl("button", { text: t("Select notes", "노트 선택") });
     selectButton.addClass("omni-forge-chat-btn");
     selectButton.addClass("omni-forge-chat-hidden-action");
     selectButton.onclick = async () => {
@@ -2661,7 +3077,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       await this.refreshScopeLabel();
     };
     const resetSelectionButton = actionRow.createEl("button", {
-      text: "Select reset / \uC120\uD0DD \uCD08\uAE30\uD654"
+      text: t("Reset selection", "선택 초기화")
     });
     resetSelectionButton.addClass("omni-forge-chat-btn");
     resetSelectionButton.addClass("omni-forge-chat-hidden-action");
@@ -2674,7 +3090,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
     };
-    const refreshModelsButton = actionRow.createEl("button", { text: "Refresh models / \uBAA8\uB378 \uAC10\uC9C0" });
+    const refreshModelsButton = actionRow.createEl("button", { text: t("Refresh models", "모델 감지") });
     refreshModelsButton.addClass("omni-forge-chat-btn");
     refreshModelsButton.addClass("omni-forge-chat-hidden-action");
     refreshModelsButton.setAttr(
@@ -2686,126 +3102,142 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       this.refreshModelOptions();
       await this.refreshScopeLabel();
     };
-    const openThreadButton = actionRow.createEl("button", { text: "Open chat note / \uCC44\uD305 \uB178\uD2B8 \uC5F4\uAE30" });
+    const openThreadButton = actionRow.createEl("button", { text: t("Open chat note", "채팅 노트 열기") });
     openThreadButton.addClass("omni-forge-chat-btn");
     openThreadButton.addClass("omni-forge-chat-hidden-action");
     openThreadButton.onclick = async () => {
       await this.openThreadNote();
     };
-    const utilityDetails = root.createEl("details", { cls: "omni-forge-chat-collapsible" });
-    utilityDetails.createEl("summary", { text: "More tools / \uCD94\uAC00 \uB3C4\uAD6C" });
+    const optionsDetails = root.createEl("details", { cls: "omni-forge-chat-collapsible omni-forge-chat-options-group" });
+    optionsDetails.open = false;
+    optionsDetails.createEl("summary", { text: t("Options", "옵션 도구") });
+    const optionsBody = optionsDetails.createDiv({ cls: "omni-forge-chat-options-group-body" });
+    const utilityDetails = optionsBody.createEl("details", { cls: "omni-forge-chat-collapsible" });
+    utilityDetails.open = true;
+    utilityDetails.createEl("summary", { text: t("Additional tools", "추가 도구") });
     utilityDetails.createEl("small", {
       text: "Cleanup keys\uB294 AI \uBD84\uC11D \uC5C6\uC774 frontmatter \uD0A4\uB9CC \uC815\uB9AC\uD558\uBBC0\uB85C Analyze/Apply\uBCF4\uB2E4 \uC77C\uBC18\uC801\uC73C\uB85C \uBE60\uB985\uB2C8\uB2E4."
     });
     const utilityRow = utilityDetails.createDiv({ cls: "omni-forge-chat-actions" });
-    const cleanupPickerButton = utilityRow.createEl("button", { text: "Cleanup keys / \uC815\uB9AC \uD0A4" });
+    const cleanupPickerButton = utilityRow.createEl("button", { text: t("Cleanup keys", "정리 키") });
     cleanupPickerButton.addClass("omni-forge-chat-btn");
     cleanupPickerButton.onclick = async () => {
       await this.plugin.openCleanupKeyPickerForQa();
       await this.refreshScopeLabel();
     };
-    const cleanupApplyButton = utilityRow.createEl("button", { text: "Run cleanup / \uC815\uB9AC \uC2E4\uD589" });
+    const cleanupApplyButton = utilityRow.createEl("button", { text: t("Run cleanup", "정리 실행") });
     cleanupApplyButton.addClass("omni-forge-chat-btn");
     cleanupApplyButton.onclick = async () => {
       await this.plugin.runCleanupForQa(false);
       await this.refreshScopeLabel();
     };
-    const cleanupDryRunButton = utilityRow.createEl("button", { text: "Cleanup dry-run / \uC815\uB9AC \uBBF8\uB9AC\uBCF4\uAE30" });
+    const cleanupDryRunButton = utilityRow.createEl("button", { text: t("Cleanup dry-run", "정리 미리보기") });
     cleanupDryRunButton.addClass("omni-forge-chat-btn");
     cleanupDryRunButton.onclick = async () => {
       await this.plugin.runCleanupForQa(true);
       await this.refreshScopeLabel();
     };
-    const folderButton = utilityRow.createEl("button", { text: "Chat folder / \uCC44\uD305 \uD3F4\uB354" });
+    const folderButton = utilityRow.createEl("button", { text: t("Chat folder", "채팅 폴더") });
     folderButton.addClass("omni-forge-chat-btn");
-    folderButton.setAttr("title", "\uCC44\uD305 \uAE30\uB85D \uC800\uC7A5 \uD3F4\uB354\uB97C \uBCC0\uACBD\uD569\uB2C8\uB2E4.");
+    folderButton.setAttr("title", t("Change chat transcript folder.", "채팅 기록 저장 폴더를 변경합니다."));
     folderButton.onclick = () => {
       const current = this.plugin.getChatTranscriptRootPathForQa() || "Omni Forge Chats";
       new VaultTextInputModal(
         this.app,
-        "Chat transcript folder / \uCC44\uD305 \uC800\uC7A5 \uD3F4\uB354",
+        t("Chat transcript folder", "채팅 저장 폴더"),
         "Omni Forge Chats",
         current,
-        "Save / \uC800\uC7A5",
+        t("Save", "저장"),
         async (value) => {
           await this.plugin.setChatTranscriptRootPathForQa(value);
           new import_obsidian4.Notice(
-            `Chat folder set / \uCC44\uD305 \uD3F4\uB354 \uC124\uC815: ${this.plugin.getChatTranscriptRootPathForQa()}`,
+            `${t("Chat folder set", "채팅 폴더 설정")}: ${this.plugin.getChatTranscriptRootPathForQa()}`,
             5e3
           );
           await this.refreshScopeLabel();
         }
       ).open();
     };
-    const modelDetails = root.createEl("details", { cls: "omni-forge-chat-collapsible" });
-    modelDetails.createEl("summary", { text: "Model options / \uBAA8\uB378 \uC635\uC158" });
+    const modelDetails = optionsBody.createEl("details", { cls: "omni-forge-chat-collapsible" });
+    modelDetails.open = true;
+    modelDetails.createEl("summary", { text: t("Model options", "모델 옵션") });
     this.modelPresetHintEl = modelDetails.createEl("small", {
       cls: "omni-forge-chat-model-hint"
     });
     this.modelLayoutSummaryEl = modelDetails.createDiv({
       cls: "omni-forge-chat-model-layout-summary"
     });
-    const presetRow = modelDetails.createDiv({ cls: "omni-forge-chat-actions" });
-    presetRow.createEl("small", {
-      text: "One-click local presets / \uC6D0\uD074\uB9AD \uD504\uB9AC\uC14B"
+    const profileControlRow = modelDetails.createDiv({ cls: "omni-forge-chat-controls" });
+    const familyWrap = profileControlRow.createDiv({ cls: "omni-forge-chat-control" });
+    familyWrap.createEl("label", { text: t("Model source", "모델 소스") });
+    this.chatModelFamilySelect = familyWrap.createEl("select", {
+      cls: "omni-forge-chat-model-select"
     });
-    const applyPresetFromChat = async (preset) => {
-      const summary = await this.plugin.applyOneClickLocalPresetForQa(preset);
+    const profileWrap = profileControlRow.createDiv({ cls: "omni-forge-chat-control" });
+    profileWrap.createEl("label", { text: t("Chat model", "채팅 모델") });
+    this.chatModelProfileSelect = profileWrap.createEl("select", {
+      cls: "omni-forge-chat-model-select"
+    });
+    const refreshChatFamilyOptions = () => {
+      if (!this.chatModelFamilySelect) {
+        return;
+      }
+      const options = this.plugin.getQaChatModelFamilyOptionsForQa();
+      const current = this.plugin.getQaChatModelFamilyForQa();
+      this.chatModelFamilySelect.empty();
+      for (const option of options) {
+        const label = option.value === "local" ? t("Local", "로컬") : option.value === "cloud" ? t("Cloud", "클라우드") : option.label;
+        this.chatModelFamilySelect.createEl("option", {
+          value: option.value,
+          text: label
+        });
+      }
+      this.chatModelFamilySelect.value = options.some((option) => option.value === current) ? current : "local";
+    };
+    const refreshChatProfileOptions = () => {
+      if (!this.chatModelProfileSelect) {
+        return;
+      }
+      const family = this.chatModelFamilySelect && this.chatModelFamilySelect.value === "cloud" ? "cloud" : "local";
+      const options = this.plugin.getQaChatModelProfileOptionsForQa(family);
+      this.chatModelProfileSelect.empty();
+      for (const option of options) {
+        this.chatModelProfileSelect.createEl("option", {
+          value: option.value,
+          text: option.label || this.buildLocalizedChatProfileLabel(option.value)
+        });
+      }
+      const current = this.plugin.getQaChatModelProfileForQa();
+      const fallback = options.length > 0 ? options[0].value : "";
+      this.chatModelProfileSelect.value = options.some((option) => option.value === current) ? current : fallback;
+    };
+    refreshChatFamilyOptions();
+    refreshChatProfileOptions();
+    this.chatModelFamilySelect.onchange = async () => {
+      const family = this.chatModelFamilySelect && this.chatModelFamilySelect.value === "cloud" ? "cloud" : "local";
+      const summary = await this.plugin.setQaChatModelFamilyForQa(family);
       new import_obsidian4.Notice(summary, 6500);
+      refreshChatFamilyOptions();
+      refreshChatProfileOptions();
       this.refreshRoleOptions();
       this.refreshPipelineOptions();
+      this.refreshConversationModeOptions();
       this.refreshModelOptions();
       await this.refreshScopeLabel();
     };
-    const applyCustomSlotFromChat = async (slotKey) => {
-      try {
-        const summary = await this.plugin.applyQaQuickCustomProfileSlot(slotKey);
-        new import_obsidian4.Notice(summary, 6e3);
-        this.refreshModelOptions();
-        await this.refreshScopeLabel();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "\uCEE4\uC2A4\uD140 \uD504\uB9AC\uC14B\uC744 \uC801\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.";
-        new import_obsidian4.Notice(message, 6e3);
-      }
-    };
-    const fastPresetButton = presetRow.createEl("button", { text: "Flash" });
-    fastPresetButton.addClass("omni-forge-chat-btn");
-    fastPresetButton.onclick = async () => {
-      await applyPresetFromChat("fast_local");
-    };
-    const proPresetButton = presetRow.createEl("button", { text: "Pro" });
-    proPresetButton.addClass("omni-forge-chat-btn");
-    proPresetButton.onclick = async () => {
-      await applyPresetFromChat("balanced_local");
-    };
-    const custom1Button = presetRow.createEl("button", { text: "Custom 1" });
-    custom1Button.addClass("omni-forge-chat-btn");
-    custom1Button.onclick = async () => {
-      await applyCustomSlotFromChat("qaQuickCustomProfileSlot1");
-    };
-    const custom2Button = presetRow.createEl("button", { text: "Custom 2" });
-    custom2Button.addClass("omni-forge-chat-btn");
-    custom2Button.onclick = async () => {
-      await applyCustomSlotFromChat("qaQuickCustomProfileSlot2");
-    };
-    const custom3Button = presetRow.createEl("button", { text: "Custom 3" });
-    custom3Button.addClass("omni-forge-chat-btn");
-    custom3Button.onclick = async () => {
-      await applyCustomSlotFromChat("qaQuickCustomProfileSlot3");
-    };
-    const refreshLocalAiButton = presetRow.createEl("button", {
-      text: "Refresh Local AI"
-    });
-    refreshLocalAiButton.addClass("omni-forge-chat-btn");
-    refreshLocalAiButton.onclick = async () => {
-      await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
-      await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+    this.chatModelProfileSelect.onchange = async () => {
+      const family = this.chatModelFamilySelect && this.chatModelFamilySelect.value === "cloud" ? "cloud" : "local";
+      const summary = await this.plugin.applyQaChatModelProfileForQa(this.chatModelProfileSelect.value, family);
+      new import_obsidian4.Notice(summary, 6500);
+      this.refreshRoleOptions();
+      this.refreshPipelineOptions();
+      this.refreshConversationModeOptions();
       this.refreshModelOptions();
       await this.refreshScopeLabel();
     };
     const controlRow = modelDetails.createDiv({ cls: "omni-forge-chat-controls" });
     const topKWrap = controlRow.createDiv({ cls: "omni-forge-chat-control" });
-    topKWrap.createEl("label", { text: "Top sources / \uC0C1\uC704 \uC18C\uC2A4 \uC218" });
+    topKWrap.createEl("label", { text: t("Top sources", "상위 소스 수") });
     this.topKInput = topKWrap.createEl("input", {
       type: "number",
       cls: "omni-forge-chat-topk-input"
@@ -2822,11 +3254,11 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       this.plugin.settings.qaTopK = Math.min(15, parsed);
       await this.plugin.saveSettings();
     };
-    const runtimePanel = root.createEl("details", { cls: "omni-forge-chat-runtime-panel" });
-    runtimePanel.open = false;
+    const runtimePanel = optionsBody.createEl("details", { cls: "omni-forge-chat-runtime-panel" });
+    runtimePanel.open = true;
     runtimePanel.createEl("summary", {
       cls: "omni-forge-chat-runtime-head",
-      text: "Runtime status / \uD604\uC7AC \uC0C1\uD0DC"
+      text: t("Current status", "현재 상태")
     });
     const runtimeBody = runtimePanel.createDiv({ cls: "omni-forge-chat-runtime-body" });
     const runtimeMetaRow = runtimeBody.createDiv({ cls: "omni-forge-chat-meta" });
@@ -2836,7 +3268,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.threadEl = root.createDiv({ cls: "omni-forge-chat-thread" });
     this.threadEl.createDiv({
       cls: "omni-forge-chat-empty",
-      text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694. / Ask a question to start."
+      text: t("Ask a question to start.", "질문을 입력해 대화를 시작하세요.")
     });
     const composer = root.createDiv({ cls: "omni-forge-chat-composer" });
     composer.addEventListener("dragover", (event) => {
@@ -2851,15 +3283,18 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     });
     this.activeFileStatusEl = composer.createDiv({ cls: "omni-forge-chat-active-file-status" });
     void this.refreshActiveFileStatus();
-    this.inputEl = composer.createEl("textarea", { cls: "omni-forge-chat-input" });
-    this.inputEl.placeholder = "\uC120\uD0DD \uBB38\uC11C\uAC00 \uC5C6\uC5B4\uB3C4 \uB300\uD654\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4. \uCCA8\uBD80/\uC120\uD0DD \uBB38\uC11C \uAE30\uBC18 \uC9C8\uBB38\uB3C4 \uAC00\uB2A5\uD569\uB2C8\uB2E4.";
     this.attachmentStatusEl = composer.createDiv({
       cls: "omni-forge-chat-attachment-status"
     });
     this.refreshAttachmentStatus();
+    this.inputEl = composer.createEl("textarea", { cls: "omni-forge-chat-input" });
+    this.inputEl.placeholder = t(
+      "You can chat without selected notes. Attachments and selected-note questions are both supported.",
+      "선택 문서가 없어도 대화할 수 있습니다. 첨부/선택 문서 기반 질문도 가능합니다."
+    );
     const footer = composer.createDiv({ cls: "omni-forge-chat-footer" });
     const footerLeft = footer.createDiv({ cls: "omni-forge-chat-footer-left" });
-    const attachButton = footerLeft.createEl("button", { text: "+ \uCCA8\uBD80 / Add" });
+    const attachButton = footerLeft.createEl("button", { text: `+ ${t("Add", "첨부")}` });
     attachButton.addClass("omni-forge-chat-btn");
     attachButton.onclick = async () => {
       await this.openAttachmentPicker();
@@ -2868,8 +3303,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       cls: "omni-forge-chat-mode-select"
     });
     this.conversationModeSelect = conversationModeSelect;
-    conversationModeSelect.setAttr("aria-label", "Conversation mode");
-    conversationModeSelect.setAttr("title", "\uB300\uD654 \uBAA8\uB4DC");
+    conversationModeSelect.setAttr("aria-label", t("Conversation mode", "대화 모드"));
+    conversationModeSelect.setAttr("title", t("Conversation mode", "대화 모드"));
     conversationModeSelect.onchange = async () => {
       const mode = conversationModeSelect.value;
       await this.plugin.setQaConversationModeForQa(mode);
@@ -2898,12 +3333,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       });
     };
     this.refreshQaContextButton();
-    this.sendButton = footer.createEl("button", { text: "Send / \uC804\uC1A1", cls: "mod-cta" });
+    this.sendButton = footer.createEl("button", { text: t("Send", "전송"), cls: "mod-cta" });
     this.sendButton.addClass("omni-forge-chat-send");
     this.sendButton.onclick = async () => {
       await this.submitQuestion();
     };
-    this.stopButton = footer.createEl("button", { text: "Stop / \uC911\uC9C0" });
+    this.stopButton = footer.createEl("button", { text: t("Stop", "중지") });
     this.stopButton.addClass("omni-forge-chat-stop");
     this.stopButton.disabled = true;
     this.stopButton.onclick = () => {
@@ -2958,11 +3393,18 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     if (!this.contentEl.isConnected) {
       return;
     }
+    const root = this.contentEl.querySelector(".omni-forge-chat-root");
+    if (root instanceof HTMLElement) {
+      root.style.setProperty("--omni-forge-chat-font-size", `${this.plugin.settings.qaChatFontSize}px`);
+    }
     this.refreshRoleOptions();
     this.refreshPipelineOptions();
     this.refreshModelOptions();
     this.refreshConversationModeOptions();
     this.refreshQaContextButton();
+    if (this.threadEl) {
+      this.renderMessages();
+    }
     if (this.topKInput) {
       this.topKInput.value = String(this.plugin.settings.qaTopK);
     }
@@ -2995,25 +3437,33 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         value: option.value
       });
     }
-    this.pipelineSelect.value = current;
+    const fallback = options.length > 0 ? options[0].value : current;
+    this.pipelineSelect.value = options.some((option) => option.value === current) ? current : fallback;
   }
   refreshConversationModeOptions() {
     if (!this.conversationModeSelect) {
       return;
     }
+    const modeLabelMap = {
+      ask: ["Ask", "질문"],
+      plan: ["Plan", "계획"],
+      agent: ["Agent", "에이전트"],
+      orchestration: ["Orchestration", "오케스트레이션"]
+    };
     const options = this.plugin.getQaConversationModeOptionsForQa();
     const current = this.plugin.getQaConversationModeForQa();
     this.conversationModeSelect.empty();
     for (const option of options) {
+      const labelPair = modeLabelMap[option.value];
       this.conversationModeSelect.createEl("option", {
-        text: option.label,
+        text: labelPair ? this.localizeChatLabel(labelPair[0], labelPair[1]) : option.label,
         value: option.value
       });
     }
     this.conversationModeSelect.value = current;
     this.conversationModeSelect.setAttr(
       "title",
-      `Mode=${this.plugin.getQaConversationModeLabelForQa()}`
+      `${this.localizeChatLabel("Mode", "모드")}=${this.plugin.getQaConversationModeLabelForQa()}`
     );
   }
   refreshQaContextButton() {
@@ -3030,9 +3480,25 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   refreshModelOptions() {
     const presetLabel = this.plugin.getQaPresetProfileLabelForQa();
+    const modelFamily = this.plugin.getQaChatModelFamilyForQa();
+    const profile = this.plugin.getQaChatModelProfileForQa();
+    if (this.headerTitleEl) {
+      this.headerTitleEl.setText(
+        modelFamily === "cloud" ? this.localizeChatLabel("Cloud Chat", "클라우드 채팅") : this.localizeChatLabel("Local Ollama", "로컬 Ollama")
+      );
+    }
+    if (this.chatModelFamilySelect) {
+      this.chatModelFamilySelect.value = modelFamily;
+    }
+    if (this.chatModelProfileSelect) {
+      const options = this.plugin.getQaChatModelProfileOptionsForQa(modelFamily);
+      const fallback = options.length > 0 ? options[0].value : modelFamily === "cloud" ? "codex" : "local-flash";
+      const target = options.some((option) => option.value === profile) ? profile : fallback;
+      this.chatModelProfileSelect.value = target;
+    }
     if (this.modelPresetHintEl) {
       this.modelPresetHintEl.setText(
-        `Preset=${presetLabel} | convo=${this.plugin.getQaConversationModeLabelForQa()} | pipeline=${getQaPipelinePresetLabel(this.plugin.getQaPipelinePresetForQa())}`
+        `${this.localizeChatLabel("Source", "소스")}=${modelFamily === "cloud" ? this.localizeChatLabel("Cloud", "클라우드") : this.localizeChatLabel("Local", "로컬")} | ${this.localizeChatLabel("Profile", "프로필")}=${this.buildLocalizedChatProfileLabel(profile)} | Preset=${presetLabel} | convo=${this.plugin.getQaConversationModeLabelForQa()} | pipeline=${getQaPipelinePresetLabel(this.plugin.getQaPipelinePresetForQa())}`
       );
     }
     if (this.modelLayoutSummaryEl) {
@@ -3068,8 +3534,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       this.sendButton.removeClass("mod-cta");
       return;
     }
-    this.sendButton.setText("Send / \uC804\uC1A1");
-    this.sendButton.setAttr("title", "\uD604\uC7AC \uC785\uB825\uD55C \uC9C8\uBB38\uC744 \uC989\uC2DC \uC804\uC1A1\uD569\uB2C8\uB2E4.");
+    this.sendButton.setText(this.localizeChatLabel("Send", "전송"));
+    this.sendButton.setAttr("title", this.localizeChatLabel("Send current input now.", "현재 입력한 질문을 즉시 전송합니다."));
     this.sendButton.disabled = false;
     this.sendButton.addClass("mod-cta");
   }
@@ -3081,11 +3547,13 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const attachments = this.consumePendingAttachments();
     const openFile = this.resolveVisibleMarkdownFile();
     const openFilePath = openFile instanceof import_obsidian4.TFile && openFile.extension === "md" ? openFile.path : void 0;
+    const openSelection = this.captureOpenSelectionSnapshot(openFilePath);
     this.inputEl.value = "";
     return {
       question,
       attachments,
-      openFilePath
+      openFilePath,
+      openSelection
     };
   }
   queueCurrentInputTurn() {
@@ -3096,7 +3564,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.queuedTurns.push({
       question: captured.question,
       attachments: captured.attachments,
-      openFilePath: captured.openFilePath
+      openFilePath: captured.openFilePath,
+      openSelection: captured.openSelection
     });
     this.pushMessage({
       role: "system",
@@ -3358,6 +3827,41 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       return false;
     }
   }
+  async resolvePdf2TxtExecutable() {
+    if (await this.canUseShellCommand("pdf2txt.py")) {
+      return "pdf2txt.py";
+    }
+    if (await this.canUseShellCommand("pdf2txt")) {
+      return "pdf2txt";
+    }
+    const absoluteCandidates = [
+      "/opt/homebrew/bin/pdf2txt.py",
+      "/usr/local/bin/pdf2txt.py",
+      "/Library/Frameworks/Python.framework/Versions/3.14/bin/pdf2txt.py"
+    ];
+    const home = ((process.env.HOME || "") + "").trim();
+    if (home) {
+      const userPythonRoot = nodePath.join(home, "Library", "Python");
+      try {
+        const versionEntries = await nodeFs.promises.readdir(userPythonRoot, {
+          withFileTypes: true
+        });
+        const versionDirs = versionEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort((a, b) => b.localeCompare(a));
+        for (const version of versionDirs) {
+          absoluteCandidates.push(nodePath.join(userPythonRoot, version, "bin", "pdf2txt.py"));
+        }
+      } catch (e) {
+      }
+    }
+    for (const candidate of absoluteCandidates) {
+      try {
+        await nodeFs.promises.access(candidate, nodeFs.constants.X_OK);
+        return candidate;
+      } catch (e) {
+      }
+    }
+    return null;
+  }
   async extractPdfTextViaPdftotext(pdfAbsolutePath) {
     var _a;
     const command = [
@@ -3370,6 +3874,23 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       "-"
     ].join(" ");
     const result = await execAsync(command, { timeout: 25e3, maxBuffer: 12 * 1024 * 1024 });
+    return ((_a = result.stdout) != null ? _a : "").trim();
+  }
+  async extractPdfTextViaPdfMiner(pdfAbsolutePath) {
+    var _a;
+    const pdf2txt = await this.resolvePdf2TxtExecutable();
+    if (!pdf2txt) {
+      return "";
+    }
+    const command = [
+      this.shellQuoteArg(pdf2txt),
+      "--output_type",
+      "text",
+      "--codec",
+      "utf-8",
+      this.shellQuoteArg(pdfAbsolutePath)
+    ].join(" ");
+    const result = await execAsync(command, { timeout: 45e3, maxBuffer: 16 * 1024 * 1024 });
     return ((_a = result.stdout) != null ? _a : "").trim();
   }
   async extractPdfTextViaOcr(pdfAbsolutePath, maxPages) {
@@ -3420,6 +3941,21 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       });
     }
   }
+  scoreAttachmentTextReadability(text) {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return 0;
+    }
+    const compact = trimmed.replace(/\s+/g, "");
+    if (!compact) {
+      return 0;
+    }
+    const readableCount = ((compact.match(/[A-Za-z0-9가-힣]/g) || []).length);
+    const replacementCount = ((compact.match(/�/g) || []).length);
+    const controlCount = ((compact.match(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g) || []).length);
+    const score = (readableCount - replacementCount * 4 - controlCount * 2) / compact.length;
+    return Math.max(0, Math.min(1, score));
+  }
   resolveVaultAbsolutePath(vaultPath) {
     const base = this.getVaultBasePathForChatView();
     if (!base) {
@@ -3431,11 +3967,13 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const notes = [];
     let parser = "metadata-only";
     let extracted = "";
+    let readabilityScore = 0;
     let workingPath = sourceAbsolutePath;
     let tempDir;
     const parserMode = this.plugin.settings.qaParserMode === "detailed" ? "detailed" : "fast";
     const preferDetailed = parserMode === "detailed";
     const pdftotextEnoughLength = preferDetailed ? 220 : 120;
+    const pdfminerEnoughLength = preferDetailed ? 180 : 100;
     const ocrMaxPages = preferDetailed ? LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED : LOCAL_QA_PDF_OCR_MAX_PAGES_FAST;
     notes.push(`parser mode=${parserMode}`);
     try {
@@ -3449,28 +3987,57 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       if (await this.canUseShellCommand("pdftotext")) {
         try {
           extracted = await this.extractPdfTextViaPdftotext(workingPath);
-          if (extracted.length > pdftotextEnoughLength) {
+          readabilityScore = this.scoreAttachmentTextReadability(extracted);
+          if (extracted.length > pdftotextEnoughLength && readabilityScore >= 0.42) {
             parser = "pdftotext";
           } else {
-            notes.push("pdftotext \uACB0\uACFC\uAC00 \uC9E7\uC544 OCR/fallback\uC744 \uCD94\uAC00 \uC2DC\uB3C4\uD569\uB2C8\uB2E4.");
+            notes.push(`pdftotext quality low/short (score=${readabilityScore.toFixed(2)}). Trying OCR/fallback.`);
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "pdftotext failed";
-          notes.push(`pdftotext \uC2E4\uD328: ${message}`);
+          notes.push(`pdftotext failed: ${message}`);
         }
       } else {
-        notes.push("pdftotext \uBBF8\uC124\uCE58: fallback \uCD94\uCD9C\uB85C \uC9C4\uD589\uD569\uB2C8\uB2E4.");
+        notes.push("pdftotext unavailable: trying pdfminer/OCR/fallback.");
       }
-      if (extracted.length < pdftotextEnoughLength && await this.canUseShellCommand("pdftoppm") && await this.canUseShellCommand("tesseract")) {
+      const shouldTryPdfminer = extracted.length < pdftotextEnoughLength || readabilityScore < 0.45 || parser !== "pdftotext";
+      if (shouldTryPdfminer) {
+        try {
+          const pdfminerText = await this.extractPdfTextViaPdfMiner(workingPath);
+          if (pdfminerText.trim()) {
+            const pdfminerReadability = this.scoreAttachmentTextReadability(pdfminerText);
+            const shouldPreferPdfminer = parser !== "pdftotext" || pdfminerReadability > readabilityScore + 0.03 || pdfminerText.length > extracted.length + 80 || pdfminerText.length >= pdfminerEnoughLength && readabilityScore < 0.4;
+            if (shouldPreferPdfminer) {
+              extracted = pdfminerText;
+              parser = "pdfminer";
+              readabilityScore = pdfminerReadability;
+            } else {
+              notes.push(`pdfminer candidate kept secondary (score=${pdfminerReadability.toFixed(2)}).`);
+            }
+          } else {
+            notes.push("pdfminer unavailable or produced empty text.");
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "pdfminer failed";
+          notes.push(`pdfminer failed: ${message}`);
+        }
+      }
+      const shouldTryOcr = preferDetailed || extracted.length < pdftotextEnoughLength || readabilityScore < 0.42;
+      if (shouldTryOcr && await this.canUseShellCommand("pdftoppm") && await this.canUseShellCommand("tesseract")) {
         try {
           const ocrText = await this.extractPdfTextViaOcr(workingPath, ocrMaxPages);
-          if (ocrText.length > extracted.length) {
+          const ocrReadability = this.scoreAttachmentTextReadability(ocrText);
+          const shouldPreferOcr = ocrReadability > readabilityScore + 0.08 || ocrText.length > extracted.length + 120;
+          if (shouldPreferOcr) {
             extracted = ocrText;
             parser = "ocr";
+            readabilityScore = ocrReadability;
+          } else if (ocrText.trim()) {
+            notes.push(`OCR kept as secondary candidate (score=${ocrReadability.toFixed(2)}).`);
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "OCR failed";
-          notes.push(`OCR \uC2E4\uD328: ${message}`);
+          notes.push(`OCR failed: ${message}`);
         }
       }
     } finally {
@@ -3921,11 +4488,13 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     this.attachmentStatusEl.empty();
     if (this.pendingAttachments.length === 0) {
+      this.attachmentStatusEl.addClass("is-empty");
       this.attachmentStatusEl.createSpan({
         text: `\uCCA8\uBD80 \uC5C6\uC74C (\uCD5C\uB300 ${LOCAL_QA_MAX_ATTACHMENTS}\uAC1C): \uB4DC\uB798\uADF8/\uC5C5\uB85C\uB4DC/\uBD99\uC5EC\uB123\uAE30(Ctrl/Cmd+V) \uC0AC\uC6A9 \uAC00\uB2A5`
       });
       return;
     }
+    this.attachmentStatusEl.removeClass("is-empty");
     const head = this.attachmentStatusEl.createDiv({
       cls: "omni-forge-chat-attachment-head"
     });
@@ -3974,6 +4543,118 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         this.removePendingAttachmentAt(index);
       };
     });
+  }
+  buildParserMarkdownFromAttachment(item) {
+    const sourceLabel = (item.label || item.path || "attachment").trim();
+    const safeLabel = sourceLabel.replace(/"/g, '\\"');
+    const safePath = (item.path || "").trim().replace(/"/g, '\\"');
+    const body = item.content && item.content.trim() ? item.content.trim() : item.kind === "image" ? "이미지 파일은 OCR/파서 결과가 없으면 텍스트 본문이 비어 있을 수 있습니다." : "텍스트 추출 결과가 비어 있습니다.";
+    return [
+      "---",
+      "parser_ingest: true",
+      `source_kind: ${item.kind}`,
+      `source_label: "${safeLabel}"`,
+      safePath ? `source_path: "${safePath}"` : 'source_path: "(none)"',
+      `created_at: ${new Date().toISOString()}`,
+      "---",
+      "",
+      `# Parsed: ${sourceLabel}`,
+      "",
+      body
+    ].join("\n");
+  }
+  async convertAttachmentsToParserMarkdown(attachments, sourceLabel) {
+    const created = [];
+    const createdPaths = [];
+    for (const item of attachments.slice(0, LOCAL_QA_MAX_ATTACHMENTS)) {
+      const markdown = this.buildParserMarkdownFromAttachment(item);
+      const rawName = item.label || item.path || `parser-${Date.now()}`;
+      const safeName = this.sanitizeIngestFileName(rawName, "parser-document", "md");
+      const targetPath = await this.persistTextAttachmentToIngest(
+        safeName,
+        "md",
+        "parser",
+        markdown
+      );
+      if (!targetPath) {
+        continue;
+      }
+      createdPaths.push(targetPath);
+      created.push({
+        kind: "text",
+        label: `${item.label || safeName} (parser.md)`,
+        path: targetPath,
+        content: this.clampAttachmentText(markdown)
+      });
+    }
+    if (created.length === 0) {
+      new import_obsidian4.Notice("파서 변환(.md) 결과를 만들지 못했습니다.");
+      return [];
+    }
+    this.mergePendingAttachments(created);
+    this.pushMessage({
+      role: "system",
+      text: `파서 인게스트(${sourceLabel}) 완료: ${created.length}개 .md 생성`,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    new import_obsidian4.Notice(`Parser ingest: ${created.length}개 .md 생성됨`);
+    if (createdPaths.length > 0) {
+      this.pushMessage({
+        role: "system",
+        text: `생성 경로 예시: ${createdPaths.slice(0, 3).join(", ")}${createdPaths.length > 3 ? " ..." : ""}`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
+    return created;
+  }
+  async openParserIngestPicker() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = ".md,.txt,.json,.yml,.yaml,.csv,.ts,.js,.py,.java,.go,.rs,.c,.cpp,.html,.css,.pdf,image/*";
+    input.style.display = "none";
+    document.body.appendChild(input);
+    input.onchange = async () => {
+      var _a;
+      try {
+        const files = Array.from((_a = input.files) != null ? _a : []);
+        const attachments = [];
+        for (const file of files) {
+          if (attachments.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+            break;
+          }
+          try {
+            const parsed = await this.readExternalFileAsAttachment(file);
+            if (parsed) {
+              attachments.push(parsed);
+            }
+          } catch (e) {
+          }
+        }
+        if (attachments.length === 0) {
+          new import_obsidian4.Notice("파서 인게스트 가능한 파일을 찾지 못했습니다.");
+          return;
+        }
+        await this.convertAttachmentsToParserMarkdown(attachments, "picker");
+      } finally {
+        input.remove();
+      }
+    };
+    input.click();
+  }
+  async handleParserDrop(event, dropZone) {
+    event.preventDefault();
+    dropZone.removeClass("omni-forge-chat-drop-target-active");
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) {
+      return;
+    }
+    const attachments = await this.collectAttachmentsFromDrop(dataTransfer);
+    if (attachments.length === 0) {
+      new import_obsidian4.Notice("드롭한 항목에서 파서 인게스트 가능한 파일을 찾지 못했습니다.");
+      return;
+    }
+    await this.convertAttachmentsToParserMarkdown(attachments, "drop");
   }
   async openAttachmentPicker() {
     const input = document.createElement("input");
@@ -4127,7 +4808,70 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         return file;
       }
     }
+    if (this.lastKnownOpenMarkdownPath) {
+      const cached = this.app.vault.getAbstractFileByPath(this.lastKnownOpenMarkdownPath);
+      if (cached instanceof import_obsidian4.TFile && cached.extension === "md") {
+        return cached;
+      }
+    }
     return null;
+  }
+  resolveOpenMarkdownViewByPath(filePath) {
+    const normalized = (0, import_obsidian4.normalizePath)((filePath != null ? filePath : "").trim());
+    if (!normalized) {
+      return null;
+    }
+    const leaves = this.app.workspace.getLeavesOfType("markdown");
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (!(view instanceof import_obsidian4.MarkdownView)) {
+        continue;
+      }
+      const file = view.file;
+      if (!(file instanceof import_obsidian4.TFile) || file.extension !== "md") {
+        continue;
+      }
+      if (file.path !== normalized) {
+        continue;
+      }
+      return view;
+    }
+    return null;
+  }
+  captureOpenSelectionSnapshot(openFilePath) {
+    const normalized = (0, import_obsidian4.normalizePath)((openFilePath != null ? openFilePath : "").trim());
+    if (!normalized) {
+      return null;
+    }
+    const view = this.resolveOpenMarkdownViewByPath(normalized);
+    if (!(view instanceof import_obsidian4.MarkdownView) || !view.editor) {
+      return null;
+    }
+    const editor = view.editor;
+    if (!editor.somethingSelected()) {
+      return null;
+    }
+    const from = editor.getCursor("from");
+    const to = editor.getCursor("to");
+    const fromOffset = editor.posToOffset(from);
+    const toOffset = editor.posToOffset(to);
+    if (!Number.isFinite(fromOffset) || !Number.isFinite(toOffset)) {
+      return null;
+    }
+    if (toOffset <= fromOffset) {
+      return null;
+    }
+    const selectedText = editor.getRange(from, to);
+    if (!selectedText) {
+      return null;
+    }
+    return {
+      filePath: normalized,
+      fromOffset: Math.floor(fromOffset),
+      toOffset: Math.floor(toOffset),
+      selectedText,
+      capturedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
   }
   decodeChatLinkValue(raw) {
     const trimmed = (raw != null ? raw : "").trim();
@@ -4142,7 +4886,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   resolveVaultFileFromChatLink(raw) {
     const decoded = this.decodeChatLinkValue(raw);
-    if (!decoded || /^https?:\/\//i.test(decoded)) {
+    if (!decoded || /^https?:\/\//i.test(decoded) || /^obsidian:\/\//i.test(decoded)) {
       return null;
     }
     let candidate = decoded;
@@ -4220,6 +4964,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       return false;
     }
     try {
+      if (/^obsidian:\/\//i.test(decoded)) {
+        return await this.openLinkWithDesktopShell(decoded);
+      }
       if (/^https?:\/\//i.test(decoded)) {
         return await this.openLinkWithDesktopShell(decoded);
       }
@@ -4258,7 +5005,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           return;
         }
         const internalImageFile = this.resolveVaultFileFromChatLink(src);
-        const shouldInterceptImage = internalImageFile instanceof import_obsidian4.TFile || /^https?:\/\//i.test(src) || /^file:\/\//i.test(src) || nodePath.isAbsolute(src) || /^[A-Za-z]:[\\/]/.test(src);
+        const shouldInterceptImage = internalImageFile instanceof import_obsidian4.TFile || /^https?:\/\//i.test(src) || /^obsidian:\/\//i.test(src) || /^file:\/\//i.test(src) || nodePath.isAbsolute(src) || /^[A-Za-z]:[\\/]/.test(src);
         if (!shouldInterceptImage) {
           return;
         }
@@ -4285,7 +5032,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         if (!decoded || decoded === "#") {
           return false;
         }
-        if (/^https?:\/\//i.test(decoded) || /^file:\/\//i.test(decoded) || nodePath.isAbsolute(decoded) || /^[A-Za-z]:[\\/]/.test(decoded)) {
+        if (/^https?:\/\//i.test(decoded) || /^obsidian:\/\//i.test(decoded) || /^file:\/\//i.test(decoded) || nodePath.isAbsolute(decoded) || /^[A-Za-z]:[\\/]/.test(decoded)) {
           return true;
         }
         return this.resolveVaultFileFromChatLink(decoded) instanceof import_obsidian4.TFile;
@@ -4396,6 +5143,13 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
   }
   async startNewThread() {
+    if (this.running) {
+      const opened = await this.plugin.openLocalQaWorkspaceView(true);
+      if (!opened) {
+        new import_obsidian4.Notice(`실행 중에는 새 채팅창을 여세요. (최대 ${LOCAL_QA_MAX_PANES}개)`);
+      }
+      return;
+    }
     if (this.messages.length > 0 && (this.plugin.isQaThreadAutoSyncEnabledForQa() || this.threadPath)) {
       await this.flushThreadSync(true);
     }
@@ -4482,7 +5236,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const virtualLabel = isAttachmentVirtual ? sourcePath.replace(/^\[ATTACHMENT-[^\]]+\]\s*/, "").trim() : "";
     const fallbackTarget = isAttachmentVirtual ? this.resolveVaultFileFromChatLink(virtualLabel) : null;
     const target = !isAttachmentVirtual ? this.app.vault.getAbstractFileByPath(sourcePath) : fallbackTarget;
-    const canOpenExternal = /^https?:\/\//i.test(sourcePath) || /^file:\/\//i.test(sourcePath) || nodePath.isAbsolute(sourcePath) || /^[A-Za-z]:[\\/]/.test(sourcePath) || isAttachmentVirtual && (/^https?:\/\//i.test(virtualLabel) || /^file:\/\//i.test(virtualLabel) || nodePath.isAbsolute(virtualLabel) || /^[A-Za-z]:[\\/]/.test(virtualLabel));
+    const canOpenExternal = /^https?:\/\//i.test(sourcePath) || /^obsidian:\/\//i.test(sourcePath) || /^file:\/\//i.test(sourcePath) || nodePath.isAbsolute(sourcePath) || /^[A-Za-z]:[\\/]/.test(sourcePath) || isAttachmentVirtual && (/^https?:\/\//i.test(virtualLabel) || /^obsidian:\/\//i.test(virtualLabel) || /^file:\/\//i.test(virtualLabel) || nodePath.isAbsolute(virtualLabel) || /^[A-Za-z]:[\\/]/.test(virtualLabel));
     const externalPath = isAttachmentVirtual ? virtualLabel : sourcePath;
     if (target instanceof import_obsidian4.TFile) {
       const link = row.createEl("a", {
@@ -4531,14 +5285,15 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.renderVersion += 1;
     const version = this.renderVersion;
     this.threadEl.empty();
-    if (this.messages.length === 0) {
+    const visibleMessages = this.plugin.settings.qaShowSystemMessages ? this.messages : this.messages.filter((message) => message.role !== "system");
+    if (visibleMessages.length === 0) {
       this.threadEl.createDiv({
         cls: "omni-forge-chat-empty",
         text: "\uC9C8\uBB38\uC744 \uC785\uB825\uD574 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uC138\uC694. / Ask a question to start."
       });
       return;
     }
-    for (const message of this.messages) {
+    for (const message of visibleMessages) {
       const box = this.threadEl.createDiv({
         cls: `omni-forge-chat-message omni-forge-chat-message-${message.role}`
       });
@@ -4594,6 +5349,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.threadEl.scrollTop = this.threadEl.scrollHeight;
   }
   pushMessage(message) {
+    if (message.role === "system" && !this.plugin.settings.qaShowSystemMessages) {
+      this.scheduleThreadSync();
+      return;
+    }
     this.messages.push(message);
     if (this.messages.length > 120) {
       this.messages = this.messages.slice(-120);
@@ -4638,7 +5397,6 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const active = this.resolveVisibleMarkdownFile();
     if (!(active instanceof import_obsidian4.TFile) || active.extension !== "md") {
       this.activeFileStatusEl.addClass("is-empty");
-      this.activeFileStatusEl.setText("Open file / \uC5F4\uB824\uC788\uB294 \uBB38\uC11C: \uC5C6\uC74C");
       return;
     }
     this.lastKnownOpenMarkdownPath = active.path;
@@ -4676,11 +5434,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const attachmentsForTurn = (_b = preloadedTurn == null ? void 0 : preloadedTurn.attachments) != null ? _b : this.consumePendingAttachments();
     const hasPendingAttachments = attachmentsForTurn.length > 0;
     const openFileForTurn = this.resolveVisibleMarkdownFile();
-    const openFilePathForTurn = (_c = preloadedTurn == null ? void 0 : preloadedTurn.openFilePath) != null ? _c : qaContextEnabled && openFileForTurn instanceof import_obsidian4.TFile && openFileForTurn.extension === "md" ? openFileForTurn.path : void 0;
+    const openFilePathForTurn = (_c = preloadedTurn == null ? void 0 : preloadedTurn.openFilePath) != null ? _c : openFileForTurn instanceof import_obsidian4.TFile && openFileForTurn.extension === "md" ? openFileForTurn.path : void 0;
+    const openSelectionForTurn = (_d = preloadedTurn == null ? void 0 : preloadedTurn.openSelection) != null ? _d : this.captureOpenSelectionSnapshot(openFilePathForTurn);
     if (!qaContextEnabled && !hasPendingAttachments) {
       this.pushMessage({
         role: "system",
-        text: "QA \uCEE8\uD14D\uC2A4\uD2B8 OFF \uC0C1\uD0DC\uC785\uB2C8\uB2E4. \uC120\uD0DD \uB178\uD2B8 \uB9AC\uD2B8\uB9AC\uBC8C \uC5C6\uC774 \uC77C\uBC18 \uCC44\uD305\uC73C\uB85C \uC9C4\uD589\uD569\uB2C8\uB2E4.",
+        text: openFilePathForTurn ? `QA 컨텍스트 OFF 상태입니다. 선택 노트 리트리벌 대신 현재 열린 문서를 보조 컨텍스트로 사용합니다: ${openFilePathForTurn}` : "QA 컨텍스트 OFF 상태입니다. 선택 노트 리트리벌 없이 일반 채팅으로 진행합니다.",
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
     } else if (selectedFiles.length === 0 && !hasPendingAttachments) {
@@ -4818,7 +5577,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         abortController.signal,
         attachmentsForTurn,
         {
-          openFilePath: openFilePathForTurn
+          openFilePath: openFilePathForTurn,
+          openSelection: openSelectionForTurn
         }
       );
       const draft = this.messages[draftIndex];
@@ -4882,7 +5642,11 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       const cancelled = this.plugin.isAbortError(error);
       const message = cancelled ? "\uC694\uCCAD\uC774 \uC911\uC9C0\uB418\uC5C8\uC2B5\uB2C8\uB2E4." : error instanceof Error ? error.message : "Unknown local QA error";
       const draft = this.messages[draftIndex];
-      if (draft && draft.role === "assistant" && !draft.text.trim()) {
+      if (cancelled) {
+        if (draft && draft.role === "assistant") {
+          this.messages.splice(draftIndex, 1);
+        }
+      } else if (draft && draft.role === "assistant" && !draft.text.trim()) {
         this.messages.splice(draftIndex, 1);
       } else if (draft && draft.role === "assistant") {
         draft.isDraft = false;
@@ -4944,14 +5708,22 @@ var SETTINGS_NAME_KO_MAP = {
   "Mode behavior summary": "\uBAA8\uB4DC \uB3D9\uC791 \uC694\uC57D",
   "Quick custom profile slots": "\uBE60\uB978 \uCEE4\uC2A4\uD140 \uD504\uB85C\uD544 \uC2AC\uB86F",
   "Quick model pickers": "\uBE60\uB978 \uBAA8\uB378 \uC120\uD0DD\uAE30",
+  "Quick provider": "\uBE60\uB978 \uC81C\uACF5\uC790",
+  "Chat model source": "\uCC44\uD305 \uBAA8\uB378 \uC18C\uC2A4",
+  "Chat model profile": "\uCC44\uD305 \uBAA8\uB378 \uD504\uB85C\uD544",
+  "Model inventory refresh": "\uBAA8\uB378 \uC778\uBCA4\uD1A0\uB9AC \uC0C8\uB85C\uACE0\uCE68",
   "One-click local presets": "\uC6D0\uD074\uB9AD \uB85C\uCEEC \uD504\uB9AC\uC14B",
+  "Flash profile": "Flash \uD504\uB85C\uD544",
+  "Pro profile": "Pro \uD504\uB85C\uD544",
   "Local AI readiness": "\uB85C\uCEEC AI \uC900\uBE44 \uC0C1\uD0DC",
   "Open preset guide": "\uD504\uB9AC\uC14B \uAC00\uC774\uB4DC \uC5F4\uAE30",
   "Guide actions": "\uAC00\uC774\uB4DC \uB3D9\uC791",
   "Need advanced options?": "\uACE0\uAE09 \uC124\uC815\uC774 \uD544\uC694\uD55C\uAC00\uC694?",
   Provider: "\uC81C\uACF5\uC790",
+  "Codex bridge note": "Codex \uBE0C\uB9AC\uC9C0 \uC548\uB0B4",
   "Ollama base URL": "Ollama \uAE30\uBCF8 URL",
   "Ollama detected model picker": "Ollama \uAC10\uC9C0 \uBAA8\uB378 \uC120\uD0DD\uAE30",
+  "Ollama auto-match policy": "Ollama \uC790\uB3D9 \uB9E4\uCE6D \uC815\uCC45",
   "Ollama model (manual)": "Ollama \uBAA8\uB378(\uC218\uB3D9)",
   "Auto-pick recommended Ollama model": "\uAD8C\uC7A5 Ollama \uBAA8\uB378 \uC790\uB3D9 \uC120\uD0DD",
   "Ollama detection summary": "Ollama \uAC10\uC9C0 \uC694\uC57D",
@@ -4981,6 +5753,8 @@ var SETTINGS_NAME_KO_MAP = {
   "Enable semantic candidate ranking": "\uC2DC\uB9E8\uD2F1 \uD6C4\uBCF4 \uB7AD\uD0B9 \uC0AC\uC6A9",
   "Embedding Ollama base URL": "\uC784\uBCA0\uB529 Ollama \uAE30\uBCF8 URL",
   "Embedding detected model picker": "\uC784\uBCA0\uB529 \uAC10\uC9C0 \uBAA8\uB378 \uC120\uD0DD\uAE30",
+  "Embedding auto-match policy": "\uC784\uBCA0\uB529 \uC790\uB3D9 \uB9E4\uCE6D \uC815\uCC45",
+  "Cloud embedding behavior": "\uD074\uB77C\uC6B0\uB4DC \uC784\uBCA0\uB529 \uB3D9\uC791",
   "Embedding model (manual)": "\uC784\uBCA0\uB529 \uBAA8\uB378(\uC218\uB3D9)",
   "Auto-pick recommended embedding model": "\uAD8C\uC7A5 \uC784\uBCA0\uB529 \uBAA8\uB378 \uC790\uB3D9 \uC120\uD0DD",
   "Embedding detection summary": "\uC784\uBCA0\uB529 \uAC10\uC9C0 \uC694\uC57D",
@@ -4999,11 +5773,14 @@ var SETTINGS_NAME_KO_MAP = {
   "Ask model (vision)": "Ask \uBAA8\uB378(\uBE44\uC804)",
   "Image generator model": "\uC774\uBBF8\uC9C0 \uC0DD\uC131 \uBAA8\uB378",
   "Coder model": "Coder \uBAA8\uB378",
+  "Debugger model": "Debugger \uBAA8\uB378",
+  "Debugger agent": "Debugger \uC5D0\uC774\uC804\uD2B8",
   "Architect model": "Architect \uBAA8\uB378",
   "Orchestrator model": "Orchestrator \uBAA8\uB378",
   "Safeguard model": "Safeguard \uBAA8\uB378",
   "Role system prompt editor": "\uC5ED\uD560 \uC2DC\uC2A4\uD15C \uD504\uB86C\uD504\uD2B8 \uD3B8\uC9D1\uAE30",
   "Prefer Ollama /api/chat (with fallback)": "Ollama /api/chat \uC6B0\uC120(\uD3F4\uBC31 \uD3EC\uD568)",
+  "Show system messages in chat": "\uCC44\uD305 \uC2DC\uC2A4\uD15C \uBA54\uC2DC\uC9C0 \uD45C\uC2DC",
   "Chat transcript folder path": "\uCC44\uD305 \uAE30\uB85D \uD3F4\uB354 \uACBD\uB85C",
   "Attachment ingest folder path": "\uCCA8\uBD80 \uBBF8\uB7EC\uB9C1 \uD3F4\uB354 \uACBD\uB85C",
   "Use QA context in chat": "\uCC44\uD305\uC5D0\uC11C QA \uCEE8\uD14D\uC2A4\uD2B8 \uC0AC\uC6A9",
@@ -5063,16 +5840,23 @@ var SETTINGS_DESC_KO_MAP = {
   "Switch to Full once to access all expert controls. Features are unchanged.": "\uC804\uBB38\uAC00\uC6A9 \uC804\uCCB4 \uC81C\uC5B4\uAC00 \uD544\uC694\uD558\uBA74 Full\uB85C \uC804\uD658\uD558\uC138\uC694. \uAE30\uB2A5\uC740 \uB3D9\uC77C\uD558\uAC8C \uC720\uC9C0\uB429\uB2C8\uB2E4.",
   "Return to Simple to focus on essentials.": "\uD575\uC2EC \uD56D\uBAA9 \uC911\uC2EC\uC73C\uB85C \uBCF4\uB824\uBA74 Simple\uB85C \uB3CC\uC544\uAC11\uB2C8\uB2E4.",
   "Choose AI provider. Local providers are recommended first.": "AI \uC81C\uACF5\uC790\uB97C \uC120\uD0DD\uD569\uB2C8\uB2E4. \uB85C\uCEEC \uC81C\uACF5\uC790\uB97C \uC6B0\uC120 \uAD8C\uC7A5\uD569\uB2C8\uB2E4.",
+  "Choose provider in order: local > local QA bridge > cloud. Local defaults to Flash profile.": "\uC81C\uACF5\uC790 \uC21C\uC11C\uB294 \uB85C\uCEEC > \uB85C\uCEEC QA \uBE0C\uB9AC\uC9C0 > \uD074\uB77C\uC6B0\uB4DC\uC785\uB2C8\uB2E4. \uB85C\uCEEC \uC120\uD0DD \uC2DC Flash \uD504\uB85C\uD544\uC744 \uAE30\uBCF8 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "Meaning: Q&A calls Codex through an OpenAI-compatible bridge endpoint (for example Agent Client) instead of a direct plugin API integration.": "\uC758\uBBF8: \uD50C\uB7EC\uADF8\uC778\uC774 Codex\uB97C \uC9C1\uC811 API \uC5F0\uB3D9\uD558\uB294 \uB300\uC2E0 OpenAI \uD638\uD658 \uBE0C\uB9AC\uC9C0 \uC5D4\uB4DC\uD3EC\uC778\uD2B8(\uC608: Agent Client)\uB97C \uD1B5\uD574 Q&A\uB97C \uD638\uCD9C\uD55C\uB2E4\uB294 \uB73B\uC785\uB2C8\uB2E4.",
+  "Refresh local model detection and embedding inventory now.": "\uB85C\uCEEC \uBAA8\uB378 \uAC10\uC9C0\uC640 \uC784\uBCA0\uB529 \uC778\uBCA4\uD1A0\uB9AC\uB97C \uC989\uC2DC \uC0C8\uB85C\uACE0\uCE68\uD569\uB2C8\uB2E4.",
   "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for analysis.": "\uAC10\uC9C0\uB41C \uBAA8\uB378 \uC911\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. (\uCD94\uCC9C)=\uAD8C\uC7A5, (\uBD88\uAC00)=\uBD84\uC11D \uBD80\uC801\uD569",
+  "On refresh/detect, recommended model is applied automatically.": "\uC0C8\uB85C\uACE0\uCE68/\uAC10\uC9C0 \uC2DC \uAD8C\uC7A5 \uBAA8\uB378\uC744 \uC790\uB3D9 \uC801\uC6A9\uD569\uB2C8\uB2E4.",
   "Manual override if you want a custom model name.": "\uC0AC\uC6A9\uC790 \uC9C0\uC815 \uBAA8\uB378\uBA85\uC744 \uC9C1\uC811 \uC785\uB825\uD560 \uB54C \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Detect local models and auto-choose recommended when current is missing.": "\uB85C\uCEEC \uBAA8\uB378\uC744 \uAC10\uC9C0\uD574 \uD604\uC7AC \uBAA8\uB378\uC774 \uC5C6\uC73C\uBA74 \uAD8C\uC7A5 \uBAA8\uB378\uC744 \uC790\uB3D9 \uC120\uD0DD\uD569\uB2C8\uB2E4.",
   "Analyze first, preview changes, and apply only when approved.": "\uBA3C\uC800 \uBD84\uC11D\uD558\uACE0 \uBCC0\uACBD \uBBF8\uB9AC\uBCF4\uAE30\uB97C \uD655\uC778\uD55C \uB4A4 \uC2B9\uC778 \uC2DC\uC5D0\uB9CC \uC801\uC6A9\uD569\uB2C8\uB2E4.",
   "When enabled, linked field includes all selected notes for each note (except self). maxLinked is ignored in this mode.": "\uCF1C\uBA74 \uAC01 \uB178\uD2B8\uC758 linked\uC5D0 \uC120\uD0DD\uB41C \uBAA8\uB4E0 \uB178\uD2B8(\uC790\uAE30 \uC790\uC2E0 \uC81C\uC678)\uB97C \uB123\uC2B5\uB2C8\uB2E4. \uC774 \uBAA8\uB4DC\uC5D0\uC11C\uB294 maxLinked\uB97C \uBB34\uC2DC\uD569\uB2C8\uB2E4.",
   "In addition to persistent progress modal, show short notices.": "\uACE0\uC815 \uC9C4\uD589 \uBAA8\uB2EC \uC678\uC5D0\uB3C4 \uC9E7\uC740 \uC54C\uB9BC\uC744 \uD45C\uC2DC\uD569\uB2C8\uB2E4.",
   "Quick: changed-notes \uC911\uC2EC + semantic off. Detailed: semantic on + \uC804\uCCB4 \uBC94\uC704 \uAE30\uBC18 \uBD84\uC11D.": "Quick\uC740 \uBCC0\uACBD \uB178\uD2B8 \uC911\uC2EC+semantic off, Detailed\uB294 semantic on+\uC804\uCCB4 \uBC94\uC704 \uAE30\uBC18 \uBD84\uC11D\uC785\uB2C8\uB2E4.",
+  "Quick: changed-notes centric + semantic off. Detailed: semantic on + full-scope analysis. Embedding model is auto-matched by profile when depth changes.": "Quick\uC740 \uBCC0\uACBD \uB178\uD2B8 \uC911\uC2EC+semantic off, Detailed\uB294 semantic on+\uC804\uCCB4 \uBC94\uC704 \uAE30\uBC18 \uBD84\uC11D\uC785\uB2C8\uB2E4. \uAE4A\uC774 \uBCC0\uACBD \uC2DC \uC784\uBCA0\uB529 \uBAA8\uB378\uB3C4 \uD504\uB85C\uD544 \uAE30\uC900\uC73C\uB85C \uC790\uB3D9 \uB9E4\uCE6D\uB429\uB2C8\uB2E4.",
   "Use local Ollama embeddings to rank likely related notes before AI linked suggestion.": "AI linked \uC81C\uC548 \uC804\uC5D0 \uB85C\uCEEC Ollama \uC784\uBCA0\uB529\uC73C\uB85C \uAD00\uB828 \uAC00\uB2A5 \uB178\uD2B8\uB97C \uC6B0\uC120 \uC815\uB82C\uD569\uB2C8\uB2E4.",
   "Choose among detected models. (\uCD94\uCC9C)=recommended, (\uBD88\uAC00)=not suitable for embeddings.": "\uAC10\uC9C0\uB41C \uBAA8\uB378 \uC911\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. (\uCD94\uCC9C)=\uAD8C\uC7A5, (\uBD88\uAC00)=\uC784\uBCA0\uB529 \uBD80\uC801\uD569",
   "Choose among embedding-capable detected models. (\uCD94\uCC9C)=recommended.": "\uC784\uBCA0\uB529 \uAC00\uB2A5\uD55C \uAC10\uC9C0 \uBAA8\uB378 \uC911\uC5D0\uC11C \uC120\uD0DD\uD569\uB2C8\uB2E4. (\uCD94\uCC9C)=\uAD8C\uC7A5",
+  "Embedding detected picker is shown only for Ollama provider. In cloud mode, this picker is hidden and semantic linking uses the last saved local embedding model when enabled.": "Embedding \uAC10\uC9C0 \uC120\uD0DD\uAE30\uB294 Ollama \uC81C\uACF5\uC790\uC77C \uB54C\uB9CC \uD45C\uC2DC\uB429\uB2C8\uB2E4. \uD074\uB77C\uC6B0\uB4DC \uBAA8\uB4DC\uC5D0\uC11C\uB294 \uC120\uD0DD\uAE30\uAC00 \uC228\uACA8\uC9C0\uBA70, semantic linking\uC774 \uCF1C\uC838 \uC788\uC73C\uBA74 \uB9C8\uC9C0\uB9C9 \uC800\uC7A5\uB41C \uB85C\uCEEC \uC784\uBCA0\uB529 \uBAA8\uB378\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
+  "On refresh/detect, recommended embedding model is applied automatically.": "\uC0C8\uB85C\uACE0\uCE68/\uAC10\uC9C0 \uC2DC \uAD8C\uC7A5 \uC784\uBCA0\uB529 \uBAA8\uB378\uC744 \uC790\uB3D9 \uC801\uC6A9\uD569\uB2C8\uB2E4.",
   "Manual override if you want a custom embedding model name.": "\uC0AC\uC6A9\uC790 \uC9C0\uC815 \uC784\uBCA0\uB529 \uBAA8\uB378\uBA85\uC744 \uC9C1\uC811 \uC785\uB825\uD560 \uB54C \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Range: 0.0 to 1.0": "\uBC94\uC704: 0.0 ~ 1.0",
   "Trim note text before embedding to keep local runs fast.": "\uB85C\uCEEC \uC2E4\uD589 \uC131\uB2A5\uC744 \uC704\uD574 \uC784\uBCA0\uB529 \uC804 \uB178\uD2B8 \uD14D\uC2A4\uD2B8 \uAE38\uC774\uB97C \uC81C\uD55C\uD569\uB2C8\uB2E4.",
@@ -5087,6 +5871,7 @@ var SETTINGS_DESC_KO_MAP = {
   "Reserved for image-generation workflows. Current chat UI is text-first.": "\uC774\uBBF8\uC9C0 \uC0DD\uC131 \uC6CC\uD06C\uD50C\uB85C\uC6A9 \uC608\uC57D \uBAA8\uB378\uC785\uB2C8\uB2E4. \uD604\uC7AC \uCC44\uD305 UI\uB294 \uD14D\uC2A4\uD2B8 \uC911\uC2EC\uC785\uB2C8\uB2E4.",
   "Add extra system instructions per role agent. Empty keeps built-in role prompt only.": "\uC5ED\uD560\uBCC4 \uC5D0\uC774\uC804\uD2B8\uC5D0 \uCD94\uAC00 \uC2DC\uC2A4\uD15C \uC9C0\uC2DC\uB97C \uB123\uC2B5\uB2C8\uB2E4. \uBE44\uC6B0\uBA74 \uAE30\uBCF8 \uC5ED\uD560 \uD504\uB86C\uD504\uD2B8\uB9CC \uC0AC\uC6A9\uD569\uB2C8\uB2E4.",
   "Use role-based chat first, then fallback to /api/generate when unavailable.": "\uC5ED\uD560 \uAE30\uBC18 /api/chat\uC744 \uC6B0\uC120 \uC0AC\uC6A9\uD558\uACE0, \uBD88\uAC00\uD558\uBA74 /api/generate\uB85C \uD3F4\uBC31\uD569\uB2C8\uB2E4.",
+  "Off by default. When OFF, system logs are hidden and omitted from saved chat transcript.": "\uAE30\uBCF8\uAC12\uC740 OFF\uC785\uB2C8\uB2E4. OFF\uC77C \uB54C \uC2DC\uC2A4\uD15C \uB85C\uADF8\uB294 \uCC44\uD305 \uD654\uBA74\uC5D0\uC11C \uC228\uACA8\uC9C0\uACE0 \uC800\uC7A5\uB41C \uCC44\uD305 \uAE30\uB85D\uC5D0\uC11C\uB3C4 \uC81C\uC678\uB429\uB2C8\uB2E4.",
   "Vault-relative path for saving chat transcripts.": "\uCC44\uD305 \uAE30\uB85D \uC800\uC7A5\uC6A9 vault-relative \uACBD\uB85C\uC785\uB2C8\uB2E4.",
   "Vault-relative folder where external attachments are mirrored for stable source links.": "\uC678\uBD80 \uCCA8\uBD80\uB97C \uC548\uC815\uC801\uC778 \uCD9C\uCC98 \uB9C1\uD06C\uB85C \uC5F4\uAE30 \uC704\uD574 vault \uB0B4\uBD80\uB85C \uBBF8\uB7EC\uB9C1\uD558\uB294 \uD3F4\uB354 \uACBD\uB85C\uC785\uB2C8\uB2E4.",
   "When disabled, chat runs in general mode without selected-note retrieval context.": "\uBE44\uD65C\uC131\uD654\uD558\uBA74 \uC120\uD0DD \uB178\uD2B8 \uB9AC\uD2B8\uB9AC\uBC8C \uC5C6\uC774 \uC77C\uBC18 \uCC44\uD305 \uBAA8\uB4DC\uB85C \uB3D9\uC791\uD569\uB2C8\uB2E4.",
@@ -5186,6 +5971,12 @@ var ROLE_MODEL_SETTING_CONFIGS = [
     description: "Optional role-specific model. Empty uses Q&A model as fallback."
   },
   {
+    key: "qaDebuggerModel",
+    role: "debugger",
+    name: "Debugger model",
+    description: "Optional role-specific model. Empty uses Q&A model as fallback."
+  },
+  {
     key: "qaArchitectModel",
     role: "architect",
     name: "Architect model",
@@ -5208,7 +5999,10 @@ var CODER_MODEL_REGEX = /(coder|code|codellama|codestral|starcoder|deepseek-code
 var SAFEGUARD_MODEL_REGEX = /(guard|safeguard|safety|llama-guard)/i;
 var VISION_MODEL_REGEX = /(vision|llava|bakllava|moondream|qwen.*vl|pixtral|internvl|minicpm[-_]?v|florence|gemma3)/i;
 var IMAGE_GENERATOR_MODEL_REGEX = /(flux|sdxl|stable[-_ ]?diffusion|diffusion|imagegen|image-gen)/i;
-var GENERAL_TEXT_MODEL_REGEX = /(qwen|llama|gpt-oss|gemma|mistral|devstral|phi|deepseek|yi)/i;
+var GENERAL_TEXT_MODEL_REGEX = /(qwen|llama|gpt-(?!oss)|gpt-oss|gemma|mistral|devstral|phi|deepseek|yi|claude|gemini|codex|o1|o3|o4)/i;
+var CLOUD_OPENAI_MODEL_REGEX = /\b(gpt-(?!oss)|o1|o3|o4|codex)\b/i;
+var CLOUD_ANTHROPIC_MODEL_REGEX = /\bclaude\b/i;
+var CLOUD_GEMINI_MODEL_REGEX = /\bgemini\b/i;
 var LARGE_MODEL_SIZE_REGEX = /:(12|14|20|24|27|30|32|34|70)b\b/i;
 var MID_MODEL_SIZE_REGEX = /:(7|8|9|10|11)b\b/i;
 var SMALL_MODEL_SIZE_REGEX = /:(0\.[0-9]+|1|2|3|4|5|6)b\b/i;
@@ -5733,90 +6527,89 @@ ${availability.note}`).addText(
     return (rawText != null ? rawText : "").split(/\n|\|/g).map((line) => line.trim()).filter((line) => line.length > 0);
   }
   addViewModeAndPresetControls(containerEl) {
-    const quickModelSetting = new import_obsidian4.Setting(containerEl).setName("Quick model pickers").setDesc("\uAC10\uC9C0\uB41C Ollama/\uC784\uBCA0\uB529 \uBAA8\uB378\uC744 \uBE60\uB974\uAC8C \uC120\uD0DD\uD569\uB2C8\uB2E4.").addDropdown((dropdown) => {
-      const options = this.plugin.getOllamaModelOptions();
-      const current = this.plugin.settings.qaOllamaModel.trim() || this.plugin.settings.ollamaModel.trim();
-      dropdown.addOption("", "Ollama \uD14D\uC2A4\uD2B8 \uBAA8\uB378(\uAC10\uC9C0\uAC12 \uC120\uD0DD)");
+    const provider = this.plugin.settings.provider;
+    const family = provider === "ollama" || provider === "lmstudio" ? "local" : "cloud";
+    new import_obsidian4.Setting(containerEl).setName("Chat model profile / \uCC44\uD305 \uBAA8\uB378 \uD504\uB85C\uD544").setDesc("Local: local-flash/local-pro. Cloud: codex/claude/gemini (bridge endpoint required).").addDropdown((dropdown) => {
+      const options = this.plugin.getQaChatModelProfileOptionsForQa(family);
       for (const option of options) {
-        dropdown.addOption(option.model, this.formatDetectedModelLabel(option));
+        dropdown.addOption(option.value, option.label);
       }
-      dropdown.setValue(current);
+      const current = this.plugin.getQaChatModelProfileForQa();
+      const fallback = options.length > 0 ? options[0].value : "";
+      dropdown.setValue(options.some((option) => option.value === current) ? current : fallback);
       dropdown.onChange(async (value) => {
-        const model = value.trim();
-        this.plugin.settings.ollamaModel = model;
-        await this.plugin.setQaModelOverrideForQa(model);
-        await this.plugin.saveSettings();
-        this.display();
-      });
-    }).addDropdown((dropdown) => {
-      const options = this.plugin.getEmbeddingModelOptions().filter((option) => option.status !== "unavailable");
-      const current = this.plugin.settings.semanticOllamaModel.trim();
-      dropdown.addOption("", "Embedding \uBAA8\uB378(\uAC10\uC9C0\uAC12 \uC120\uD0DD)");
-      for (const option of options) {
-        const suffix = option.status === "recommended" ? " (\uCD94\uCC9C)" : "";
-        dropdown.addOption(option.model, `${option.model}${suffix}`);
-      }
-      dropdown.setValue(current);
-      dropdown.onChange(async (value) => {
-        this.plugin.settings.semanticOllamaModel = value.trim();
-        await this.plugin.saveSettings();
+        if (provider === "lmstudio") {
+          const normalized = value === "local-pro" ? "local-pro" : "local-flash";
+          this.plugin.settings.qaChatModelFamily = "local";
+          this.plugin.settings.qaChatModelProfile = normalized;
+          this.plugin.settings.qaLocalPresetProfile = normalized === "local-pro" ? "balanced_local" : "fast_local";
+          await this.plugin.saveSettings();
+          await this.plugin.refreshOpenQaWorkspaceViews();
+        } else {
+          const summary = await this.plugin.applyQaChatModelProfileForQa(value, family);
+          new import_obsidian4.Notice(summary, 6e3);
+        }
         this.display();
       });
     });
-    quickModelSetting.settingEl.addClass("omni-forge-settings-quick");
-    const detectedModels = this.plugin.getOllamaModelOptions();
-    const localReadySummary = detectedModels.length > 0 ? `Detected ${detectedModels.length} local model(s).` : "No local Ollama model detected yet. Start Ollama and pull models.";
-    const readinessSetting = new import_obsidian4.Setting(containerEl).setName("Local AI readiness").setDesc(localReadySummary).addButton(
-      (button) => button.setButtonText("Refresh").onClick(async () => {
+    new import_obsidian4.Setting(containerEl).setName("Model inventory refresh / \uBAA8\uB378 \uC778\uBCA4\uD1A0\uB9AC \uC0C8\uB85C\uACE0\uCE68").setDesc("Refresh local model detection and embedding inventory now.").addButton(
+      (button) => button.setButtonText("Refresh / \uC0C8\uB85C\uACE0\uCE68").onClick(async () => {
         await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
         await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
         this.display();
       })
-    ).addButton(
-      (button) => button.setButtonText("\uCEF4\uD4E8\uD130 \uC0AC\uC591 \uBCF4\uAE30").onClick(async () => {
-        new import_obsidian4.Notice(this.plugin.getHardwareCapabilitySummaryForQa(), 7e3);
-      })
     );
-    readinessSetting.settingEl.addClass("omni-forge-settings-quick");
   }
   addChatPresetControls(containerEl) {
-    const applyPreset = async (preset) => {
-      const summary = await this.plugin.applyOneClickLocalPresetForQa(preset);
-      new import_obsidian4.Notice(summary, 6500);
-      this.display();
+    const uiMode = this.plugin.settings.settingsUiLanguage;
+    const localize = (en, ko) => uiMode === "en" ? en : uiMode === "ko" ? ko : `${en} / ${ko}`;
+    const textOptions = this.plugin.getOllamaModelOptions().filter((option) => option.status !== "unavailable");
+    const embeddingOptions = this.plugin.getEmbeddingModelOptions().filter((option) => option.status !== "unavailable");
+    const summarizeDetected = (options, limit = 4) => {
+      if (options.length === 0) {
+        return "(none)";
+      }
+      const names = options.slice(0, limit).map((option) => option.model);
+      return options.length > limit ? `${names.join(", ")} ... (+${options.length - limit})` : names.join(", ");
     };
-    new import_obsidian4.Setting(containerEl).setName("One-click local presets").setDesc("Flash/Pro presets with automatic local model detection and role assignment.").addButton(
-      (button) => button.setButtonText("Flash").onClick(async () => {
-        await applyPreset("fast_local");
-      })
+    const flashText = this.plugin.getRecommendedPresetOverrideModelForQa("fast_local", "text") || "(none)";
+    const flashVision = this.plugin.getRecommendedPresetOverrideModelForQa("fast_local", "vision") || "(none)";
+    const flashEmbedding = this.plugin.getRecommendedPresetOverrideModelForQa("fast_local", "embedding") || "(none)";
+    new import_obsidian4.Setting(containerEl).setName("Flash profile / Flash \uD504\uB85C\uD544").setDesc(
+      [
+        localize(`Detected text models: ${summarizeDetected(textOptions)}`, `감지 텍스트 모델: ${summarizeDetected(textOptions)}`),
+        localize(`Detected embedding models: ${summarizeDetected(embeddingOptions)}`, `감지 임베딩 모델: ${summarizeDetected(embeddingOptions)}`),
+        localize(`Recommended: text=${flashText}, vision=${flashVision}, embedding=${flashEmbedding}`, `추천값: text=${flashText}, vision=${flashVision}, embedding=${flashEmbedding}`)
+      ].join("\n")
     ).addButton(
-      (button) => button.setButtonText("Pro").setCta().onClick(async () => {
-        await applyPreset("balanced_local");
+      (button) => button.setButtonText(localize("Apply Flash", "Flash 적용")).onClick(async () => {
+        const summary = await this.plugin.applyQaChatModelProfileForQa("local-flash", "local");
+        new import_obsidian4.Notice(summary, 6500);
+        this.display();
       })
     );
-    for (const slot of QA_QUICK_CUSTOM_SLOT_CONFIGS) {
-      new import_obsidian4.Setting(containerEl).setName(`Quick custom profile slots \xB7 ${slot.label}`).setDesc(this.plugin.getQaQuickCustomProfileSlotSummary(slot.key)).addButton(
-        (button) => button.setButtonText("\uD604\uC7AC\uAC12 \uC800\uC7A5").onClick(async () => {
-          const summary = await this.plugin.saveQaQuickCustomProfileSlot(
-            slot.key,
-            `${slot.label} (${(/* @__PURE__ */ new Date()).toLocaleString()})`
-          );
-          new import_obsidian4.Notice(summary, 6e3);
-          this.display();
-        })
-      ).addButton(
-        (button) => button.setButtonText("\uC801\uC6A9").setCta().onClick(async () => {
-          try {
-            const summary = await this.plugin.applyQaQuickCustomProfileSlot(slot.key);
-            new import_obsidian4.Notice(summary, 6e3);
-            this.display();
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "\uCEE4\uC2A4\uD140 \uD504\uB85C\uD544\uC744 \uC801\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.";
-            new import_obsidian4.Notice(message, 6e3);
-          }
-        })
-      );
-    }
+    const proText = this.plugin.getRecommendedPresetOverrideModelForQa("balanced_local", "text") || "(none)";
+    const proVision = this.plugin.getRecommendedPresetOverrideModelForQa("balanced_local", "vision") || "(none)";
+    const proEmbedding = this.plugin.getRecommendedPresetOverrideModelForQa("balanced_local", "embedding") || "(none)";
+    new import_obsidian4.Setting(containerEl).setName("Pro profile / Pro \uD504\uB85C\uD544").setDesc(
+      [
+        localize(`Detected text models: ${summarizeDetected(textOptions)}`, `감지 텍스트 모델: ${summarizeDetected(textOptions)}`),
+        localize(`Detected embedding models: ${summarizeDetected(embeddingOptions)}`, `감지 임베딩 모델: ${summarizeDetected(embeddingOptions)}`),
+        localize(`Recommended: text=${proText}, vision=${proVision}, embedding=${proEmbedding}`, `추천값: text=${proText}, vision=${proVision}, embedding=${proEmbedding}`)
+      ].join("\n")
+    ).addButton(
+      (button) => button.setButtonText(localize("Apply Pro", "Pro 적용")).onClick(async () => {
+        const summary = await this.plugin.applyQaChatModelProfileForQa("local-pro", "local");
+        new import_obsidian4.Notice(summary, 6500);
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText(localize("Refresh detect", "감지 새로고침")).onClick(async () => {
+        await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
+        await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+        this.display();
+      })
+    );
   }
   addSettingsTabSwitcher(containerEl) {
     const row = containerEl.createDiv({ cls: "omni-forge-settings-tab-row" });
@@ -5861,10 +6654,10 @@ ${availability.note}`).addText(
         return sectionTitle === "__prelude" || sectionTitle === "Local provider config" || sectionTitle === "Cloud provider config" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
       case "analyzed":
         return sectionTitle === "Behavior" || sectionTitle === "Semantic linking (Ollama embeddings)" || sectionTitle === "Property cleanup" || sectionTitle === "Selection and backup" || sectionTitle === "MOC";
-      case "models":
-        return sectionTitle === "__prelude" || sectionTitle === "Local provider config" || sectionTitle === "Cloud provider config" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
       case "chat":
         return sectionTitle === "__prelude" || sectionTitle === "Behavior" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
+      case "orchestration":
+        return sectionTitle === "__prelude" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)" || sectionTitle === "Pipeline prompt tips / \uD30C\uC774\uD504\uB77C\uC778 \uD504\uB86C\uD504\uD2B8 \uD301";
       default:
         return true;
     }
@@ -5885,26 +6678,46 @@ ${availability.note}`).addText(
           _KnowledgeWeaverSettingTab.QUICK_TAB_VISIBLE_NAME_PREFIXES
         );
       case "analyzed":
-        return this.settingNameStartsWithPrefixes(
-          name,
-          _KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES
-        );
-      case "models":
-        return this.settingNameStartsWithPrefixes(
-          name,
-          _KnowledgeWeaverSettingTab.MODELS_TAB_VISIBLE_NAME_PREFIXES
-        );
+        {
+          const visible = this.settingNameStartsWithPrefixes(
+            name,
+            _KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES
+          );
+          if (!visible) {
+            return false;
+          }
+          if (this.plugin.settings.provider !== "ollama" && this.settingNameStartsWithPrefixes(name, _KnowledgeWeaverSettingTab.ANALYZED_OLLAMA_ONLY_PREFIXES)) {
+            return false;
+          }
+          return true;
+        }
       case "chat":
+        {
+          const visible = this.settingNameStartsWithPrefixes(
+            name,
+            _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES
+          );
+          if (!visible) {
+            return false;
+          }
+          if (this.plugin.settings.provider !== "ollama" && this.settingNameStartsWithPrefixes(name, _KnowledgeWeaverSettingTab.CHAT_OLLAMA_ONLY_PREFIXES)) {
+            return false;
+          }
+          if (this.plugin.settings.provider !== "ollama" && this.plugin.settings.provider !== "lmstudio" && this.settingNameStartsWithPrefixes(name, _KnowledgeWeaverSettingTab.CHAT_LOCAL_PROFILE_PREFIXES)) {
+            return false;
+          }
+          return true;
+        }
+      case "orchestration":
         return this.settingNameStartsWithPrefixes(
           name,
-          _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES
+          _KnowledgeWeaverSettingTab.ORCHESTRATION_TAB_VISIBLE_NAME_PREFIXES
         );
       case "advanced":
         return this.settingNameStartsWithPrefixes(
           name,
           _KnowledgeWeaverSettingTab.ADVANCED_TAB_VISIBLE_NAME_PREFIXES
         );
-      case "orchestration":
       case "skills":
       case "parser":
       case "guide":
@@ -5912,6 +6725,39 @@ ${availability.note}`).addText(
       default:
         return true;
     }
+  }
+  moveSectionBlockToTop(containerEl, title) {
+    const children = Array.from(containerEl.children);
+    const targetHeader = children.find(
+      (child) => child instanceof HTMLElement && child.tagName === "H3" && ((child.textContent || "").trim() === title)
+    );
+    if (!(targetHeader instanceof HTMLElement)) {
+      return;
+    }
+    const firstSectionHeader = children.find(
+      (child) => child instanceof HTMLElement && child.tagName === "H3"
+    );
+    if (!(firstSectionHeader instanceof HTMLElement) || firstSectionHeader === targetHeader) {
+      return;
+    }
+    const blockNodes = [];
+    let cursor = targetHeader;
+    while (cursor instanceof HTMLElement) {
+      blockNodes.push(cursor);
+      const next = cursor.nextElementSibling;
+      if (!(next instanceof HTMLElement) || next.tagName === "H3") {
+        break;
+      }
+      cursor = next;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const node of blockNodes) {
+      fragment.appendChild(node);
+    }
+    containerEl.insertBefore(fragment, firstSectionHeader);
+  }
+  prioritizeAnalyzedEmbeddingSection(containerEl) {
+    this.moveSectionBlockToTop(containerEl, "Behavior");
   }
   applySettingsTabVisibility(containerEl) {
     var _a, _b, _c, _d, _e, _f, _g;
@@ -6029,6 +6875,26 @@ ${availability.note}`).addText(
       ].join("\n"),
       cls: "omni-forge-settings-guide-note omni-forge-settings-guide-preline"
     });
+    containerEl.createEl("h3", { text: "Preset warning snapshot / \uD504\uB9AC\uC14B \uACBD\uACE0 \uC2A4\uB0C5\uC0F7" });
+    const warningList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
+    const warnings = this.collectPresetOverrideWarnings();
+    if (warnings.length === 0) {
+      warningList.createEl("li", { text: "\uD604\uC7AC \uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uACBD\uACE0(\u26A0) \uC5C6\uC74C" });
+    } else {
+      for (const warning of warnings) {
+        warningList.createEl("li", {
+          text: `${warning.name}: ${warning.note}`
+        });
+      }
+    }
+    warningList.createEl("li", {
+      text: "\uB9B4\uB9AC\uC988 \uC804\uC5D0\uB294 \uACBD\uACE0(\u26A0)\uAC00 \uBD99\uC740 \uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uD544\uB4DC\uB97C \uC6B0\uC120 \uD655\uC778\uD558\uC138\uC694."
+    });
+    new import_obsidian4.Setting(containerEl).setName("Hardware snapshot / \uCEF4\uD4E8\uD130 \uC0AC\uC591 \uBCF4\uAE30").setDesc(this.plugin.getHardwareCapabilitySummaryForQa()).addButton(
+      (button) => button.setButtonText("Open summary").onClick(async () => {
+        new import_obsidian4.Notice(this.plugin.getHardwareCapabilitySummaryForQa(), 7e3);
+      })
+    );
     const detectedModels = this.plugin.getOllamaModelOptions();
     const hardwareSummary = this.plugin.getHardwareCapabilitySummaryForQa();
     const readiness = containerEl.createDiv({ cls: "omni-forge-settings-guide-card" });
@@ -6135,71 +7001,139 @@ ${availability.note}`).addText(
       const item = refList.createEl("li");
       item.createEl("a", { text: url, href: url });
     }
-    containerEl.createEl("h3", { text: "Preset warning snapshot / \uD504\uB9AC\uC14B \uACBD\uACE0 \uC2A4\uB0C5\uC0F7" });
-    const warningList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
-    const warnings = this.collectPresetOverrideWarnings();
-    if (warnings.length === 0) {
-      warningList.createEl("li", { text: "\uD604\uC7AC \uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uACBD\uACE0(\u26A0) \uC5C6\uC74C" });
-    } else {
-      for (const warning of warnings) {
-        warningList.createEl("li", {
-          text: `${warning.name}: ${warning.note}`
-        });
-      }
-    }
-    warningList.createEl("li", {
-      text: "\uB9B4\uB9AC\uC988 \uC804\uC5D0\uB294 \uACBD\uACE0(\u26A0)\uAC00 \uBD99\uC740 \uD504\uB9AC\uC14B \uC624\uBC84\uB77C\uC774\uB4DC \uD544\uB4DC\uB97C \uC6B0\uC120 \uD655\uC778\uD558\uC138\uC694."
-    });
-    warningList.createEl("li", {
-      text: "\uD504\uB9AC\uC14B \uAE30\uBCF8\uAC12\uC740 Settings > Quick/Models \uD0ED\uC758 \uD604\uC7AC \uD45C\uC2DC\uAC12\uC744 \uAE30\uC900\uC73C\uB85C \uAC80\uD1A0\uD558\uC138\uC694."
-    });
-    new import_obsidian4.Setting(containerEl).setName("Guide actions").setDesc("Refresh local detection or return to Quick tab.").addButton(
-      (button) => button.setButtonText("Refresh detection").setCta().onClick(async () => {
-        await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
-        await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
-        this.display();
-      })
-    ).addButton(
-      (button) => button.setButtonText("Go Quick").onClick(async () => {
-        this.plugin.settings.settingsActiveTab = "quick";
-        await this.plugin.saveSettings();
-        this.display();
-      })
-    );
   }
   renderOrchestrationTab(containerEl) {
+    const mode = this.plugin.settings.settingsUiLanguage;
+    const t = (en, ko) => mode === "en" ? en : mode === "ko" ? ko : `${en} / ${ko}`;
     containerEl.createEl("h3", { text: "Orchestration controls / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158 \uC81C\uC5B4" });
     containerEl.createEl("p", {
       cls: "omni-forge-settings-guide-note",
       text: "\uB0B4\uBD80 \uBB38\uC11C \uBCF4\uD638\uB97C \uC6B0\uC120\uD558\uBA70, \uC678\uBD80 \uC5F0\uACB0\uC740 allowlist \uAE30\uBC18\uC73C\uB85C \uC81C\uD55C\uB41C \uC0C1\uD0DC\uC5D0\uC11C\uB9CC \uC2E4\uD589\uD558\uC138\uC694."
     });
     new import_obsidian4.Setting(containerEl).setName("Conversation mode (chat runtime)").setDesc("\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158 \uC911\uC2EC\uC73C\uB85C \uBAA8\uB4DC\uB97C \uACE0\uC815\uD558\uACE0 \uD30C\uC774\uD504\uB77C\uC778 \uAE30\uBCF8\uAC12\uC744 \uB9DE\uCDA5\uB2C8\uB2E4.").addButton(
-      (button) => button.setButtonText("Orchestration \uBAA8\uB4DC \uC801\uC6A9").setCta().onClick(async () => {
+      (button) => button.setButtonText(t("Apply orchestration mode", "\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158 \uBAA8\uB4DC \uC801\uC6A9")).setCta().onClick(async () => {
         await this.plugin.setQaConversationModeForQa("orchestration");
+        await this.plugin.applyRecommendedRoleModelsForQa(false, true);
         this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Allowed outbound hosts (non-local Q&A)").setDesc("\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158\uC5D0\uC11C \uC678\uBD80 \uC5D4\uB4DC\uD3EC\uC778\uD2B8\uB97C \uC4F8 \uB54C \uD5C8\uC6A9 \uD638\uC2A4\uD2B8\uB97C \uBA85\uC2DC\uD569\uB2C8\uB2E4.").addTextArea(
-      (area) => area.setPlaceholder("api.openai.com\napi.anthropic.com").setValue(this.plugin.settings.qaAllowedOutboundHosts).onChange(async (value) => {
-        this.plugin.settings.qaAllowedOutboundHosts = value;
-        await this.plugin.saveSettings();
+    new import_obsidian4.Setting(containerEl).setName("Debugger agent / \uB514\uBC84\uAC70 \uC5D0\uC774\uC804\uD2B8").setDesc(
+      t(`Current debugger model: ${this.plugin.getQaModelLabelForQa("debugger")}`, `\uD604\uC7AC \uB514\uBC84\uAC70 \uBAA8\uB378: ${this.plugin.getQaModelLabelForQa("debugger")}`)
+    ).addButton(
+      (button) => button.setButtonText(t("Apply debugger recommendation", "\uB514\uBC84\uAC70 \uCD94\uCC9C \uC801\uC6A9")).onClick(async () => {
+        await this.plugin.refreshOllamaDetection({ notify: false, autoApply: true });
+        await this.plugin.applyRecommendedRoleModelsForQa(true, true);
+        this.display();
       })
     );
+    const health = this.getRoleModelHealthSummary();
+    const hasIssue = health.blockedRoles.length > 0 || health.unavailable.length > 0;
+    const readinessSetting = new import_obsidian4.Setting(containerEl).setName("Orchestration agent readiness / \uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158 \uC5D0\uC774\uC804\uD2B8 \uC900\uBE44 \uC0C1\uD0DC").setDesc(
+      hasIssue ? `${health.summary}
+\uD544\uC218 \uC5ED\uD560 \uBAA8\uB378\uC774 \uC5C6\uC73C\uBA74 \uD30C\uC774\uD504\uB77C\uC778 \uC5D0\uC774\uC804\uD2B8\uAC00 \uC77C\uBD80 \uC0DD\uB7B5\uB429\uB2C8\uB2E4.` : "\uBAA8\uB4E0 \uC5ED\uD560 \uBAA8\uB378 \uC0C1\uD0DC\uAC00 \uC815\uC0C1\uC785\uB2C8\uB2E4."
+    );
+    if (hasIssue) {
+      readinessSetting.addButton(
+        (button) => button.setButtonText(t("Text model link", "\uD14D\uC2A4\uD2B8 \uBAA8\uB378 \uB9C1\uD06C")).onClick(() => {
+          window.open("https://ollama.com/library/qwen3");
+        })
+      ).addButton(
+        (button) => button.setButtonText(t("Vision model link", "\uBE44\uC804 \uBAA8\uB378 \uB9C1\uD06C")).onClick(() => {
+          window.open("https://ollama.com/library/qwen2.5vl");
+        })
+      ).addButton(
+        (button) => button.setButtonText(t("Embedding model link", "\uC784\uBCA0\uB529 \uBAA8\uB378 \uB9C1\uD06C")).onClick(() => {
+          window.open("https://ollama.com/library/nomic-embed-text");
+        })
+      );
+    }
   }
   renderSkillsTab(containerEl) {
-    containerEl.createEl("h3", { text: "Skills manager (beta) / \uC2A4\uD0AC \uAD00\uB9AC(\uBCA0\uD0C0)" });
+    containerEl.createEl("h3", { text: "Skills manager / \uC2A4\uD0AC \uAD00\uB9AC" });
     containerEl.createEl("p", {
       cls: "omni-forge-settings-guide-note",
-      text: "\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158\uC73C\uB85C \uC0DD\uC131\uD55C \uC2A4\uD0AC \uBB38\uC11C\uB97C \uB0B4\uBD80/\uC678\uBD80 \uACBD\uB85C\uC5D0\uC11C \uAD00\uB9AC\uD558\uAE30 \uC704\uD55C \uC900\uBE44 \uD0ED\uC785\uB2C8\uB2E4."
+      text: "SKILL.md \uAC00 \uC788\uB294 \uD3F4\uB354\uB97C \uC9C0\uC815\uD558\uBA74 \uC2A4\uD0AC \uBB38\uC11C\uB97C \uC790\uB3D9 \uD0D0\uC9C0\uD574 \uC81C\uBAA9/\uC694\uC57D\uC744 \uBCF4\uC5EC\uC90D\uB2C8\uB2E4."
     });
-    new import_obsidian4.Setting(containerEl).setName("Agent path allowlist (absolute, comma/newline)").setDesc("Skills \uB85C\uB529/\uC2E4\uD589\uC5D0 \uD5C8\uC6A9\uD560 \uC808\uB300\uACBD\uB85C\uB97C \uAD00\uB9AC\uD569\uB2C8\uB2E4.").addTextArea(
-      (area) => area.setPlaceholder("/absolute/path/project\n/absolute/path/project/skills").setValue(this.plugin.settings.qaAgentPathAllowlist).onChange(async (value) => {
-        this.plugin.settings.qaAgentPathAllowlist = value;
+    const resultEl = containerEl.createDiv({ cls: "omni-forge-settings-guide-card" });
+    const renderScanResult = async () => {
+      const root = this.plugin.settings.qaSkillsRootPath.trim();
+      if (!root) {
+        resultEl.setText("Skills folder path is empty. / \uC2A4\uD0AC \uD3F4\uB354 \uACBD\uB85C\uAC00 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4.");
+        return;
+      }
+      const scanned = await this.plugin.scanSkillsFolderForQa(root);
+      resultEl.empty();
+      if (scanned.error) {
+        resultEl.createEl("strong", { text: `Scan failed / \uD0D0\uC9C0 \uC2E4\uD328: ${scanned.error}` });
+        return;
+      }
+      resultEl.createEl("strong", { text: `Detected ${scanned.skills.length} skill(s) / \uD0D0\uC9C0 ${scanned.skills.length}\uAC1C` });
+      const list = resultEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
+      if (scanned.skills.length === 0) {
+        list.createEl("li", { text: "No SKILL.md found under the selected root. / \uC120\uD0DD \uACBD\uB85C\uC5D0\uC11C SKILL.md\uB97C \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4." });
+        return;
+      }
+      for (const skill of scanned.skills) {
+        const item = list.createEl("li");
+        item.createEl("div", { text: `${skill.id}: ${skill.title}` });
+        item.createEl("small", {
+          text: skill.summary || skill.docPath
+        });
+      }
+    };
+    new import_obsidian4.Setting(containerEl).setName("Skills folder path / \uC2A4\uD0AC \uD3F4\uB354 \uACBD\uB85C").setDesc("Absolute path where skill subfolders contain SKILL.md.").addText(
+      (text) => text.setPlaceholder("/Users/.../skills").setValue(this.plugin.settings.qaSkillsRootPath).onChange(async (value) => {
+        this.plugin.settings.qaSkillsRootPath = value.trim();
         await this.plugin.saveSettings();
       })
+    ).addButton(
+      (button) => button.setButtonText("Scan / \uD0D0\uC9C0").onClick(async () => {
+        await renderScanResult();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Sample template / \uC0D8\uD50C \uC591\uC2DD").onClick(async () => {
+        const root = this.plugin.settings.qaSkillsRootPath.trim();
+        if (!root) {
+          new import_obsidian4.Notice("Set skills folder path first. / \uBA3C\uC800 \uC2A4\uD0AC \uD3F4\uB354 \uACBD\uB85C\uB97C \uC785\uB825\uD558\uC138\uC694.", 4500);
+          return;
+        }
+        try {
+          const sampleDir = nodePath.join(nodePath.resolve(root), "sample-skill");
+          await nodeFs.promises.mkdir(sampleDir, { recursive: true });
+          const samplePath = nodePath.join(sampleDir, "SKILL.md");
+          const sampleBody = [
+            "# Sample Skill",
+            "",
+            "A short one-line description of what this skill does.",
+            "",
+            "## When to use",
+            "- Use when this workflow is requested.",
+            "",
+            "## Inputs",
+            "- Input A",
+            "- Input B",
+            "",
+            "## Steps",
+            "1. Step one",
+            "2. Step two",
+            "",
+            "## Output",
+            "- Expected result format"
+          ].join("\n");
+          await nodeFs.promises.writeFile(samplePath, sampleBody, "utf8");
+          new import_obsidian4.Notice(`Sample created: ${samplePath}`, 5e3);
+          await renderScanResult();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown sample template error";
+          new import_obsidian4.Notice(`Sample create failed: ${message}`, 6e3);
+        }
+      })
     );
+    void renderScanResult();
   }
   renderParserTab(containerEl) {
+    const mode = this.plugin.settings.settingsUiLanguage;
+    const t = (en, ko) => mode === "en" ? en : mode === "ko" ? ko : `${en} / ${ko}`;
     containerEl.createEl("h3", { text: "Parser pipeline / \uD30C\uC11C \uD30C\uC774\uD504\uB77C\uC778" });
     containerEl.createEl("p", {
       cls: "omni-forge-settings-guide-note",
@@ -6221,16 +7155,44 @@ ${availability.note}`).addText(
     );
     const parserList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     parserList.createEl("li", {
-      text: "PDF: pdftotext(\uD14D\uC2A4\uD2B8 \uCD94\uCD9C) + pdftoppm/tesseract(OCR) + fallback"
+      text: t("PDF: pdftotext(text extraction) + pdftoppm/tesseract(OCR) + fallback", "PDF: pdftotext(\uD14D\uC2A4\uD2B8 \uCD94\uCD9C) + pdftoppm/tesseract(OCR) + fallback")
     });
     parserList.createEl("li", {
-      text: "Image: tesseract OCR + \uC6D0\uBCF8 \uC774\uBBF8\uC9C0 \uCEE8\uD14D\uC2A4\uD2B8"
+      text: t("Image: tesseract OCR + original image context", "Image: tesseract OCR + \uC6D0\uBCF8 \uC774\uBBF8\uC9C0 \uCEE8\uD14D\uC2A4\uD2B8")
     });
     parserList.createEl("li", {
-      text: "Excel/HWP: \uD604\uC7AC \uAE30\uBCF8 \uBBF8\uC9C0\uC6D0(\uD14D\uC2A4\uD2B8 \uBCC0\uD658\uBCF8 \uCCA8\uBD80 \uAD8C\uC7A5)"
+      text: t("Excel/HWP: currently preview-level support (attach text-exported copy recommended)", "Excel/HWP: \uD604\uC7AC \uBBF8\uB9AC\uBCF4\uAE30 \uC218\uC900(\uD14D\uC2A4\uD2B8 \uBCC0\uD658\uBCF8 \uCCA8\uBD80 \uAD8C\uC7A5)")
+    });
+    const tips = containerEl.createEl("details", { cls: "omni-forge-chat-collapsible omni-forge-settings-parser-tips" });
+    tips.open = false;
+    tips.createEl("summary", { text: t("Parser command tips", "\uD30C\uC11C \uBA85\uB839 \uD301") });
+    tips.createEl("small", {
+      text: t(
+        "Collapsed by default. Open when parser readiness shows missing.",
+        "\uAE30\uBCF8 \uC228\uAE40. parser readiness\uAC00 missing\uC77C \uB54C \uD3BC\uCCD0 \uD655\uC778\uD558\uC138\uC694."
+      )
+    });
+    const tipsList = tips.createEl("ul", { cls: "omni-forge-settings-guide-list" });
+    tipsList.createEl("li", { text: "macOS(Homebrew): brew install poppler tesseract" });
+    tipsList.createEl("li", { text: "Ubuntu/Debian: sudo apt-get install poppler-utils tesseract-ocr tesseract-ocr-kor" });
+    tipsList.createEl("li", { text: "Windows(Chocolatey): choco install poppler tesseract" });
+    tipsList.createEl("li", {
+      text: t("Terminal check: `pdftotext -v`, `pdftoppm -v`, `tesseract --version`.", "\uD130\uBBF8\uB110 \uD655\uC778: `pdftotext -v`, `pdftoppm -v`, `tesseract --version`.")
+    });
+    tipsList.createEl("li", {
+      text: t(
+        "If any command fails, parser quality drops to fallback mode (possible omission/OCR errors).",
+        "\uBA85\uB839 \uD558\uB098\uB77C\uB3C4 \uC2E4\uD328\uD558\uBA74 parser \uD488\uC9C8\uC740 fallback \uBAA8\uB4DC\uB85C \uD558\uB77D\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4(\uB204\uB77D/OCR \uC624\uC778\uC2DD \uAC00\uB2A5)."
+      )
+    });
+    tipsList.createEl("li", {
+      text: t(
+        "After installation, restart Obsidian and press `Refresh / 점검` in this tab.",
+        "\uC124\uCE58 \uD6C4 Obsidian \uC7AC\uC2DC\uC791 -> \uC774 \uD0ED\uC5D0\uC11C `Refresh / \uC810\uAC80` \uD074\uB9AD"
+      )
     });
     for (const line of this.plugin.getParserToolReadinessLinesForQa()) {
-      parserList.createEl("li", { text: line });
+      tipsList.createEl("li", { text: line });
     }
     new import_obsidian4.Setting(containerEl).setName("Attachment ingest folder path").setDesc("\uC678\uBD80 \uCCA8\uBD80\uB97C vault \uB0B4\uBD80\uB85C \uBBF8\uB7EC\uB9C1\uD560 \uACBD\uB85C\uC785\uB2C8\uB2E4.").addText(
       (text) => text.setPlaceholder("Omni Forge Ingest").setValue(this.plugin.settings.qaAttachmentIngestRootPath).onChange(async (value) => {
@@ -6254,17 +7216,13 @@ ${availability.note}`).addText(
       text: uiMode === "en" ? "Language docs: README.md (EN) | README_KO.md (KO)" : uiMode === "ko" ? "\uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)" : "Language docs / \uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)"
     });
     this.addSettingsTabSwitcher(containerEl);
-    const activeTab = this.plugin.settings.settingsActiveTab;
-    if (activeTab === "quick") {
-      this.addViewModeAndPresetControls(containerEl);
-    }
+    const activeTab = this.plugin.settings.settingsActiveTab === "advanced" ? "guide" : this.plugin.settings.settingsActiveTab;
     if (activeTab === "chat") {
+      this.addViewModeAndPresetControls(containerEl);
       this.addChatPresetControls(containerEl);
     }
     if (activeTab === "orchestration") {
       this.renderOrchestrationTab(containerEl);
-      this.applyBilingualSettingsLabels(containerEl);
-      return;
     }
     if (activeTab === "skills") {
       this.renderSkillsTab(containerEl);
@@ -6281,17 +7239,70 @@ ${availability.note}`).addText(
       this.applyBilingualSettingsLabels(containerEl);
       return;
     }
-    new import_obsidian4.Setting(containerEl).setName("Provider").setDesc("Choose AI provider. Local providers are recommended first.").addDropdown(
-      (dropdown) => dropdown.addOption("ollama", "Ollama (local / \uB85C\uCEEC)").addOption("lmstudio", "LM Studio (local / \uB85C\uCEEC)").addOption("openai", "OpenAI / Codex").addOption("anthropic", "Claude / \uD074\uB85C\uB4DC").addOption("gemini", "Gemini / \uC81C\uBBF8\uB098\uC774").setValue(this.plugin.settings.provider).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("Quick provider / \uBE60\uB978 \uC81C\uACF5\uC790").setDesc("Choose provider in order: local > local QA bridge > cloud. Local defaults to Flash profile.").addDropdown(
+      (dropdown) => dropdown.addOption("ollama", "Ollama (local / \uB85C\uCEEC)").addOption("lmstudio", "LM Studio (local QA / \uB85C\uCEEC QA)").addOption("openai", "Codex/OpenAI (cloud bridge)").addOption("anthropic", "Claude / \uD074\uB85C\uB4DC").addOption("gemini", "Gemini / \uC81C\uBBF8\uB098\uC774").setValue(this.plugin.settings.provider).onChange(async (value) => {
         this.plugin.settings.provider = value;
+        if (value === "ollama") {
+          this.plugin.settings.qaChatModelFamily = "local";
+          this.plugin.settings.qaChatModelProfile = "local-flash";
+          this.plugin.settings.qaLocalPresetProfile = "fast_local";
+          this.plugin.settings.qaAllowNonLocalEndpoint = false;
+          await this.plugin.saveSettings();
+          await this.plugin.refreshOllamaDetection({ notify: false, autoApply: true });
+          await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+          this.plugin.settings.qaOllamaModel = this.plugin.settings.ollamaModel.trim() || this.plugin.settings.qaOllamaModel;
+        } else if (value === "lmstudio") {
+          this.plugin.settings.qaChatModelFamily = "local";
+          this.plugin.settings.qaChatModelProfile = "local-flash";
+          this.plugin.settings.qaLocalPresetProfile = "custom";
+          this.plugin.settings.qaAllowNonLocalEndpoint = false;
+          this.plugin.settings.qaOllamaModel = this.plugin.settings.lmStudioModel.trim() || this.plugin.settings.qaOllamaModel;
+        } else if (value === "openai") {
+          this.plugin.settings.qaChatModelFamily = "cloud";
+          this.plugin.settings.qaChatModelProfile = "codex";
+          this.plugin.settings.qaAllowNonLocalEndpoint = true;
+          this.plugin.settings.qaOllamaBaseUrl = toOpenAICompatibleBase(this.plugin.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+          this.plugin.appendQaAllowedOutboundHostFromUrl(this.plugin.settings.qaOllamaBaseUrl);
+          this.plugin.settings.qaOllamaModel = this.plugin.settings.openAIModel.trim() || DEFAULT_SETTINGS.openAIModel;
+        } else if (value === "anthropic") {
+          this.plugin.settings.qaChatModelFamily = "cloud";
+          this.plugin.settings.qaChatModelProfile = "claude";
+          this.plugin.settings.qaAllowNonLocalEndpoint = true;
+          this.plugin.settings.qaOllamaBaseUrl = toOpenAICompatibleBase(this.plugin.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+          this.plugin.appendQaAllowedOutboundHostFromUrl(this.plugin.settings.qaOllamaBaseUrl);
+          this.plugin.settings.qaOllamaModel = this.plugin.settings.anthropicModel.trim() || DEFAULT_SETTINGS.anthropicModel;
+        } else if (value === "gemini") {
+          this.plugin.settings.qaChatModelFamily = "cloud";
+          this.plugin.settings.qaChatModelProfile = "gemini";
+          this.plugin.settings.qaAllowNonLocalEndpoint = true;
+          this.plugin.settings.qaOllamaBaseUrl = toOpenAICompatibleBase(this.plugin.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+          this.plugin.appendQaAllowedOutboundHostFromUrl(this.plugin.settings.qaOllamaBaseUrl);
+          this.plugin.settings.qaOllamaModel = this.plugin.settings.geminiModel.trim() || DEFAULT_SETTINGS.geminiModel;
+        }
         await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText(uiMode === "en" ? "Local detect + Flash" : uiMode === "ko" ? "\uB85C\uCEEC \uAC10\uC9C0 + Flash" : "Local detect + Flash / \uB85C\uCEEC \uAC10\uC9C0 + Flash").onClick(async () => {
+        const summary = await this.plugin.applyQaChatModelProfileForQa("local-flash", "local");
+        new import_obsidian4.Notice(summary, 6500);
         this.display();
       })
     );
+    const showCodexBridgeNote = this.plugin.getQaChatModelProfileForQa() === "codex";
+    if (showCodexBridgeNote) {
+      new import_obsidian4.Setting(containerEl).setName("Codex bridge note / Codex \uBE0C\uB9AC\uC9C0 \uC548\uB0B4").setDesc(
+        "Meaning: Q&A calls Codex through an OpenAI-compatible bridge endpoint (for example Agent Client) instead of a direct plugin API integration."
+      );
+    }
     containerEl.createEl("h3", { text: "Local provider config" });
     new import_obsidian4.Setting(containerEl).setName("Ollama base URL").addText(
       (text) => text.setPlaceholder("http://127.0.0.1:11434").setValue(this.plugin.settings.ollamaBaseUrl).onChange(async (value) => {
         this.plugin.settings.ollamaBaseUrl = value.trim();
+        if (this.plugin.getQaChatModelFamilyForQa() === "local" || !this.plugin.settings.qaOllamaBaseUrl.trim()) {
+          this.plugin.settings.qaOllamaBaseUrl = this.plugin.settings.ollamaBaseUrl;
+        }
         await this.plugin.saveSettings();
       })
     );
@@ -6323,7 +7334,9 @@ ${availability.note}`).addText(
           return;
         }
         this.plugin.settings.ollamaModel = value;
+        this.plugin.settings.qaOllamaModel = value;
         await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
         this.display();
       });
     }).addButton(
@@ -6331,24 +7344,8 @@ ${availability.note}`).addText(
         await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
         this.display();
       })
-    ).addButton(
-      (button) => button.setButtonText("Use recommended / \uAD8C\uC7A5\uAC12 \uC0AC\uC6A9").onClick(async () => {
-        await this.plugin.applyRecommendedOllamaModel(true);
-        this.display();
-      })
     );
-    new import_obsidian4.Setting(containerEl).setName("Ollama model (manual)").setDesc("Manual override if you want a custom model name.").addText(
-      (text) => text.setPlaceholder("qwen2.5:7b").setValue(this.plugin.settings.ollamaModel).onChange(async (value) => {
-        this.plugin.settings.ollamaModel = value.trim();
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Auto-pick recommended Ollama model").setDesc("Detect local models and auto-choose recommended when current is missing.").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.ollamaAutoPickEnabled).onChange(async (value) => {
-        this.plugin.settings.ollamaAutoPickEnabled = value;
-        await this.plugin.saveSettings();
-      })
-    );
+    new import_obsidian4.Setting(containerEl).setName("Ollama auto-match policy").setDesc("On refresh/detect, recommended model is applied automatically.");
     new import_obsidian4.Setting(containerEl).setName("Ollama detection summary").setDesc(this.plugin.getOllamaDetectionSummary());
     new import_obsidian4.Setting(containerEl).setName("LM Studio base URL").addText(
       (text) => text.setPlaceholder("http://127.0.0.1:1234").setValue(this.plugin.settings.lmStudioBaseUrl).onChange(async (value) => {
@@ -6372,13 +7369,22 @@ ${availability.note}`).addText(
     new import_obsidian4.Setting(containerEl).setName("OpenAI base URL").addText(
       (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(this.plugin.settings.openAIBaseUrl).onChange(async (value) => {
         this.plugin.settings.openAIBaseUrl = value.trim();
+        if (this.plugin.getQaChatModelFamilyForQa() === "cloud") {
+          this.plugin.settings.qaOllamaBaseUrl = toOpenAICompatibleBase(this.plugin.settings.openAIBaseUrl || DEFAULT_SETTINGS.openAIBaseUrl);
+          this.plugin.appendQaAllowedOutboundHostFromUrl(this.plugin.settings.qaOllamaBaseUrl);
+        }
         await this.plugin.saveSettings();
       })
     );
     new import_obsidian4.Setting(containerEl).setName("OpenAI model").addText(
-      (text) => text.setPlaceholder("gpt-5-mini").setValue(this.plugin.settings.openAIModel).onChange(async (value) => {
-        this.plugin.settings.openAIModel = value.trim();
+      (text) => text.setPlaceholder("gpt-5.3-codex").setValue(this.plugin.settings.openAIModel).onChange(async (value) => {
+        const nextModel = value.trim();
+        this.plugin.settings.openAIModel = nextModel;
+        if (this.plugin.getQaChatModelFamilyForQa() === "cloud" && this.plugin.getQaChatModelProfileForQa() === "codex") {
+          this.plugin.settings.qaOllamaModel = nextModel || DEFAULT_SETTINGS.openAIModel;
+        }
         await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
       })
     );
     new import_obsidian4.Setting(containerEl).setName("OpenAI API key").addText(
@@ -6389,8 +7395,13 @@ ${availability.note}`).addText(
     );
     new import_obsidian4.Setting(containerEl).setName("Anthropic model").addText(
       (text) => text.setPlaceholder("claude-3-7-sonnet-latest").setValue(this.plugin.settings.anthropicModel).onChange(async (value) => {
-        this.plugin.settings.anthropicModel = value.trim();
+        const nextModel = value.trim();
+        this.plugin.settings.anthropicModel = nextModel;
+        if (this.plugin.getQaChatModelFamilyForQa() === "cloud" && this.plugin.getQaChatModelProfileForQa() === "claude") {
+          this.plugin.settings.qaOllamaModel = nextModel || DEFAULT_SETTINGS.anthropicModel;
+        }
         await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Anthropic API key").addText(
@@ -6401,8 +7412,13 @@ ${availability.note}`).addText(
     );
     new import_obsidian4.Setting(containerEl).setName("Gemini model").addText(
       (text) => text.setPlaceholder("gemini-2.5-pro").setValue(this.plugin.settings.geminiModel).onChange(async (value) => {
-        this.plugin.settings.geminiModel = value.trim();
+        const nextModel = value.trim();
+        this.plugin.settings.geminiModel = nextModel;
+        if (this.plugin.getQaChatModelFamilyForQa() === "cloud" && this.plugin.getQaChatModelProfileForQa() === "gemini") {
+          this.plugin.settings.qaOllamaModel = nextModel || DEFAULT_SETTINGS.geminiModel;
+        }
         await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Gemini API key").addText(
@@ -6414,7 +7430,7 @@ ${availability.note}`).addText(
     containerEl.createEl("h3", { text: "Behavior" });
     const analyzedDepthMode = this.plugin.settings.semanticLinkingEnabled || !this.plugin.settings.analysisOnlyChangedNotes ? "detailed" : "quick";
     new import_obsidian4.Setting(containerEl).setName("Analyzed depth mode").setDesc(
-      "Quick: changed-notes \uC911\uC2EC + semantic off. Detailed: semantic on + \uC804\uCCB4 \uBC94\uC704 \uAE30\uBC18 \uBD84\uC11D."
+      "Quick: changed-notes centric + semantic off. Detailed: semantic on + full-scope analysis. Embedding model is auto-matched by profile when depth changes."
     ).addDropdown(
       (dropdown) => dropdown.addOption("quick", "Quick / \uBE60\uB978 \uBD84\uC11D").addOption("detailed", "Detailed / \uC0C1\uC138 \uBD84\uC11D").setValue(analyzedDepthMode).onChange(async (value) => {
         const quickMode = value === "quick";
@@ -6423,9 +7439,15 @@ ${availability.note}`).addText(
         this.plugin.settings.includeReasons = !quickMode;
         this.plugin.settings.qaTopK = quickMode ? Math.min(this.plugin.settings.qaTopK, 4) : Math.max(this.plugin.settings.qaTopK, 6);
         this.plugin.settings.semanticTopK = quickMode ? Math.min(this.plugin.settings.semanticTopK, 16) : Math.max(this.plugin.settings.semanticTopK, 28);
+        const embeddingPreset = quickMode ? "fast_local" : "balanced_local";
+        const embeddingModel = this.plugin.getRecommendedPresetOverrideModelForQa(embeddingPreset, "embedding");
+        if (embeddingModel) {
+          this.plugin.settings.semanticOllamaModel = embeddingModel;
+        }
         this.plugin.settings.qaAlwaysDetailedAnswer = !quickMode;
         this.plugin.settings.qaMaxContextChars = quickMode ? Math.min(this.plugin.settings.qaMaxContextChars, 12e3) : Math.max(this.plugin.settings.qaMaxContextChars, 18e3);
         await this.plugin.saveSettings();
+        await this.plugin.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
         this.display();
       })
     );
@@ -6433,10 +7455,14 @@ ${availability.note}`).addText(
     const analyzedEmbeddingModel = this.plugin.settings.semanticOllamaModel.trim() || "(none)";
     const analyzedQuickSec = Math.max(1, analyzedSelectedFiles) * 0.45;
     const analyzedDetailedSec = Math.max(1, analyzedSelectedFiles) * 1.15;
+    const settingsUiMode = this.plugin.settings.settingsUiLanguage;
+    const quickDepthRuntimeNote = settingsUiMode === "en" ? "Quick mode: semantic retrieval is disabled, so embedding retrieval does not run." : settingsUiMode === "ko" ? "Quick 모드: semantic 비활성화로 임베딩 리트리벌은 실행되지 않음" : "Quick mode: semantic retrieval is disabled, so embedding retrieval does not run. / Quick 모드: semantic 비활성화로 임베딩 리트리벌은 실행되지 않음";
+    const detailedDepthRuntimeNote = settingsUiMode === "en" ? "Detailed mode: semantic embedding candidates are expanded." : settingsUiMode === "ko" ? "Detailed 모드: semantic 임베딩 기반 후보 확장 사용" : "Detailed mode: semantic embedding candidates are expanded. / Detailed 모드: semantic 임베딩 기반 후보 확장 사용";
     new import_obsidian4.Setting(containerEl).setName("Analyzed runtime estimate").setDesc(
       [
         `\uC120\uD0DD \uD30C\uC77C: ${analyzedSelectedFiles}\uAC1C`,
         `\uC784\uBCA0\uB529 \uBAA8\uB378: ${analyzedEmbeddingModel}`,
+        analyzedDepthMode === "quick" ? quickDepthRuntimeNote : detailedDepthRuntimeNote,
         `Quick \uC608\uC0C1: \uC57D ${analyzedQuickSec.toFixed(1)}\uCD08 + \uBAA8\uB378 \uC751\uB2F5 \uC2DC\uAC04`,
         `Detailed \uC608\uC0C1: \uC57D ${analyzedDetailedSec.toFixed(1)}\uCD08 + \uBAA8\uB378 \uC751\uB2F5 \uC2DC\uAC04`
       ].join(" | ")
@@ -6518,6 +7544,9 @@ ${availability.note}`).addText(
         await this.plugin.saveSettings();
       })
     );
+    if (this.plugin.settings.provider !== "ollama") {
+      new import_obsidian4.Setting(containerEl).setName("Cloud embedding behavior / \uD074\uB77C\uC6B0\uB4DC \uC784\uBCA0\uB529 \uB3D9\uC791").setDesc("Embedding detected picker is shown only for Ollama provider. In cloud mode, this picker is hidden and semantic linking uses the last saved local embedding model when enabled.");
+    }
     containerEl.createEl("h3", { text: "Semantic linking (Ollama embeddings)" });
     new import_obsidian4.Setting(containerEl).setName("Enable semantic candidate ranking").setDesc(
       "Use local Ollama embeddings to rank likely related notes before AI linked suggestion."
@@ -6580,14 +7609,7 @@ ${availability.note}`).addText(
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Auto-pick recommended embedding model").setDesc(
-      "Detect local models and auto-choose recommended when current is missing."
-    ).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.semanticAutoPickEnabled).onChange(async (value) => {
-        this.plugin.settings.semanticAutoPickEnabled = value;
-        await this.plugin.saveSettings();
-      })
-    );
+    new import_obsidian4.Setting(containerEl).setName("Embedding auto-match policy").setDesc("On refresh/detect, recommended embedding model is applied automatically.");
     new import_obsidian4.Setting(containerEl).setName("Embedding detection summary").setDesc(this.plugin.getEmbeddingDetectionSummary());
     new import_obsidian4.Setting(containerEl).setName("Semantic top-k candidates").setDesc(
       "\uC9C8\uBB38\uACFC \uAD00\uB828 \uC788\uC744 \uAC00\uB2A5\uC131\uC774 \uB192\uC740 \uD6C4\uBCF4 \uBB38\uC11C\uB97C \uBA87 \uAC1C\uAE4C\uC9C0 \uBCFC\uC9C0 \uC815\uD569\uB2C8\uB2E4. \uAC12\uC744 \uC62C\uB9AC\uBA74 \uADFC\uAC70 \uD6C4\uBCF4\uAC00 \uB298\uACE0, \uC18D\uB3C4\uB294 \uB290\uB824\uC9C8 \uC218 \uC788\uC2B5\uB2C8\uB2E4."
@@ -6623,12 +7645,6 @@ ${availability.note}`).addText(
       })
     );
     containerEl.createEl("h3", { text: "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)" });
-    new import_obsidian4.Setting(containerEl).setName("Q&A Ollama base URL").setDesc("Leave empty to use main Ollama base URL.").addText(
-      (text) => text.setPlaceholder("http://127.0.0.1:11434").setValue(this.plugin.settings.qaOllamaBaseUrl).onChange(async (value) => {
-        this.plugin.settings.qaOllamaBaseUrl = value.trim();
-        await this.plugin.saveSettings();
-      })
-    );
     new import_obsidian4.Setting(containerEl).setName("Q&A model").setDesc("Leave empty to use main analysis model.").addText(
       (text) => text.setPlaceholder("qwen2.5:7b").setValue(this.plugin.settings.qaOllamaModel).onChange(async (value) => {
         await this.plugin.setQaModelOverrideForQa(value.trim());
@@ -6679,28 +7695,42 @@ ${availability.note}`).addText(
         await this.plugin.saveSettings();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Chat font size / \uCC44\uD305 \uAE00\uC790 \uD06C\uAE30").setDesc("Chat workspace font size in px (11-22).").addText(
+      (text) => text.setPlaceholder("14").setValue(String(this.plugin.settings.qaChatFontSize)).onChange(async (value) => {
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsed)) {
+          return;
+        }
+        this.plugin.settings.qaChatFontSize = Math.max(11, Math.min(22, parsed));
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Show system messages in chat / \uCC44\uD305 \uC2DC\uC2A4\uD15C \uBA54\uC2DC\uC9C0 \uD45C\uC2DC").setDesc("Off by default. When OFF, system logs are hidden and omitted from saved chat transcript.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaShowSystemMessages).onChange(async (value) => {
+        this.plugin.settings.qaShowSystemMessages = value;
+        await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Preferred response language / \uB2F5\uBCC0 \uC5B8\uC5B4 \uC6B0\uC120").setDesc("Applies to local Q&A prompt. / \uB85C\uCEEC Q&A \uD504\uB86C\uD504\uD2B8\uC5D0 \uC801\uC6A9").addDropdown(
       (dropdown) => dropdown.addOption("auto", "Auto / \uC790\uB3D9").addOption("korean", "Korean / \uD55C\uAD6D\uC5B4").addOption("english", "English / \uC601\uC5B4").setValue(this.plugin.settings.qaPreferredResponseLanguage).onChange(async (value) => {
         this.plugin.settings.qaPreferredResponseLanguage = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Role preset / \uC5ED\uD560 \uD504\uB9AC\uC14B").setDesc("Prompt style preset for local Q&A. / \uB85C\uCEEC Q&A \uB2F5\uBCC0 \uC131\uD5A5 \uD504\uB9AC\uC14B").addDropdown((dropdown) => {
-      for (const option of QA_ROLE_PRESET_OPTIONS) {
+    new import_obsidian4.Setting(containerEl).setName("Q&A pipeline preset").setDesc("In Orchestration mode, default pipeline is auto-route and applied automatically. / 오케스트레이션 모드에서는 기본 파이프라인(auto-route)이 자동 적용됩니다.").addDropdown((dropdown) => {
+      const pipelineOptions = this.plugin.getQaPipelinePresetOptionsForQa();
+      for (const option of pipelineOptions) {
         dropdown.addOption(option.value, option.label);
       }
-      dropdown.setValue(this.plugin.settings.qaRolePreset).onChange(async (value) => {
-        await this.plugin.setQaRolePresetForQa(value);
-      });
-    });
-    new import_obsidian4.Setting(containerEl).setName("Q&A pipeline preset").setDesc("Select execution pipeline for post-generation passes. / \uB2F5\uBCC0 \uD6C4\uCC98\uB9AC \uD30C\uC774\uD504\uB77C\uC778\uC744 \uC120\uD0DD\uD569\uB2C8\uB2E4.").addDropdown((dropdown) => {
-      for (const option of QA_PIPELINE_PRESET_OPTIONS) {
-        dropdown.addOption(option.value, option.label);
-      }
-      dropdown.setValue(this.plugin.settings.qaPipelinePreset).onChange(async (value) => {
+      const fallback = pipelineOptions.length > 0 ? pipelineOptions[0].value : this.plugin.settings.qaPipelinePreset;
+      dropdown.setValue(pipelineOptions.some((option) => option.value === this.plugin.settings.qaPipelinePreset) ? this.plugin.settings.qaPipelinePreset : fallback).onChange(async (value) => {
         await this.plugin.setQaPipelinePresetForQa(value);
         this.display();
       });
+      if (pipelineOptions.length <= 1) {
+        dropdown.setDisabled(true);
+      }
     });
     this.addPresetProfileModelSetting(containerEl, {
       name: "Pro preset base model",
@@ -6733,49 +7763,6 @@ ${availability.note}`).addText(
       (button) => button.setButtonText("Guide\uC5D0\uC11C \uBCF4\uAE30").onClick(async () => {
         this.plugin.settings.settingsActiveTab = "guide";
         await this.plugin.saveSettings();
-        this.display();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Role model detection controls").setDesc(
-      "Refresh local model detection manually, then choose role-specific models below."
-    ).addButton(
-      (button) => button.setButtonText("Refresh / \uC0C8\uB85C\uACE0\uCE68").onClick(async () => {
-        await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
-        this.display();
-      })
-    ).addButton(
-      (button) => button.setButtonText("Use recommended / \uAD8C\uC7A5\uAC12 \uC0AC\uC6A9").onClick(async () => {
-        await this.plugin.applyRecommendedOllamaModel(true);
-        this.display();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Role model detection summary").setDesc(this.plugin.getOllamaDetectionSummary());
-    new import_obsidian4.Setting(containerEl).setName("Auto-pick recommended role models").setDesc(
-      "Auto-fill role model fields from detected models when values are missing or legacy-uniform."
-    ).addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.qaRoleModelAutoPickEnabled).onChange(async (value) => {
-        this.plugin.settings.qaRoleModelAutoPickEnabled = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Apply role recommendations now").setDesc("Calculate role-specific recommended models from detected list and apply.").addButton(
-      (button) => button.setButtonText("Auto-fill now / \uC9C0\uAE08 \uC790\uB3D9 \uCC44\uC6B0\uAE30").onClick(async () => {
-        await this.plugin.applyRecommendedRoleModelsForQa(true, true);
-        this.display();
-      })
-    );
-    new import_obsidian4.Setting(containerEl).setName("Role recommendation summary").setDesc(this.plugin.getRoleModelRecommendationSummaryForQa());
-    const health = this.getRoleModelHealthSummary();
-    new import_obsidian4.Setting(containerEl).setName("Agent role model health check").setDesc(
-      [
-        health.summary,
-        `\uC790\uB3D9 \uBC30\uCE58: ${this.plugin.settings.qaRoleModelAutoPickEnabled ? "ON" : "OFF"}`,
-        `\uD604\uC7AC \uC5ED\uD560 \uBAA8\uB378: ${this.plugin.getQaRoleModelSummaryForQa()}`
-      ].join("\n")
-    ).addButton(
-      (button) => button.setButtonText("Run health check now").onClick(async () => {
-        await this.plugin.refreshOllamaDetection({ notify: false, autoApply: true });
-        await this.plugin.applyRecommendedRoleModelsForQa(true, false);
         this.display();
       })
     );
@@ -6827,9 +7814,12 @@ ${availability.note}`).addText(
     }).addTextArea((text) => {
       text.inputEl.addClass("omni-forge-setting-prompt-textarea");
       text.inputEl.rows = 12;
+      const roleDefault = this.plugin.getDefaultQaRoleSystemPromptForQa(this.rolePromptEditorTarget);
+      const roleCurrent = this.plugin.getQaRoleSystemPromptForQa(this.rolePromptEditorTarget);
+      const roleEditorValue = roleCurrent.trim() === roleDefault.trim() ? "" : roleCurrent;
       return text.setPlaceholder(
-        this.plugin.getDefaultQaRoleSystemPromptForQa(this.rolePromptEditorTarget)
-      ).setValue(this.plugin.getQaRoleSystemPromptForQa(this.rolePromptEditorTarget)).onChange(async (value) => {
+        roleDefault
+      ).setValue(roleEditorValue).onChange(async (value) => {
         await this.plugin.setQaRoleSystemPromptForQa(
           this.rolePromptEditorTarget,
           value
@@ -6845,39 +7835,22 @@ ${availability.note}`).addText(
       })
     );
     rolePromptSetting.settingEl.addClass("omni-forge-setting-prompt-editor");
-    containerEl.createEl("h3", { text: "Advanced scenario examples / \uACE0\uAE09 \uC2DC\uB098\uB9AC\uC624 \uC608\uC2DC" });
-    const advancedExamples = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
-    const exampleFast = advancedExamples.createEl("li");
-    exampleFast.createDiv({ text: "Flash (\uBE60\uB978 \uC9C8\uC758\uC751\uB2F5)" });
-    exampleFast.createEl("small", {
-      text: "ask + lightweight, 1~2\uAC1C \uBB38\uC11C \uC694\uC57D/\uC815\uC758 \uD655\uC778"
+    containerEl.createEl("h3", { text: "Pipeline prompt tips / \uD30C\uC774\uD504\uB77C\uC778 \uD504\uB86C\uD504\uD2B8 \uD301" });
+    const pipelineTips = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
+    const tipPlanning = pipelineTips.createEl("li");
+    tipPlanning.createDiv({ text: "Planning / \uACC4\uD68D" });
+    tipPlanning.createEl("small", {
+      text: "\uD504\uB86C\uD504\uD2B8 \uC608\uC2DC: \uBAA9\uD45C, \uBC94\uC704, \uC81C\uC57D, \uC644\uB8CC \uC870\uAC74\uC744 \uBA3C\uC800 \uC8FC\uACE0 '\uB2E8\uACC4\uBCC4 \uC2E4\uD589 \uACC4\uD68D + \uD575\uC2EC \uB9AC\uC2A4\uD06C + \uAC80\uC99D \uCCB4\uD06C\uB9AC\uC2A4\uD2B8' \uD615\uC2DD\uC73C\uB85C \uC694\uCCAD"
     });
-    exampleFast.createEl("small", {
-      text: "\uAD8C\uC7A5: qwen3:8b / gpt-oss:20b(\uC5EC\uC720 \uC2DC), \uD544\uC694 \uC2DC ask_vision\uC5D0 gemma3 \uACC4\uC5F4"
+    const tipCoding = pipelineTips.createEl("li");
+    tipCoding.createDiv({ text: "Implementation / \uAD6C\uD604" });
+    tipCoding.createEl("small", {
+      text: "\uD504\uB86C\uD504\uD2B8 \uC608\uC2DC: \uB300\uC0C1 \uD30C\uC77C, \uAE30\uB300 \uD589\uB3D9, \uAE08\uC9C0 \uD589\uB3D9(\uD30C\uAD34/\uC678\uBD80\uC804\uC1A1)\uC744 \uBA85\uC2DC\uD558\uACE0 '\uBCF4\uC218\uC801 \uBCC0\uACBD + \uC790\uB3D9 \uAC80\uC99D \uBA85\uB839 + \uB864\uBC31 \uD3EC\uC778\uD2B8' \uD3EC\uD568 \uC694\uCCAD"
     });
-    const examplePro = advancedExamples.createEl("li");
-    examplePro.createDiv({ text: "Pro (\uBB38\uC11C \uBD84\uC11D/\uCD08\uC548)" });
-    examplePro.createEl("small", {
-      text: "orchestrator -> safeguard, \uCCA8\uBD80 \uC6B0\uC120 + \uC120\uD0DD \uB178\uD2B8 \uBCF4\uC870"
-    });
-    examplePro.createEl("small", {
-      text: "\uAD8C\uC7A5: qwen3:14b + nomic-embed-text + qwen2.5vl:7b"
-    });
-    const exampleOrchestration = advancedExamples.createEl("li");
-    exampleOrchestration.createDiv({ text: "Orchestration (\uD504\uB85C\uC81D\uD2B8/\uAC1C\uBC1C)" });
-    exampleOrchestration.createEl("small", {
-      text: "orchestrator -> architect -> coder/debugger -> safeguard"
-    });
-    exampleOrchestration.createEl("small", {
-      text: "\uC608\uC2DC: \uC218\uC5C5\uC6A9 \uC6F9\uC571 \uAC1C\uBC1C(\uD3C9\uAC00\uACC4\uD68D/\uAD50\uC548 \uC790\uB8CC \uAE30\uBC18)\uC5D0\uC11C \uC124\uACC4->\uAD6C\uD604->\uB514\uBC84\uAE45->\uBCF4\uC548 \uC810\uAC80 \uC21C\uC11C"
-    });
-    exampleOrchestration.createEl("small", {
-      text: "\uAD8C\uC7A5: orchestrator/architect=qwen3:30b, coder=qwen3-coder:30b, safeguard=gpt-oss-safeguard:20b"
-    });
-    const exampleOrch = advancedExamples.createEl("li");
-    exampleOrch.createDiv({ text: "Orchestrator \uACB0\uACFC\uBB3C \uC810\uAC80" });
-    exampleOrch.createEl("small", {
-      text: "\uC5ED\uD560 \uC2E4\uD589 \uC694\uC57D\uC5D0 architect/coder/debugger/safeguard\uC758 \uAE30\uC5EC\xB7\uC0B0\uCD9C\uBB3C\xB7\uC870\uC728\xB7\uBBF8\uD574\uACB0 \uC774\uC288\uAC00 \uD3EC\uD568\uB418\uC5B4\uC57C \uD568"
+    const tipReview = pipelineTips.createEl("li");
+    tipReview.createDiv({ text: "Review / \uAC80\uD1A0" });
+    tipReview.createEl("small", {
+      text: "\uD504\uB86C\uD504\uD2B8 \uC608\uC2DC: 'P1->P2->P3 \uC21C\uC11C\uB85C \uBC84\uADF8/\uD68C\uADC0/\uAC80\uC99D\uB204\uB77D\uB9CC \uC9DA\uACE0, \uAC01 \uD56D\uBAA9\uC5D0 \uC99D\uAC70 \uD30C\uC77C/\uC904\uBC88\uD638\uB97C \uD45C\uAE30' \uC694\uCCAD"
     });
     new import_obsidian4.Setting(containerEl).setName("Include selection inventory / \uC120\uD0DD \uD30C\uC77C \uC778\uBCA4\uD1A0\uB9AC \uD3EC\uD568").setDesc("For large scopes, include selected-file metadata list to reduce 'insufficient evidence' answers. / \uB300\uADDC\uBAA8 \uC120\uD0DD \uC2DC \uC804\uCCB4 \uD30C\uC77C \uBA54\uD0C0 \uBAA9\uB85D\uC744 \uCEE8\uD14D\uC2A4\uD2B8\uC5D0 \uCD94\uAC00").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.qaIncludeSelectionInventory).onChange(async (value) => {
@@ -7179,6 +8152,9 @@ ${availability.note}`).addText(
         }
       })
     );
+    if (activeTab === "analyzed") {
+      this.prioritizeAnalyzedEmbeddingSection(containerEl);
+    }
     this.applySettingsTabVisibility(containerEl);
     this.applyCompactSettingsVisibility(containerEl);
     this.hideEmptySettingSections(containerEl);
@@ -7282,25 +8258,31 @@ ${availability.note}`).addText(
   }
 };
 _KnowledgeWeaverSettingTab.TAB_OPTIONS = [
-  { key: "quick", en: "Quick", ko: "\uBE60\uB978 \uC124\uC815" },
-  { key: "models", en: "Models", ko: "\uBAA8\uB378" },
+  { key: "quick", en: "General", ko: "\uC77C\uBC18" },
   { key: "analyzed", en: "Analyzed", ko: "\uBD84\uC11D" },
   { key: "chat", en: "Chat", ko: "\uCC44\uD305" },
-  { key: "advanced", en: "Advanced", ko: "\uACE0\uAE09" },
   { key: "orchestration", en: "Orchestration", ko: "\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158" },
   { key: "skills", en: "Skills", ko: "\uC2A4\uD0AC\uC2A4" },
   { key: "parser", en: "Parser", ko: "\uD30C\uC11C" },
-  { key: "guide", en: "Guide", ko: "\uC124\uBA85" }
+  { key: "guide", en: "Description", ko: "\uC124\uBA85" }
 ];
 _KnowledgeWeaverSettingTab.QUICK_TAB_VISIBLE_NAME_PREFIXES = [
   "Settings UI language",
-  "Provider",
+  "Quick provider",
+  "Codex bridge note",
   "Ollama base URL",
-  "Q&A Ollama base URL",
   "LM Studio base URL",
+  "LM Studio model",
+  "LM Studio API key (optional)",
+  "Ollama auto-match policy",
   "OpenAI base URL",
-  "Quick model pickers",
-  "Local AI readiness"
+  "OpenAI model",
+  "OpenAI API key",
+  "Anthropic model",
+  "Anthropic API key",
+  "Gemini model",
+  "Gemini API key",
+  "Custom system prompt"
 ];
 _KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES = [
   "Analyzed depth mode",
@@ -7321,7 +8303,8 @@ _KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES = [
   "Embedding Ollama base URL",
   "Embedding detected model picker",
   "Embedding model (manual)",
-  "Auto-pick recommended embedding model",
+  "Embedding auto-match policy",
+  "Cloud embedding behavior",
   "Embedding detection summary",
   "Semantic top-k candidates",
   "Semantic min similarity",
@@ -7348,24 +8331,13 @@ _KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES = [
   "Generate MOC after apply",
   "MOC file path"
 ];
-_KnowledgeWeaverSettingTab.MODELS_TAB_VISIBLE_NAME_PREFIXES = [
-  "Ollama detected model picker",
-  "Ollama model (manual)",
-  "Auto-pick recommended Ollama model",
-  "Ollama detection summary",
-  "LM Studio model",
-  "LM Studio API key (optional)",
-  "OpenAI model",
-  "OpenAI API key",
-  "Anthropic model",
-  "Anthropic API key",
-  "Gemini model",
-  "Gemini API key"
-];
 _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
-  "Conversation mode (chat runtime)",
-  "One-click local presets",
-  "Quick custom profile slots",
+  "Chat model profile",
+  "Model inventory refresh",
+  "Ollama detected model picker",
+  "Ollama detection summary",
+  "Flash profile",
+  "Pro profile",
   "Prefer Ollama /api/chat (with fallback)",
   "Q&A retrieval top-k",
   "Q&A max context chars",
@@ -7373,23 +8345,12 @@ _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
   "Always detailed answers",
   "Minimum answer chars",
   "Preferred response language",
-  "Role preset",
-  "Q&A pipeline preset",
-  "Role model detection controls",
-  "Role model detection summary",
-  "Auto-pick recommended role models",
-  "Apply role recommendations now",
-  "Role recommendation summary",
-  "Ask model (text)",
-  "Ask model (vision)",
-  "Image generator model",
-  "Coder model",
-  "Architect model",
-  "Orchestrator model",
-  "Safeguard model",
-  "Pro preset base model",
-  "Pro preset vision model",
-  "Pro preset embedding model",
+  "Chat font size",
+  "Show system messages in chat",
+  "Include selection inventory",
+  "Inventory max files",
+  "Allow non-local Q&A endpoint (danger)",
+  "Allowed outbound hosts (non-local Q&A)",
   "Chat transcript folder path",
   "Attachment ingest folder path",
   "Auto-sync chat thread",
@@ -7403,16 +8364,42 @@ _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
   "Shell tool default cwd (vault-relative, optional)",
   "Agent path allowlist (absolute, comma/newline)"
 ];
-_KnowledgeWeaverSettingTab.ADVANCED_TAB_VISIBLE_NAME_PREFIXES = [
-  "Allow non-local Q&A endpoint (danger)",
-  "Allowed outbound hosts (non-local Q&A)",
-  "Custom system prompt",
-  "Role system prompt editor",
-  "Preset override warning summary",
-  "Agent role model health check",
-  "Include selection inventory",
-  "Inventory max files"
+_KnowledgeWeaverSettingTab.ANALYZED_OLLAMA_ONLY_PREFIXES = [
+  "Enable semantic candidate ranking",
+  "Embedding Ollama base URL",
+  "Embedding detected model picker",
+  "Embedding model (manual)",
+  "Embedding auto-match policy",
+  "Embedding detection summary",
+  "Semantic top-k candidates",
+  "Semantic min similarity",
+  "Semantic source max chars"
 ];
+_KnowledgeWeaverSettingTab.CHAT_OLLAMA_ONLY_PREFIXES = [
+  "Model inventory refresh",
+  "Ollama detected model picker",
+  "Ollama detection summary"
+];
+_KnowledgeWeaverSettingTab.CHAT_LOCAL_PROFILE_PREFIXES = [
+  "Flash profile",
+  "Pro profile"
+];
+_KnowledgeWeaverSettingTab.ORCHESTRATION_TAB_VISIBLE_NAME_PREFIXES = [
+  "Conversation mode (chat runtime)",
+  "Q&A pipeline preset",
+  "Orchestration agent readiness",
+  "Ask model (text)",
+  "Ask model (vision)",
+  "Image generator model",
+  "Coder model",
+  "Debugger model",
+  "Architect model",
+  "Orchestrator model",
+  "Safeguard model",
+  "Debugger agent",
+  "Role system prompt editor"
+];
+_KnowledgeWeaverSettingTab.ADVANCED_TAB_VISIBLE_NAME_PREFIXES = [];
 _KnowledgeWeaverSettingTab.SIMPLE_HIDDEN_SECTION_TITLES = /* @__PURE__ */ new Set([
   "Cloud provider config",
   "Semantic linking (Ollama embeddings)",
@@ -7425,8 +8412,7 @@ _KnowledgeWeaverSettingTab.SIMPLE_VISIBLE_NAME_PREFIXES = [
   "Plugin mission",
   "Quick one-click setup",
   "Conversation mode (chat runtime)",
-  "One-click local presets",
-  "Local AI readiness",
+  "Flash profile",
   "Open preset guide"
 ];
 _KnowledgeWeaverSettingTab.SIMPLE_HIDDEN_NAME_KEYWORDS = [
@@ -7443,6 +8429,460 @@ _KnowledgeWeaverSettingTab.SIMPLE_HIDDEN_NAME_KEYWORDS = [
   "Inventory max files"
 ];
 var KnowledgeWeaverSettingTab = _KnowledgeWeaverSettingTab;
+var PatchParser = class {
+  normalizeUnifiedDiffText(rawDiff) {
+    const trimmed = (rawDiff != null ? rawDiff : "").trim();
+    if (!trimmed) {
+      return "";
+    }
+    const fenced = /^```(?:diff)?\s*([\s\S]*?)```$/i.exec(trimmed);
+    const body = fenced ? fenced[1] : trimmed;
+    return body.replace(/\r\n/g, "\n").trim();
+  }
+  parse(diffText) {
+    const normalized = this.normalizeUnifiedDiffText(diffText);
+    if (!normalized) {
+      return {
+        hunks: [],
+        error: "Unified diff is empty."
+      };
+    }
+    const lines = normalized.split("\n");
+    const pathHeaderPattern = /^(diff --git\s|index\s+[0-9a-f]+\.\.[0-9a-f]+|---\s+\S|\+\+\+\s+\S)/i;
+    const hunks = [];
+    let index = 0;
+    while (index < lines.length && !lines[index].startsWith("@@")) {
+      if (pathHeaderPattern.test(lines[index].trim())) {
+        return {
+          hunks: [],
+          error: "Path-based diff headers are not allowed for selection patch."
+        };
+      }
+      index += 1;
+    }
+    while (index < lines.length) {
+      const header = lines[index];
+      if (!header.startsWith("@@")) {
+        if (pathHeaderPattern.test(header.trim())) {
+          return {
+            hunks: [],
+            error: "Path-based multi-file diff is not allowed."
+          };
+        }
+        index += 1;
+        continue;
+      }
+      const match = /^@@\s*-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s*@@/.exec(header);
+      if (!match) {
+        return {
+          hunks: [],
+          error: `Invalid hunk header: ${header}`
+        };
+      }
+      const oldStart = Number.parseInt(match[1], 10);
+      const oldCount = Number.parseInt(match[2] != null ? match[2] : "1", 10);
+      const newStart = Number.parseInt(match[3], 10);
+      const newCount = Number.parseInt(match[4] != null ? match[4] : "1", 10);
+      if (!Number.isFinite(oldStart) || !Number.isFinite(oldCount) || !Number.isFinite(newStart) || !Number.isFinite(newCount) || oldStart < 1 || newStart < 1 || oldCount < 0 || newCount < 0) {
+        return {
+          hunks: [],
+          error: `Invalid hunk range: ${header}`
+        };
+      }
+      const hunkLines = [];
+      let actualOldCount = 0;
+      let actualNewCount = 0;
+      index += 1;
+      while (index < lines.length && !lines[index].startsWith("@@")) {
+        const line = lines[index];
+        if (line.startsWith("\\ No newline at end of file")) {
+          index += 1;
+          continue;
+        }
+        const prefix = line.slice(0, 1);
+        if (prefix !== " " && prefix !== "+" && prefix !== "-") {
+          return {
+            hunks: [],
+            error: `Invalid diff line prefix: ${line}`
+          };
+        }
+        hunkLines.push({
+          prefix,
+          text: line.slice(1)
+        });
+        if (prefix === " " || prefix === "-") {
+          actualOldCount += 1;
+        }
+        if (prefix === " " || prefix === "+") {
+          actualNewCount += 1;
+        }
+        index += 1;
+      }
+      if (actualOldCount !== oldCount || actualNewCount !== newCount) {
+        return {
+          hunks: [],
+          error: `Hunk line count mismatch: ${header}`
+        };
+      }
+      hunks.push({
+        oldStart,
+        oldCount,
+        newStart,
+        newCount,
+        lines: hunkLines
+      });
+    }
+    if (hunks.length === 0) {
+      return {
+        hunks: [],
+        error: "No @@ hunk found in unified diff."
+      };
+    }
+    return {
+      hunks,
+      error: null
+    };
+  }
+  countChangedLines(parsedDiff) {
+    if (!parsedDiff || parsedDiff.error) {
+      return 0;
+    }
+    let changed = 0;
+    for (const hunk of parsedDiff.hunks) {
+      for (const line of hunk.lines) {
+        if (line.prefix === "+" || line.prefix === "-") {
+          changed += 1;
+        }
+      }
+    }
+    return changed;
+  }
+  validateSelectionRange(parsedDiff, selectionText) {
+    if (!parsedDiff || parsedDiff.error) {
+      return {
+        ok: false,
+        error: "Unified diff parse failed."
+      };
+    }
+    const normalizedSelection = (selectionText != null ? selectionText : "").replace(/\r\n/g, "\n");
+    const selectionLineCount = normalizedSelection.length > 0 ? normalizedSelection.split("\n").length : 0;
+    for (const hunk of parsedDiff.hunks) {
+      const start = hunk.oldStart;
+      const count = hunk.oldCount;
+      if (start > selectionLineCount + 1) {
+        return {
+          ok: false,
+          error: `Diff hunk starts outside selection range (line ${start} > ${selectionLineCount + 1}).`,
+          selectionLineCount
+        };
+      }
+      const end = count === 0 ? start - 1 : start + count - 1;
+      if (end > selectionLineCount) {
+        return {
+          ok: false,
+          error: `Diff hunk exceeds selection range (line ${end} > ${selectionLineCount}).`,
+          selectionLineCount
+        };
+      }
+    }
+    return {
+      ok: true,
+      selectionLineCount
+    };
+  }
+  validateLimits(parsedDiff, limits) {
+    if (!parsedDiff || parsedDiff.error) {
+      return {
+        ok: false,
+        error: (parsedDiff == null ? void 0 : parsedDiff.error) || "Unified diff parse failed.",
+        changedLines: 0,
+        hunks: 0,
+        maxChangedLines: limits.maxChangedLines,
+        maxHunks: limits.maxHunks
+      };
+    }
+    const changedLines = this.countChangedLines(parsedDiff);
+    const hunks = parsedDiff.hunks.length;
+    if (changedLines === 0) {
+      return {
+        ok: false,
+        error: "diff is not a valid unified diff.",
+        changedLines,
+        hunks,
+        maxChangedLines: limits.maxChangedLines,
+        maxHunks: limits.maxHunks
+      };
+    }
+    if (hunks > limits.maxHunks) {
+      return {
+        ok: false,
+        error: `Hunk count ${hunks} exceeds allowed limit ${limits.maxHunks}.`,
+        changedLines,
+        hunks,
+        maxChangedLines: limits.maxChangedLines,
+        maxHunks: limits.maxHunks
+      };
+    }
+    if (changedLines > limits.maxChangedLines) {
+      return {
+        ok: false,
+        error: `Changed lines ${changedLines} exceed allowed limit ${limits.maxChangedLines}.`,
+        changedLines,
+        hunks,
+        maxChangedLines: limits.maxChangedLines,
+        maxHunks: limits.maxHunks
+      };
+    }
+    return {
+      ok: true,
+      changedLines,
+      hunks,
+      maxChangedLines: limits.maxChangedLines,
+      maxHunks: limits.maxHunks
+    };
+  }
+};
+var PatchApplier = class {
+  constructor(parser) {
+    this.parser = parser;
+  }
+  linesEqual(left, right, trimRightWhitespace) {
+    if (!trimRightWhitespace) {
+      return left === right;
+    }
+    return left.replace(/\s+$/g, "") === right.replace(/\s+$/g, "");
+  }
+  blockEquals(lines, start, block, trimRightWhitespace) {
+    if (start < 0 || start + block.length > lines.length) {
+      return false;
+    }
+    for (let index = 0; index < block.length; index += 1) {
+      if (!this.linesEqual(lines[start + index], block[index], trimRightWhitespace)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  buildFuzzyAnchor(oldLines, contextEntries) {
+    if (oldLines.length === 0 || contextEntries.length === 0) {
+      return null;
+    }
+    let bestStartIndex = 0;
+    let bestLength = 1;
+    let currentStartIndex = 0;
+    let currentLength = 1;
+    for (let index = 1; index < contextEntries.length; index += 1) {
+      if (contextEntries[index].oldIndex === contextEntries[index - 1].oldIndex + 1) {
+        currentLength += 1;
+      } else {
+        if (currentLength > bestLength) {
+          bestLength = currentLength;
+          bestStartIndex = currentStartIndex;
+        }
+        currentStartIndex = index;
+        currentLength = 1;
+      }
+    }
+    if (currentLength > bestLength) {
+      bestLength = currentLength;
+      bestStartIndex = currentStartIndex;
+    }
+    const anchorStart = contextEntries[bestStartIndex].oldIndex;
+    const anchorLength = Math.max(1, Math.min(3, bestLength));
+    return {
+      anchorStart,
+      anchorLines: oldLines.slice(anchorStart, anchorStart + anchorLength)
+    };
+  }
+  collectFuzzyCandidates(working, oldLines, anchor, trimRightWhitespace) {
+    const candidateStarts = [];
+    if (!anchor || anchor.anchorLines.length === 0) {
+      return candidateStarts;
+    }
+    const maxAnchorStart = working.length - anchor.anchorLines.length;
+    for (let anchorStart = 0; anchorStart <= maxAnchorStart; anchorStart += 1) {
+      if (!this.blockEquals(working, anchorStart, anchor.anchorLines, trimRightWhitespace)) {
+        continue;
+      }
+      const matchStart = anchorStart - anchor.anchorStart;
+      if (matchStart < 0 || matchStart + oldLines.length > working.length) {
+        continue;
+      }
+      if (!this.blockEquals(working, matchStart, oldLines, trimRightWhitespace)) {
+        continue;
+      }
+      candidateStarts.push(matchStart);
+    }
+    return [...new Set(candidateStarts)];
+  }
+  applyStrict(sourceText, parsedDiff) {
+    if (!parsedDiff || parsedDiff.error) {
+      return {
+        ok: false,
+        error: (parsedDiff == null ? void 0 : parsedDiff.error) || "Unified diff parse failed.",
+        text: sourceText,
+        changedLines: 0
+      };
+    }
+    const base = sourceText.replace(/\r\n/g, "\n");
+    const working = base.split("\n");
+    let delta = 0;
+    for (const hunk of parsedDiff.hunks) {
+      let cursor = hunk.oldStart - 1 + delta;
+      if (cursor < 0 || cursor > working.length) {
+        return {
+          ok: false,
+          error: `Hunk start is out of range (line ${hunk.oldStart}).`,
+          text: sourceText,
+          changedLines: 0
+        };
+      }
+      for (const line of hunk.lines) {
+        if (line.prefix === " ") {
+          if (working[cursor] !== line.text) {
+            return {
+              ok: false,
+              error: `Context mismatch at line ${cursor + 1}.`,
+              text: sourceText,
+              changedLines: 0
+            };
+          }
+          cursor += 1;
+          continue;
+        }
+        if (line.prefix === "-") {
+          if (working[cursor] !== line.text) {
+            return {
+              ok: false,
+              error: `Delete mismatch at line ${cursor + 1}.`,
+              text: sourceText,
+              changedLines: 0
+            };
+          }
+          working.splice(cursor, 1);
+          delta -= 1;
+          continue;
+        }
+        if (line.prefix === "+") {
+          working.splice(cursor, 0, line.text);
+          cursor += 1;
+          delta += 1;
+        }
+      }
+    }
+    return {
+      ok: true,
+      text: working.join("\n"),
+      changedLines: this.parser.countChangedLines(parsedDiff)
+    };
+  }
+  applyFuzzy(sourceText, parsedDiff) {
+    if (!parsedDiff || parsedDiff.error) {
+      return {
+        ok: false,
+        error: (parsedDiff == null ? void 0 : parsedDiff.error) || "Unified diff parse failed.",
+        text: sourceText,
+        changedLines: 0,
+        usedTrimmedMatch: false
+      };
+    }
+    const base = sourceText.replace(/\r\n/g, "\n");
+    const working = base.split("\n");
+    let usedTrimmedMatch = false;
+    for (const hunk of parsedDiff.hunks) {
+      const oldLines = [];
+      const newLines = [];
+      const contextEntries = [];
+      let oldCursor = 0;
+      for (const line of hunk.lines) {
+        if (line.prefix !== "+") {
+          if (line.prefix === " ") {
+            contextEntries.push({ oldIndex: oldCursor, text: line.text });
+          }
+          oldLines.push(line.text);
+          oldCursor += 1;
+        }
+        if (line.prefix !== "-") {
+          newLines.push(line.text);
+        }
+      }
+      const anchor = this.buildFuzzyAnchor(oldLines, contextEntries);
+      if (!anchor) {
+        return {
+          ok: false,
+          error: `Fuzzy match needs stable context anchor near hunk start line ${hunk.oldStart}. Regenerate unified diff with more context lines.`,
+          text: sourceText,
+          changedLines: 0,
+          usedTrimmedMatch
+        };
+      }
+      let candidates = this.collectFuzzyCandidates(working, oldLines, anchor, false);
+      if (candidates.length === 0) {
+        candidates = this.collectFuzzyCandidates(working, oldLines, anchor, true);
+        if (candidates.length > 0) {
+          usedTrimmedMatch = true;
+        }
+      }
+      if (candidates.length !== 1) {
+        const detail = candidates.length === 0 ? "no candidate" : `${candidates.length} candidates`;
+        return {
+          ok: false,
+          error: `Fuzzy match is uncertain (${detail}) near hunk start line ${hunk.oldStart}. Regenerate unified diff.`,
+          text: sourceText,
+          changedLines: 0,
+          usedTrimmedMatch
+        };
+      }
+      const matchStart = candidates[0];
+      working.splice(matchStart, oldLines.length, ...newLines);
+    }
+    return {
+      ok: true,
+      text: working.join("\n"),
+      changedLines: this.parser.countChangedLines(parsedDiff),
+      usedTrimmedMatch
+    };
+  }
+  apply(sourceText, diffText, parsedDiff = null) {
+    const parsed = parsedDiff || this.parser.parse(diffText);
+    if (parsed.error) {
+      return {
+        ok: false,
+        mode: "none",
+        error: parsed.error,
+        changedLines: 0,
+        strictError: parsed.error,
+        fuzzyError: ""
+      };
+    }
+    const strictResult = this.applyStrict(sourceText, parsed);
+    if (strictResult.ok) {
+      return {
+        ...strictResult,
+        mode: "strict",
+        strictError: "",
+        fuzzyError: ""
+      };
+    }
+    const fuzzyResult = this.applyFuzzy(sourceText, parsed);
+    if (fuzzyResult.ok) {
+      return {
+        ...fuzzyResult,
+        mode: "fuzzy",
+        strictError: strictResult.error || "",
+        fuzzyError: ""
+      };
+    }
+    return {
+      ok: false,
+      mode: "none",
+      error: `Strict apply failed: ${strictResult.error || "unknown"} | Fuzzy apply failed: ${fuzzyResult.error || "unknown"}`,
+      changedLines: this.parser.countChangedLines(parsed),
+      strictError: strictResult.error || "",
+      fuzzyError: fuzzyResult.error || ""
+    };
+  }
+};
 var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
@@ -7456,6 +8896,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.analysisCache = null;
     this.analysisCacheDirty = false;
     this.pendingQaActionPlan = null;
+    this.lastQaRoutingLog = null;
     this.pendingNewNoteWatchPrompts = /* @__PURE__ */ new Set();
     this.autoTagInFlightPaths = /* @__PURE__ */ new Set();
     this.autoTagLastRunByPath = /* @__PURE__ */ new Map();
@@ -7505,7 +8946,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     });
     this.addCommand({
       id: "open-analyzed-track",
-      name: "Open analyzed track (selection + analyzed settings)",
+      name: "Open analyzed track snapshot (selection focus)",
       callback: async () => this.openAnalyzedTrack()
     });
     this.addCommand({
@@ -7619,9 +9060,6 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   getRoleModelSettingKey(role) {
     var _a;
-    if (role === "debugger") {
-      return "qaCoderModel";
-    }
     const found = ROLE_MODEL_SETTING_CONFIGS.find((config) => config.role === role);
     return (_a = found == null ? void 0 : found.key) != null ? _a : null;
   }
@@ -7700,13 +9138,34 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getEmbeddingModelOptions() {
     return this.embeddingDetectionOptions;
   }
-  async openLocalQaWorkspaceView() {
-    let leaf = this.app.workspace.getLeavesOfType(LOCAL_QA_VIEW_TYPE)[0];
+  async openLocalQaWorkspaceView(openNewPane = false) {
+    const existingLeaves = this.app.workspace.getLeavesOfType(LOCAL_QA_VIEW_TYPE);
+    if (openNewPane) {
+      if (existingLeaves.length >= LOCAL_QA_MAX_PANES) {
+        this.notice(`최대 ${LOCAL_QA_MAX_PANES}개 채팅창까지 열 수 있습니다.`);
+        if (existingLeaves[0]) {
+          this.app.workspace.revealLeaf(existingLeaves[0]);
+        }
+        return false;
+      }
+      const splitLeaf = this.app.workspace.getRightLeaf(true);
+      if (!splitLeaf) {
+        this.notice("Could not open additional chat pane.");
+        return false;
+      }
+      await splitLeaf.setViewState({
+        type: LOCAL_QA_VIEW_TYPE,
+        active: true
+      });
+      this.app.workspace.revealLeaf(splitLeaf);
+      return true;
+    }
+    let leaf = existingLeaves[0];
     if (!leaf) {
       const rightLeaf = this.app.workspace.getRightLeaf(false);
       if (!rightLeaf) {
         this.notice("Could not open right-side chat pane.");
-        return;
+        return false;
       }
       leaf = rightLeaf;
       await leaf.setViewState({
@@ -7715,9 +9174,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       });
     }
     this.app.workspace.revealLeaf(leaf);
+    return true;
   }
   async openAnalyzedTrack() {
-    var _a, _b;
+    var _a;
     const selectedFiles = this.getSelectedFiles();
     const folderCounter = /* @__PURE__ */ new Map();
     for (const file of selectedFiles) {
@@ -7728,24 +9188,16 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const sampleFiles = selectedFiles.slice(0, 4).map((file) => file.path);
     const cache = await this.loadAnalysisCache();
     const cacheEntries = Object.keys(cache.entries).length;
-    this.settings.settingsActiveTab = "analyzed";
-    await this.saveSettings();
-    const appWithSetting = this.app;
-    if (typeof ((_b = appWithSetting.setting) == null ? void 0 : _b.open) === "function") {
-      appWithSetting.setting.open();
-      if (typeof appWithSetting.setting.openTabById === "function") {
-        appWithSetting.setting.openTabById(this.manifest.id);
-      }
-    }
-    this.notice(
-      [
+    await this.openSelectionModal({
+      title: "Analyzed Track snapshot / \uBD84\uC11D \uBC94\uC704 \uC2A4\uB0C5\uC0F7",
+      description: "Review analyzed scope first, then adjust file/folder selection.",
+      modalWidth: "min(1180px, 95vw)",
+      snapshotLines: [
         `Analyzed snapshot: files=${selectedFiles.length}, selectedFolders=${this.settings.targetFolderPaths.length}, cacheEntries=${cacheEntries}`,
         topFolders.length > 0 ? `Top folders: ${topFolders.join(", ")}` : "Top folders: (none)",
         sampleFiles.length > 0 ? `Sample files: ${sampleFiles.join(", ")}` : "Sample files: (none)"
-      ].join(" | "),
-      7e3
-    );
-    await this.openSelectionModal();
+      ]
+    });
   }
   async refreshOpenQaWorkspaceViews() {
     const leaves = this.app.workspace.getLeavesOfType(LOCAL_QA_VIEW_TYPE);
@@ -7802,6 +9254,93 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getQaConversationModeOptionsForQa() {
     return QA_CONVERSATION_MODE_OPTIONS;
   }
+  getQaChatModelFamilyForQa() {
+    return this.settings.qaChatModelFamily === "cloud" ? "cloud" : "local";
+  }
+  getQaChatModelProfileForQa() {
+    return (this.settings.qaChatModelProfile || "").trim();
+  }
+  getQaChatModelFamilyOptionsForQa() {
+    return [
+      { value: "local", label: "Local" },
+      { value: "cloud", label: "Cloud" }
+    ];
+  }
+  getQaChatModelProfileOptionsForQa(family) {
+    if (family === "cloud") {
+      const codexModel = this.settings.openAIModel.trim() || DEFAULT_SETTINGS.openAIModel;
+      const claudeModel = this.settings.anthropicModel.trim() || DEFAULT_SETTINGS.anthropicModel;
+      const geminiModel = this.settings.geminiModel.trim() || DEFAULT_SETTINGS.geminiModel;
+      return [
+        { value: "codex", label: codexModel ? `Codex (${codexModel})` : "Codex" },
+        { value: "claude", label: claudeModel ? `Claude (${claudeModel})` : "Claude" },
+        { value: "gemini", label: geminiModel ? `Gemini (${geminiModel})` : "Gemini" }
+      ];
+    }
+    return [
+      { value: "local-flash", label: "Local Flash" },
+      { value: "local-pro", label: "Local Pro" }
+    ];
+  }
+  async setQaChatModelFamilyForQa(family) {
+    const nextFamily = family === "cloud" ? "cloud" : "local";
+    this.settings.qaChatModelFamily = nextFamily;
+    const allowedProfiles = nextFamily === "cloud" ? /* @__PURE__ */ new Set(["codex", "claude", "gemini"]) : /* @__PURE__ */ new Set(["local-flash", "local-pro"]);
+    const normalizedProfile = allowedProfiles.has(this.settings.qaChatModelProfile) ? this.settings.qaChatModelProfile : nextFamily === "cloud" ? "codex" : "local-flash";
+    this.settings.qaChatModelProfile = normalizedProfile;
+    return await this.applyQaChatModelProfileForQa(normalizedProfile, nextFamily);
+  }
+  appendQaAllowedOutboundHostFromUrl(rawUrl) {
+    const value = (rawUrl || "").trim();
+    if (!value) {
+      return;
+    }
+    try {
+      const parsed = new URL(value);
+      const host = parsed.hostname.trim().toLowerCase();
+      if (!host) {
+        return;
+      }
+      const merged = new Set(this.parseQaAllowedOutboundHosts());
+      merged.add(host);
+      this.settings.qaAllowedOutboundHosts = [...merged].sort((a, b) => a.localeCompare(b)).join(", ");
+    } catch (e) {
+    }
+  }
+  async applyQaChatModelProfileForQa(profile, familyHint) {
+    const family = familyHint === "cloud" ? "cloud" : this.getQaChatModelFamilyForQa();
+    if (family === "local") {
+      const normalized = profile === "local-pro" ? "local-pro" : "local-flash";
+      const preset = normalized === "local-pro" ? "balanced_local" : "fast_local";
+      const summary = await this.applyOneClickLocalPresetForQa(preset);
+      this.settings.qaChatModelFamily = "local";
+      this.settings.qaChatModelProfile = normalized;
+      await this.saveSettings();
+      await this.refreshOpenQaWorkspaceViews();
+      return summary;
+    }
+    const normalized = profile === "claude" || profile === "gemini" ? profile : "codex";
+    const bridgeBase = toOpenAICompatibleBase(this.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+    this.settings.qaChatModelFamily = "cloud";
+    this.settings.qaChatModelProfile = normalized;
+    this.settings.qaLocalPresetProfile = "custom";
+    this.settings.qaAllowNonLocalEndpoint = true;
+    this.settings.qaOllamaBaseUrl = bridgeBase;
+    this.appendQaAllowedOutboundHostFromUrl(bridgeBase);
+    if (normalized === "claude") {
+      this.settings.provider = "anthropic";
+      this.settings.qaOllamaModel = this.settings.anthropicModel.trim() || DEFAULT_SETTINGS.anthropicModel;
+    } else if (normalized === "gemini") {
+      this.settings.provider = "gemini";
+      this.settings.qaOllamaModel = this.settings.geminiModel.trim() || DEFAULT_SETTINGS.geminiModel;
+    } else {
+      this.settings.provider = "openai";
+      this.settings.qaOllamaModel = this.settings.openAIModel.trim() || DEFAULT_SETTINGS.openAIModel;
+    }
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+    return `Cloud profile applied: ${normalized}. Q&A base URL uses OpenAI-compatible bridge endpoint (${this.settings.qaOllamaBaseUrl}).`;
+  }
   applyQaConversationModePreset(mode) {
     this.settings.qaConversationMode = mode;
     switch (mode) {
@@ -7813,7 +9352,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         this.settings.qaSafeguardPassEnabled = false;
         break;
       case "plan":
-        this.settings.qaRolePreset = "ask";
+        this.settings.qaRolePreset = "orchestrator";
         this.settings.qaPipelinePreset = "orchestrator_safeguard";
         this.settings.qaAgentToolModeEnabled = false;
         this.settings.qaOrchestratorEnabled = true;
@@ -7822,10 +9361,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         this.settings.qaMinAnswerChars = Math.max(260, this.settings.qaMinAnswerChars);
         break;
       case "agent":
-        this.settings.qaRolePreset = "ask";
+        this.settings.qaRolePreset = "coder";
         this.settings.qaPipelinePreset = "legacy_auto";
         this.settings.qaAgentToolModeEnabled = true;
-        this.settings.qaAgentRequireApproval = true;
+        this.settings.qaAgentRequireApproval = false;
         this.settings.qaOrchestratorEnabled = false;
         this.settings.qaSafeguardPassEnabled = false;
         break;
@@ -7846,12 +9385,26 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.applyQaConversationModePreset(mode);
     this.settings.qaLocalPresetProfile = "custom";
     await this.saveSettings();
+    if (mode === "orchestration") {
+      await this.refreshOllamaDetection({ notify: false, autoApply: true });
+      await this.refreshEmbeddingModelDetection({ notify: false, autoApply: true });
+      await this.applyRecommendedRoleModelsForQa(false, true);
+      const defaultPipeline = this.getQaPipelinePresetOptionsForQa()[0];
+      if (defaultPipeline && this.settings.qaPipelinePreset !== defaultPipeline.value) {
+        this.settings.qaPipelinePreset = defaultPipeline.value;
+        await this.saveSettings();
+      }
+    }
     await this.refreshOpenQaWorkspaceViews();
   }
   getQaRolePresetOptionsForQa() {
     return QA_ROLE_PRESET_OPTIONS;
   }
   getQaPipelinePresetOptionsForQa() {
+    if (this.settings.qaConversationMode === "orchestration") {
+      const defaultOption = QA_PIPELINE_PRESET_OPTIONS.find((option) => option.value === "orchestrator_auto_route");
+      return defaultOption ? [defaultOption] : QA_PIPELINE_PRESET_OPTIONS;
+    }
     return QA_PIPELINE_PRESET_OPTIONS;
   }
   getQaModelLabelForQa(role) {
@@ -7946,6 +9499,41 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.settings.qaAgentToolModeEnabled = enabled;
     await this.saveSettings();
   }
+  inferQaCloudProfileFromModelName(modelName) {
+    const normalized = modelName.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (CLOUD_ANTHROPIC_MODEL_REGEX.test(normalized)) {
+      return "claude";
+    }
+    if (CLOUD_GEMINI_MODEL_REGEX.test(normalized)) {
+      return "gemini";
+    }
+    if (CLOUD_OPENAI_MODEL_REGEX.test(normalized)) {
+      return "codex";
+    }
+    return null;
+  }
+  syncQaCloudFamilyFromModelHint(modelName) {
+    const inferredProfile = this.inferQaCloudProfileFromModelName(modelName);
+    if (!inferredProfile) {
+      return false;
+    }
+    this.settings.qaChatModelFamily = "cloud";
+    this.settings.qaChatModelProfile = inferredProfile;
+    this.settings.qaAllowNonLocalEndpoint = true;
+    this.settings.qaOllamaBaseUrl = toOpenAICompatibleBase(this.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+    this.appendQaAllowedOutboundHostFromUrl(this.settings.qaOllamaBaseUrl);
+    if (inferredProfile === "claude") {
+      this.settings.provider = "anthropic";
+    } else if (inferredProfile === "gemini") {
+      this.settings.provider = "gemini";
+    } else {
+      this.settings.provider = "openai";
+    }
+    return true;
+  }
   getQaRoleSystemPromptForQa(role) {
     switch (role) {
       case "ask":
@@ -8032,7 +9620,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return deduped;
   }
   async setQaModelOverrideForQa(modelOverride) {
-    this.settings.qaOllamaModel = modelOverride.trim();
+    const normalized = modelOverride.trim();
+    this.settings.qaOllamaModel = normalized;
+    if (normalized) {
+      this.syncQaCloudFamilyFromModelHint(normalized);
+    }
     this.settings.qaLocalPresetProfile = "custom";
     await this.saveSettings();
     await this.refreshOpenQaWorkspaceViews();
@@ -8040,6 +9632,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   async applyQaChatModelSelectionForQa(role, modelName) {
     const next = modelName.trim();
     this.settings.qaOllamaModel = next;
+    if (next) {
+      this.syncQaCloudFamilyFromModelHint(next);
+    }
     this.settings.qaLocalPresetProfile = "custom";
     const roleKey = this.getRoleModelSettingKey(role);
     if (roleKey) {
@@ -8164,18 +9759,50 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     })).filter((item) => item.score > -900).sort((a, b) => b.score - a.score || a.model.localeCompare(b.model));
     return (_b = (_a = candidates[0]) == null ? void 0 : _a.model) != null ? _b : null;
   }
+  pickEmbeddingModelForPreset(preset) {
+    var _a, _b;
+    const options = this.getEmbeddingModelOptions().filter((option) => option.status !== "unavailable");
+    const ranked = options.map((option) => {
+      const lower = option.model.toLowerCase();
+      const sizeB = extractModelSizeBillions(lower);
+      const isSmallHint = /(small|mini|tiny|lite|all-minilm|e5-small|nomic-embed-text)/i.test(lower);
+      const isLargeHint = /(large|xl|xxl|mxbai-embed-large|e5-large|bge-large)/i.test(lower);
+      let score = option.status === "recommended" ? 10 : 0;
+      if (preset === "fast_local") {
+        score += isSmallHint ? 18 : 0;
+        score -= isLargeHint ? 8 : 0;
+        if (sizeB !== null) {
+          score += Math.max(-12, 10 - sizeB * 2);
+        }
+      } else if (preset === "balanced_local") {
+        score += isSmallHint ? 6 : 0;
+        score += isLargeHint ? 5 : 0;
+        score += /(nomic|bge|e5|mxbai|gte)/i.test(lower) ? 4 : 0;
+        if (sizeB !== null) {
+          score += Math.max(-8, 8 - Math.abs(sizeB - 7) * 1.2);
+        }
+      } else {
+        score += isLargeHint ? 18 : 0;
+        score -= isSmallHint ? 3 : 0;
+        if (sizeB !== null) {
+          score += sizeB * 1.8;
+        }
+      }
+      return { model: option.model, score };
+    }).sort((a, b) => b.score - a.score || a.model.localeCompare(b.model));
+    return (_b = (_a = ranked[0]) == null ? void 0 : _a.model) != null ? _b : "";
+  }
   getRecommendedPresetOverrideModelForQa(preset, kind) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     if (kind === "embedding") {
-      const embeddingOptions = this.getEmbeddingModelOptions();
-      return (_b = (_a = embeddingOptions.find((option) => option.status === "recommended")) == null ? void 0 : _a.model) != null ? _b : "";
+      return this.pickEmbeddingModelForPreset(preset);
     }
     if (kind === "vision") {
       const askVisionOptions = this.getRoleModelOptionsForQa("ask_vision");
-      return (_c = this.pickPresetModelFromOptions(askVisionOptions, preset, true)) != null ? _c : "";
+      return (_a = this.pickPresetModelFromOptions(askVisionOptions, preset, true)) != null ? _a : "";
     }
     const textOptions = this.getOllamaModelOptions();
-    return (_d = this.pickPresetModelFromOptions(textOptions, preset, false)) != null ? _d : "";
+    return (_b = this.pickPresetModelFromOptions(textOptions, preset, false)) != null ? _b : "";
   }
   applyPresetAwareRoleModels(preset) {
     const baseModel = this.pickPresetModelFromOptions(this.getOllamaModelOptions(), preset, false) || this.settings.ollamaModel.trim();
@@ -8216,7 +9843,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const effectivePreset = presetClamp.effective;
     const previousProvider = this.settings.provider;
     this.settings.ollamaBaseUrl = this.settings.ollamaBaseUrl.trim() || DEFAULT_SETTINGS.ollamaBaseUrl;
-    this.settings.qaOllamaBaseUrl = this.settings.qaOllamaBaseUrl.trim() || this.settings.ollamaBaseUrl;
+    this.settings.qaOllamaBaseUrl = this.settings.ollamaBaseUrl;
     this.settings.semanticOllamaBaseUrl = this.settings.semanticOllamaBaseUrl.trim() || this.settings.ollamaBaseUrl;
     this.settings.qaAllowNonLocalEndpoint = false;
     this.settings.qaAgentRequireApproval = true;
@@ -8305,7 +9932,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         autoApply: true
       });
       const modelLayout = this.applyPresetAwareRoleModels(effectivePreset);
-      if (embeddingDetected == null ? void 0 : embeddingDetected.recommended) {
+      const presetEmbeddingModel = this.getRecommendedPresetOverrideModelForQa(effectivePreset, "embedding");
+      if (presetEmbeddingModel) {
+        this.settings.semanticOllamaModel = presetEmbeddingModel;
+      } else if (embeddingDetected == null ? void 0 : embeddingDetected.recommended) {
         this.settings.semanticOllamaModel = embeddingDetected.recommended;
       }
       const manualOverrides = [];
@@ -8369,6 +9999,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         qaAskVisionModel: this.settings.qaAskVisionModel,
         qaImageGeneratorModel: this.settings.qaImageGeneratorModel,
         qaCoderModel: this.settings.qaCoderModel,
+        qaDebuggerModel: this.settings.qaDebuggerModel,
         qaArchitectModel: this.settings.qaArchitectModel,
         qaOrchestratorModel: this.settings.qaOrchestratorModel,
         qaSafeguardModel: this.settings.qaSafeguardModel,
@@ -8442,6 +10073,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.settings.qaAskVisionModel = next.qaAskVisionModel;
     this.settings.qaImageGeneratorModel = next.qaImageGeneratorModel;
     this.settings.qaCoderModel = next.qaCoderModel;
+    this.settings.qaDebuggerModel = next.qaDebuggerModel || "";
     this.settings.qaArchitectModel = next.qaArchitectModel;
     this.settings.qaOrchestratorModel = next.qaOrchestratorModel;
     this.settings.qaSafeguardModel = next.qaSafeguardModel;
@@ -8526,6 +10158,48 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       }
       return a.localeCompare(b);
     });
+  }
+  async scanSkillsFolderForQa(rootPath) {
+    const target = (rootPath || "").trim();
+    if (!target) {
+      return { rootPath: "", skills: [], error: "Skills folder path is empty." };
+    }
+    try {
+      const normalizedRoot = nodePath.resolve(target);
+      const entries = await nodeFs.promises.readdir(normalizedRoot, { withFileTypes: true });
+      const skills = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const skillDir = nodePath.join(normalizedRoot, entry.name);
+        const skillDocPath = nodePath.join(skillDir, "SKILL.md");
+        try {
+          const stat = await nodeFs.promises.stat(skillDocPath);
+          if (!stat.isFile()) {
+            continue;
+          }
+          const raw = await nodeFs.promises.readFile(skillDocPath, "utf8");
+          const firstHeading = raw.split(/\r?\n/).find((line) => /^#\s+/.test(line.trim()));
+          const summaryLine = raw.split(/\r?\n/).find(
+            (line) => line.trim().length > 0 && !line.trim().startsWith("#")
+          );
+          skills.push({
+            id: entry.name,
+            folder: skillDir,
+            docPath: skillDocPath,
+            title: firstHeading ? firstHeading.replace(/^#\s+/, "").trim() : entry.name,
+            summary: (summaryLine || "").trim()
+          });
+        } catch (e) {
+        }
+      }
+      skills.sort((a, b) => a.id.localeCompare(b.id));
+      return { rootPath: normalizedRoot, skills };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown skills scan error";
+      return { rootPath: target, skills: [], error: message };
+    }
   }
   getChatTranscriptRootPathForQa() {
     return this.settings.chatTranscriptRootPath.trim();
@@ -8639,6 +10313,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   buildLocalQaTranscriptMarkdown(params) {
     const { messages, threadId, createdAt, updatedAt } = params;
+    const exportMessages = this.settings.qaShowSystemMessages ? messages : messages.filter((message) => message.role !== "system");
     const qaModel = this.getQaModelLabelForQa();
     const embeddingModel = this.getQaEmbeddingModelForQa();
     const selectedFiles = this.getSelectedFilesForQa().map((file) => file.path);
@@ -8646,10 +10321,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       (a, b) => a.localeCompare(b)
     );
     const topSourcePaths = this.collectTopSourcePaths(
-      messages,
+      exportMessages,
       Math.max(1, this.settings.qaTopK)
     );
-    const turns = messages.filter(
+    const turns = exportMessages.filter(
       (item) => item.role === "user" || item.role === "assistant"
     );
     const lines = [];
@@ -8676,7 +10351,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     lines.push("");
     lines.push("# Local AI Chat Transcript");
     lines.push("");
-    for (const message of messages) {
+    for (const message of exportMessages) {
       if (message.role === "system") {
         lines.push(`> [!note]- System (${message.timestamp})`);
         for (const line of message.text.split(/\r?\n/)) {
@@ -8785,11 +10460,11 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         `Reason: ${detected.reason}`,
         `Preview: ${modelListPreview}`
       ].join(" ");
-      if (options.autoApply && this.settings.ollamaAutoPickEnabled) {
+      if (options.autoApply && detected.recommended) {
         const current = this.settings.ollamaModel.trim();
-        const currentExists = current.length > 0 && detected.models.includes(current);
-        if ((!current || !currentExists) && detected.recommended) {
+        if (current !== detected.recommended) {
           this.settings.ollamaModel = detected.recommended;
+          this.settings.qaOllamaModel = detected.recommended;
           await this.saveSettings();
           if (options.notify) {
             this.notice(
@@ -8840,10 +10515,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         `Reason: ${detected.reason}`,
         `Preview: ${modelListPreview}`
       ].join(" ");
-      if (options.autoApply && this.settings.semanticAutoPickEnabled) {
+      if (options.autoApply && detected.recommended) {
         const current = this.settings.semanticOllamaModel.trim();
-        const currentExists = current.length > 0 && detected.models.includes(current);
-        if ((!current || !currentExists) && detected.recommended) {
+        if (current !== detected.recommended) {
           this.settings.semanticOllamaModel = detected.recommended;
           await this.saveSettings();
           if (options.notify) {
@@ -8877,11 +10551,17 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (this.settings.settingsUiLanguage !== "ko" && this.settings.settingsUiLanguage !== "en" && this.settings.settingsUiLanguage !== "bilingual") {
       this.settings.settingsUiLanguage = DEFAULT_SETTINGS.settingsUiLanguage;
     }
-    if (this.settings.settingsActiveTab !== "quick" && this.settings.settingsActiveTab !== "analyzed" && this.settings.settingsActiveTab !== "models" && this.settings.settingsActiveTab !== "chat" && this.settings.settingsActiveTab !== "advanced" && this.settings.settingsActiveTab !== "orchestration" && this.settings.settingsActiveTab !== "skills" && this.settings.settingsActiveTab !== "parser" && this.settings.settingsActiveTab !== "guide") {
+    if (this.settings.settingsActiveTab !== "quick" && this.settings.settingsActiveTab !== "analyzed" && this.settings.settingsActiveTab !== "chat" && this.settings.settingsActiveTab !== "orchestration" && this.settings.settingsActiveTab !== "skills" && this.settings.settingsActiveTab !== "parser" && this.settings.settingsActiveTab !== "guide") {
       this.settings.settingsActiveTab = DEFAULT_SETTINGS.settingsActiveTab;
+    }
+    if (this.settings.settingsActiveTab === "models") {
+      this.settings.settingsActiveTab = "chat";
     }
     if (this.settings.settingsActiveTab === "workflow") {
       this.settings.settingsActiveTab = "analyzed";
+    }
+    if (this.settings.settingsActiveTab === "advanced") {
+      this.settings.settingsActiveTab = "guide";
     }
     if (!Array.isArray(this.settings.targetFilePaths)) {
       this.settings.targetFilePaths = [];
@@ -8943,14 +10623,48 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaOllamaModel !== "string") {
       this.settings.qaOllamaModel = DEFAULT_SETTINGS.qaOllamaModel;
     }
+    if (this.settings.qaChatModelFamily !== "local" && this.settings.qaChatModelFamily !== "cloud") {
+      this.settings.qaChatModelFamily = DEFAULT_SETTINGS.qaChatModelFamily;
+    }
+    if (typeof this.settings.qaChatModelProfile !== "string") {
+      this.settings.qaChatModelProfile = DEFAULT_SETTINGS.qaChatModelProfile;
+    }
+    const localProfiles = /* @__PURE__ */ new Set(["local-flash", "local-pro"]);
+    const cloudProfiles = /* @__PURE__ */ new Set(["codex", "claude", "gemini"]);
+    const allowedProfiles = this.settings.qaChatModelFamily === "cloud" ? cloudProfiles : localProfiles;
+    if (!allowedProfiles.has(this.settings.qaChatModelProfile)) {
+      this.settings.qaChatModelProfile = this.settings.qaChatModelFamily === "cloud" ? "codex" : "local-flash";
+    }
+    if (!Number.isFinite(this.settings.qaChatFontSize)) {
+      this.settings.qaChatFontSize = DEFAULT_SETTINGS.qaChatFontSize;
+    }
+    this.settings.qaChatFontSize = Math.max(
+      11,
+      Math.min(22, Math.floor(this.settings.qaChatFontSize))
+    );
+    if (typeof this.settings.qaShowSystemMessages !== "boolean") {
+      this.settings.qaShowSystemMessages = DEFAULT_SETTINGS.qaShowSystemMessages;
+    }
     if (typeof this.settings.semanticAutoPickEnabled !== "boolean") {
       this.settings.semanticAutoPickEnabled = DEFAULT_SETTINGS.semanticAutoPickEnabled;
     }
     if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
       this.settings.qaAllowNonLocalEndpoint = DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
     }
+    if (this.settings.qaChatModelFamily === "cloud" && !this.settings.qaAllowNonLocalEndpoint) {
+      this.settings.qaAllowNonLocalEndpoint = true;
+    }
     if (typeof this.settings.qaAllowedOutboundHosts !== "string") {
       this.settings.qaAllowedOutboundHosts = DEFAULT_SETTINGS.qaAllowedOutboundHosts;
+    }
+    if (this.settings.qaChatModelFamily === "cloud") {
+      const cloudBase = toOpenAICompatibleBase(this.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+      if (!this.settings.qaOllamaBaseUrl.trim()) {
+        this.settings.qaOllamaBaseUrl = cloudBase;
+      }
+      this.appendQaAllowedOutboundHostFromUrl(this.settings.qaOllamaBaseUrl || cloudBase);
+    } else if (this.settings.qaOllamaModel.trim()) {
+      this.syncQaCloudFamilyFromModelHint(this.settings.qaOllamaModel.trim());
     }
     if (typeof this.settings.qaPreferChatApi !== "boolean") {
       this.settings.qaPreferChatApi = DEFAULT_SETTINGS.qaPreferChatApi;
@@ -9009,6 +10723,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.qaCoderModel !== "string") {
       this.settings.qaCoderModel = DEFAULT_SETTINGS.qaCoderModel;
+    }
+    if (typeof this.settings.qaDebuggerModel !== "string") {
+      this.settings.qaDebuggerModel = DEFAULT_SETTINGS.qaDebuggerModel;
+    }
+    if (!this.settings.qaDebuggerModel.trim() && this.settings.qaCoderModel.trim()) {
+      this.settings.qaDebuggerModel = this.settings.qaCoderModel.trim();
     }
     if (typeof this.settings.qaArchitectModel !== "string") {
       this.settings.qaArchitectModel = DEFAULT_SETTINGS.qaArchitectModel;
@@ -9146,6 +10866,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.settings.qaAttachmentIngestRootPath = (0, import_obsidian4.normalizePath)(
       this.settings.qaAttachmentIngestRootPath.trim() || DEFAULT_SETTINGS.qaAttachmentIngestRootPath
     );
+    if (typeof this.settings.qaSkillsRootPath !== "string") {
+      this.settings.qaSkillsRootPath = DEFAULT_SETTINGS.qaSkillsRootPath;
+    }
     if (this.settings.qaAgentShellCwdPath.trim()) {
       try {
         this.settings.qaAgentShellCwdPath = this.sanitizeQaShellCwdPath(
@@ -9268,6 +10991,28 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return (0, import_obsidian4.normalizePath)(
       `${this.app.vault.configDir}/plugins/omni-forge/${ANALYSIS_CACHE_FILE}`
     );
+  }
+  getSelectionDiffAuditLogPath() {
+    return (0, import_obsidian4.normalizePath)(
+      `${this.app.vault.configDir}/plugins/omni-forge/logs/${SELECTION_DIFF_AUDIT_LOG_FILE}`
+    );
+  }
+  async appendSelectionDiffAuditLog(entry) {
+    const payload = entry && typeof entry === "object" ? entry : {};
+    const line = `${JSON.stringify(payload)}
+`;
+    const path = this.getSelectionDiffAuditLogPath();
+    try {
+      await this.ensureParentFolder(path);
+      const exists = await this.app.vault.adapter.exists(path);
+      if (!exists) {
+        await this.app.vault.adapter.write(path, line);
+        return;
+      }
+      const previous = await this.app.vault.adapter.read(path);
+      await this.app.vault.adapter.write(path, `${previous}${line}`);
+    } catch (error) {
+    }
   }
   async cleanupLegacyCacheArtifacts() {
     const legacyFiles = [
@@ -9502,6 +11247,263 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       return null;
     }
   }
+  parseFrontmatterBlockFromContent(content) {
+    const normalized = (content != null ? content : "").replace(/\r\n/g, "\n");
+    const lines = normalized.split("\n");
+    if (lines.length === 0 || lines[0].trim() !== "---") {
+      return {
+        normalizedText: normalized,
+        exists: false,
+        valid: true,
+        error: "",
+        frontmatter: {},
+        blockText: "",
+        bodyStartOffset: 0,
+        bodyText: normalized
+      };
+    }
+    let end = -1;
+    for (let i = 1; i < lines.length; i += 1) {
+      if (lines[i].trim() === "---") {
+        end = i;
+        break;
+      }
+    }
+    if (end < 1) {
+      return {
+        normalizedText: normalized,
+        exists: true,
+        valid: false,
+        error: "Unclosed frontmatter block.",
+        frontmatter: {},
+        blockText: normalized,
+        bodyStartOffset: normalized.length,
+        bodyText: ""
+      };
+    }
+    let bodyStartOffset = 0;
+    for (let i = 0; i <= end; i += 1) {
+      bodyStartOffset += lines[i].length;
+      if (i < lines.length - 1) {
+        bodyStartOffset += 1;
+      }
+    }
+    const blockText = normalized.slice(0, bodyStartOffset);
+    const bodyText = normalized.slice(bodyStartOffset);
+    const yamlRaw = lines.slice(1, end).join("\n").trim();
+    if (!yamlRaw) {
+      return {
+        normalizedText: normalized,
+        exists: true,
+        valid: true,
+        error: "",
+        frontmatter: {},
+        blockText,
+        bodyStartOffset,
+        bodyText
+      };
+    }
+    try {
+      const parsed = (0, import_obsidian4.parseYaml)(yamlRaw);
+      const frontmatter = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      return {
+        normalizedText: normalized,
+        exists: true,
+        valid: true,
+        error: "",
+        frontmatter,
+        blockText,
+        bodyStartOffset,
+        bodyText
+      };
+    } catch (error) {
+      return {
+        normalizedText: normalized,
+        exists: true,
+        valid: false,
+        error: "Frontmatter YAML parse failed.",
+        frontmatter: {},
+        blockText,
+        bodyStartOffset,
+        bodyText
+      };
+    }
+  }
+  dedupeFrontmatterStringArray(values) {
+    const seen = /* @__PURE__ */ new Set();
+    const output = [];
+    for (const value of values) {
+      const normalized = value.trim();
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      output.push(normalized);
+    }
+    return output;
+  }
+  pickFrontmatterSingleString(value) {
+    if (typeof value === "string") {
+      const normalized = value.trim();
+      return normalized.length > 0 ? normalized : void 0;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item !== "string") {
+          continue;
+        }
+        const normalized = item.trim();
+        if (normalized.length > 0) {
+          return normalized;
+        }
+      }
+    }
+    return void 0;
+  }
+  pickFrontmatterSingleIndex(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    return this.pickFrontmatterSingleString(value);
+  }
+  normalizeFrontmatterGuardRecord(rawFrontmatter, createdValue, updatedIso) {
+    const source = rawFrontmatter && typeof rawFrontmatter === "object" && !Array.isArray(rawFrontmatter) ? rawFrontmatter : {};
+    const next = {};
+    const linked = this.dedupeFrontmatterStringArray(toStringArray(source.linked));
+    if (linked.length > 0) {
+      next.linked = linked;
+    }
+    const tags = this.dedupeFrontmatterStringArray(toStringArray(source.tags));
+    if (tags.length > 0) {
+      next.tags = tags;
+    }
+    const topic = this.pickFrontmatterSingleString(source.topic);
+    if (topic) {
+      next.topic = topic;
+    }
+    const index = this.pickFrontmatterSingleIndex(source.index);
+    if (index !== void 0) {
+      next.index = index;
+    }
+    if (createdValue !== void 0 && createdValue !== null) {
+      if (typeof createdValue === "string") {
+        const created = createdValue.trim();
+        if (created.length > 0) {
+          next.created = created;
+        }
+      } else if (typeof createdValue === "number" && Number.isFinite(createdValue)) {
+        next.created = createdValue;
+      } else if (typeof createdValue === "boolean") {
+        next.created = createdValue;
+      }
+    }
+    next.updated = updatedIso;
+    return next;
+  }
+  formatFrontmatterGuardScalar(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value === "boolean") {
+      return value ? "true" : "false";
+    }
+    if (value === null) {
+      return "null";
+    }
+    return JSON.stringify(String(value));
+  }
+  renderFrontmatterGuardBlock(frontmatter) {
+    const lines = [];
+    for (const key of FRONTMATTER_GUARD_ALLOWED_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(frontmatter, key)) {
+        continue;
+      }
+      const value = frontmatter[key];
+      if (Array.isArray(value)) {
+        const normalized = this.dedupeFrontmatterStringArray(
+          value.map((item) => typeof item === "string" ? item : String(item))
+        );
+        if (normalized.length === 0) {
+          continue;
+        }
+        lines.push(`${key}:`);
+        for (const item of normalized) {
+          lines.push(`  - ${this.formatFrontmatterGuardScalar(item)}`);
+        }
+        continue;
+      }
+      if (value === void 0) {
+        continue;
+      }
+      lines.push(`${key}: ${this.formatFrontmatterGuardScalar(value)}`);
+    }
+    if (lines.length === 0) {
+      return `---\n---`;
+    }
+    return `---\n${lines.join("\n")}\n---`;
+  }
+  runFrontmatterLintGuardAfterPatch(params) {
+    const mode = params.mode === "selection" ? "selection" : "default";
+    const beforeInfo = this.parseFrontmatterBlockFromContent(params.beforeText);
+    const patchedInfo = this.parseFrontmatterBlockFromContent(params.patchedText);
+    if (!beforeInfo.valid) {
+      return {
+        ok: false,
+        error: "FrontmatterGuard blocked: current frontmatter YAML is invalid. Fix frontmatter and retry."
+      };
+    }
+    if (!patchedInfo.valid) {
+      return {
+        ok: false,
+        error: "FrontmatterGuard blocked: patched frontmatter YAML is invalid. Regenerate patch."
+      };
+    }
+    const frontmatterChangedByPatch = beforeInfo.blockText !== patchedInfo.blockText;
+    if (mode === "selection" && frontmatterChangedByPatch) {
+      return {
+        ok: false,
+        error: "Selection mode blocks frontmatter edits. Regenerate patch without frontmatter changes."
+      };
+    }
+    const beforeRecord = beforeInfo.frontmatter && typeof beforeInfo.frontmatter === "object" && !Array.isArray(beforeInfo.frontmatter) ? beforeInfo.frontmatter : {};
+    const createdValue = Object.prototype.hasOwnProperty.call(beforeRecord, "created") ? beforeRecord.created : void 0;
+    const normalizedRecord = this.normalizeFrontmatterGuardRecord(
+      beforeRecord,
+      createdValue,
+      (/* @__PURE__ */ new Date()).toISOString()
+    );
+    for (const key of Object.keys(normalizedRecord)) {
+      if (!FRONTMATTER_GUARD_ALLOWED_KEY_SET.has(key)) {
+        delete normalizedRecord[key];
+      }
+    }
+    const frontmatterBlock = this.renderFrontmatterGuardBlock(normalizedRecord);
+    const bodyWithoutLeadingBreak = patchedInfo.bodyText.replace(/^\n/, "");
+    const guardedText = `${frontmatterBlock}\n${bodyWithoutLeadingBreak}`;
+    const guardedInfo = this.parseFrontmatterBlockFromContent(guardedText);
+    if (!guardedInfo.valid) {
+      return {
+        ok: false,
+        error: "FrontmatterGuard failed to produce valid frontmatter YAML."
+      };
+    }
+    return {
+      ok: true,
+      text: guardedInfo.normalizedText,
+      beforeBodyStartOffset: patchedInfo.bodyStartOffset,
+      finalBodyStartOffset: guardedInfo.bodyStartOffset,
+      bodyOffsetDelta: guardedInfo.bodyStartOffset - patchedInfo.bodyStartOffset,
+      frontmatterChangedByPatch,
+      guardApplied: guardedInfo.normalizedText !== patchedInfo.normalizedText
+    };
+  }
+  mapOffsetAfterFrontmatterGuard(offset, beforeBodyStartOffset, bodyOffsetDelta) {
+    const baseOffset = Number.isFinite(offset) ? Math.floor(offset) : 0;
+    if (baseOffset >= beforeBodyStartOffset) {
+      return baseOffset + bodyOffsetDelta;
+    }
+    return baseOffset;
+  }
   async readFrontmatterSnapshot(file) {
     const raw = await this.app.vault.cachedRead(file);
     return this.parseFrontmatterFromContent(raw);
@@ -9641,6 +11643,129 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       }
     }
     return matched;
+  }
+  normalizeQaOpenSelectionContext(rawSelection, openFilePath = "") {
+    if (!rawSelection || typeof rawSelection !== "object") {
+      return null;
+    }
+    const openPath = (0, import_obsidian4.normalizePath)((openFilePath != null ? openFilePath : "").trim());
+    const filePath = (0, import_obsidian4.normalizePath)(
+      (typeof rawSelection.filePath === "string" ? rawSelection.filePath : openPath).trim()
+    );
+    if (!filePath || !this.isSafeVaultRelativePath(filePath)) {
+      return null;
+    }
+    if (openPath && filePath !== openPath) {
+      return null;
+    }
+    const fromOffset = Math.floor(Number(rawSelection.fromOffset));
+    const toOffset = Math.floor(Number(rawSelection.toOffset));
+    if (!Number.isFinite(fromOffset) || !Number.isFinite(toOffset)) {
+      return null;
+    }
+    if (fromOffset < 0 || toOffset <= fromOffset) {
+      return null;
+    }
+    const selectedText = typeof rawSelection.selectedText === "string" ? rawSelection.selectedText : "";
+    if (!selectedText) {
+      return null;
+    }
+    const capturedAt = typeof rawSelection.capturedAt === "string" ? rawSelection.capturedAt : (/* @__PURE__ */ new Date()).toISOString();
+    const selectionHash = this.hashString(`${filePath}
+${selectedText}`);
+    return {
+      filePath,
+      fromOffset,
+      toOffset,
+      selectedText,
+      selectionHash,
+      capturedAt
+    };
+  }
+  classifyTaskForQa(question, context) {
+    const normalized = question.toLowerCase();
+    if (context.hasSelection) {
+      return "EDIT_NOTE";
+    }
+    if (/(pdf|xlsx|excel|엑셀|변환|convert|parser|파서|ingest)/i.test(normalized)) {
+      return "DOC_PIPELINE";
+    }
+    if (/(링크|연결|graph|autolink|linking)/i.test(normalized)) {
+      return "AUTOLINK_GRAPH";
+    }
+    if (/(요약|정리|summary|summarize)/i.test(normalized)) {
+      return "QA_CHAT";
+    }
+    if (/(만들어|게임|프로젝트|build|create|project|prototype)/i.test(normalized)) {
+      return "GENERATE_PROJECT";
+    }
+    if (/(export|내보내기|출력|ppt|pdf\s*출력)/i.test(normalized)) {
+      return "EXPORT";
+    }
+    return "QA_CHAT";
+  }
+  resolveTaskRolePipelineForQa(taskType) {
+    const configured = ROUTER_TASK_ROLE_PIPELINE[taskType];
+    if (Array.isArray(configured) && configured.length > 0) {
+      return [...configured];
+    }
+    return [...ROUTER_TASK_ROLE_PIPELINE.QA_CHAT];
+  }
+  mapTaskRolesToStagesForQa(roles) {
+    const stages = [];
+    for (const role of roles) {
+      const stage = ROUTER_ROLE_STAGE_MAP[role];
+      if (!stage) {
+        continue;
+      }
+      if (!stages.includes(stage)) {
+        stages.push(stage);
+      }
+    }
+    return stages;
+  }
+  resolveRouterRoleModelForQa(role, qaModel) {
+    const priorities = ROUTER_ROLE_MODEL_PRIORITY[role] || ["ask"];
+    for (let index = 0; index < priorities.length; index += 1) {
+      const roleKey = priorities[index];
+      const model = this.resolveQaModelForRole(roleKey).trim();
+      if (!model) {
+        continue;
+      }
+      return {
+        model,
+        roleKey,
+        usedFallback: index > 0
+      };
+    }
+    return {
+      model: qaModel,
+      roleKey: "ask",
+      usedFallback: true
+    };
+  }
+  buildTaskRoutingForQa(question, context, qaModel) {
+    const taskType = this.classifyTaskForQa(question, context);
+    const roles = this.resolveTaskRolePipelineForQa(taskType);
+    const modelUsed = [];
+    let fallbackUsed = false;
+    for (const role of roles) {
+      const resolved = this.resolveRouterRoleModelForQa(role, qaModel);
+      if (resolved.model) {
+        modelUsed.push(resolved.model);
+      }
+      if (resolved.usedFallback) {
+        fallbackUsed = true;
+      }
+    }
+    return {
+      taskType,
+      roles,
+      stages: this.mapTaskRolesToStagesForQa(roles),
+      modelUsed: [...new Set(modelUsed)],
+      fallbackUsed,
+      safeguardPassed: false
+    };
   }
   detectLocalQaIntent(question) {
     const normalized = question.toLowerCase();
@@ -9866,17 +11991,50 @@ ${segment}` : segment;
     }
     return false;
   }
-  getQaContractLines(intent, preferDetailed) {
-    if (intent === "comparison") {
+  getQaConversationModeInstruction() {
+    switch (this.settings.qaConversationMode) {
+      case "plan":
+        return "Conversation mode: Plan. Prioritize execution checklist, sequencing, and risk-aware planning.";
+      case "agent":
+        return "Conversation mode: Agent. When user asks to create/edit files or run commands, propose executable omni-forge-actions JSON.";
+      case "orchestration":
+        return "Conversation mode: Orchestration. Coordinate sub-roles and produce build-ready artifacts; include runnable code for software/game tasks.";
+      case "ask":
+      default:
+        return "Conversation mode: Ask. Provide direct, source-grounded answers with practical clarity.";
+    }
+  }
+  getQaContractLines(intent, preferDetailed, mode = this.settings.qaConversationMode, question = "") {
+    const normalizedMode = mode === "plan" || mode === "agent" || mode === "orchestration" ? mode : "ask";
+    const gameBuildRequested = this.matchesGameBuildIntent(question);
+    if (intent === "sources_only") {
       return [
         "Output contract:",
-        "- Start with 2-3 sentence conclusion.",
-        "- Include at least one markdown table for comparison.",
-        "- After the table, add key trade-offs and recommendation.",
-        "- If information is missing, fill with '\uC815\uBCF4 \uBD80\uC871' and explain briefly."
+        "- Return source links only (bullet list).",
+        "- No extra narrative unless required for missing evidence."
       ];
     }
-    if (intent === "plan") {
+    if (normalizedMode === "agent") {
+      return [
+        "Output contract (Agent mode):",
+        "- If user requests file/system actions, include exactly ONE `omni-forge-actions` code block with strict JSON.",
+        "- Prefer concrete actions (`write_note`, `append_note`, `delete_note`, `read_note`, `list_folder`, `run_shell`) over long prose.",
+        "- Keep non-action explanation short and operational.",
+        "- If no action is needed, respond concisely without action block."
+      ];
+    }
+    if (normalizedMode === "orchestration") {
+      const gameLine = gameBuildRequested ? "- For game requests, include a minimal playable loop, file structure, and run/test commands." : "- Include implementation artifacts (file layout + runnable code) whenever coding is requested.";
+      return [
+        "Output contract (Orchestration mode):",
+        "- Start with objective/scope in 2-3 sentences.",
+        "- Provide phased execution plan with dependencies and completion criteria.",
+        "- Include role routing summary (architect/coder/debugger/safeguard).",
+        gameLine,
+        "- End with immediate next 3 actions."
+      ];
+    }
+    if (normalizedMode === "plan" || intent === "plan") {
       return [
         "Output contract:",
         "- Start with 2-3 sentence overview.",
@@ -9885,11 +12043,13 @@ ${segment}` : segment;
         "- Add short rationale for critical steps and risks."
       ];
     }
-    if (intent === "sources_only") {
+    if (intent === "comparison") {
       return [
         "Output contract:",
-        "- Return source links only (bullet list).",
-        "- No extra narrative unless required for missing evidence."
+        "- Start with 2-3 sentence conclusion.",
+        "- Include at least one markdown table for comparison.",
+        "- After the table, add key trade-offs and recommendation.",
+        "- If information is missing, fill with '\uC815\uBCF4 \uBD80\uC871' and explain briefly."
       ];
     }
     if (preferDetailed) {
@@ -9975,6 +12135,596 @@ ${item.content}`;
     const normalized = question.toLowerCase();
     return /(계획서|보고서|ppt|슬라이드|발표|수업|교안|학습\s*게임|게임\s*개발|roadmap|plan|report|presentation|slides|lesson|game\s*design|project\s*plan)/i.test(normalized);
   }
+  matchesGameBuildIntent(question) {
+    const normalized = question.toLowerCase();
+    return /(학습\s*게임|게임\s*개발|게임\s*만들|게임\s*구현|게임용\s*앱|게임\s*앱|앱\s*만들|앱\s*개발|game\s*(design|dev|development|prototype|build|loop|app)|build\s*(a\s*)?game|create\s*(a\s*)?game|simple\s*game|pygame|phaser|unity|godot)/i.test(
+      normalized
+    );
+  }
+  isGameBuildTask(question) {
+    return this.matchesGameBuildIntent(question);
+  }
+  isLikelyAgentMutationTask(question) {
+    const normalized = question.toLowerCase();
+    if (/(frontmatter|yaml|메타데이터|속성값)/i.test(normalized)) {
+      return true;
+    }
+    return /(삭제|지워|제거|수정|편집|바꿔|변경|추가|생성|작성|만들|저장|이동|복사|rename|remove|delete|edit|modify|update|write|append|create|implement|build|generate)/i.test(
+      normalized
+    );
+  }
+  hasMutatingQaActionInAnswer(answer, question, qaModel) {
+    const parsed = this.parseQaAgentActionPlanFromAnswer({
+      answer,
+      question,
+      model: qaModel
+    });
+    if (!parsed.plan) {
+      return false;
+    }
+    return parsed.plan.actions.some(
+      (action) => action.type === "write_note" || action.type === "append_note" || action.type === "delete_note" || action.type === "apply_selection_diff" || action.type === "run_shell"
+    );
+  }
+  parseSelectionDiffContractDiff(rawDiffText) {
+    const raw = (rawDiffText != null ? rawDiffText : "").replace(/\r\n/g, "\n");
+    const rawTrimmed = raw.trim();
+    if (!rawTrimmed) {
+      return {
+        ok: false,
+        error: "diff is empty."
+      };
+    }
+    if (/^```/m.test(rawTrimmed)) {
+      return {
+        ok: false,
+        error: "Diff-only contract violation: markdown code fences are not allowed."
+      };
+    }
+    const normalized = this.normalizeUnifiedDiffText(rawDiffText);
+    if (!normalized) {
+      return {
+        ok: false,
+        error: "diff is empty."
+      };
+    }
+    const lines = normalized.split("\n");
+    const headerCount = lines.reduce(
+      (count, line) => count + (line.trim() === CODER_PROMPT_CONTRACT_SELECTION_HEADER ? 1 : 0),
+      0
+    );
+    if (headerCount !== 1) {
+      return {
+        ok: false,
+        error: `Diff header must appear exactly once: ${CODER_PROMPT_CONTRACT_SELECTION_HEADER}.`
+      };
+    }
+    let firstNonEmptyIndex = -1;
+    for (let index = 0; index < lines.length; index += 1) {
+      if (lines[index].trim().length > 0) {
+        firstNonEmptyIndex = index;
+        break;
+      }
+    }
+    if (firstNonEmptyIndex < 0 || lines[firstNonEmptyIndex].trim() !== CODER_PROMPT_CONTRACT_SELECTION_HEADER) {
+      return {
+        ok: false,
+        error: `Diff header must be ${CODER_PROMPT_CONTRACT_SELECTION_HEADER}.`
+      };
+    }
+    const bodyLines = lines.slice(firstNonEmptyIndex + 1);
+    while (bodyLines.length > 0 && bodyLines[0].trim().length === 0) {
+      bodyLines.shift();
+    }
+    while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1].trim().length === 0) {
+      bodyLines.pop();
+    }
+    if (bodyLines.length === 0) {
+      return {
+        ok: false,
+        error: "No @@ hunk found in unified diff."
+      };
+    }
+    if (!bodyLines[0].startsWith("@@")) {
+      return {
+        ok: false,
+        error: "Unified diff must start with @@ hunk after CURRENT_SELECTION header."
+      };
+    }
+    const pathHeaderPattern = /^(diff --git\s|index\s+[0-9a-f]+\.\.[0-9a-f]+|---\s+\S|\+\+\+\s+\S)/i;
+    for (const line of bodyLines) {
+      const trimmed = line.trim();
+      if (pathHeaderPattern.test(trimmed)) {
+        return {
+          ok: false,
+          error: "Path-based multi-file diff is not allowed."
+        };
+      }
+      if (line.startsWith("@@")) {
+        continue;
+      }
+      if (line.startsWith("\\ No newline at end of file")) {
+        continue;
+      }
+      const prefix = line.slice(0, 1);
+      if (prefix === " " || prefix === "+" || prefix === "-") {
+        continue;
+      }
+      return {
+        ok: false,
+        error: "Diff-only contract violation: non-diff text detected."
+      };
+    }
+    const diffBody = bodyLines.join("\n");
+    const parsedDiff = this.parseUnifiedDiffHunks(diffBody);
+    if (parsedDiff.error) {
+      return {
+        ok: false,
+        error: parsedDiff.error
+      };
+    }
+    return {
+      ok: true,
+      diffBody,
+      diffWithHeader: `${CODER_PROMPT_CONTRACT_SELECTION_HEADER}
+${diffBody}`,
+      parsedDiff
+    };
+  }
+  detectFrontmatterMutationInSelectionDiff(selectionText, diffBody, parsedDiff = null) {
+    const applied = this.applySelectionPatchWithPatchApplier(
+      selectionText != null ? selectionText : "",
+      diffBody,
+      parsedDiff
+    );
+    if (!applied.ok) {
+      return {
+        ok: false,
+        error: applied.error || "Failed to apply unified diff to selection."
+      };
+    }
+    const guardResult = this.runFrontmatterLintGuardAfterPatch({
+      beforeText: selectionText != null ? selectionText : "",
+      patchedText: applied.text,
+      mode: "selection"
+    });
+    if (!guardResult.ok) {
+      return {
+        ok: false,
+        error: guardResult.error || "Frontmatter changes are blocked in selection mode."
+      };
+    }
+    return {
+      ok: true,
+      applyMode: applied.mode || "strict",
+      changedLines: applied.changedLines
+    };
+  }
+  validateSelectionDiffActionAgainstOpenSelection(action, openSelection) {
+    if (!openSelection) {
+      return {
+        ok: false,
+        error: "apply_selection_diff requires active open selection context."
+      };
+    }
+    if (!action || action.type !== "apply_selection_diff") {
+      return {
+        ok: false,
+        error: "Action type must be apply_selection_diff."
+      };
+    }
+    if (typeof action.path === "string" && action.path.trim().length > 0) {
+      const normalizedPath = (0, import_obsidian4.normalizePath)(action.path.trim());
+      if (normalizedPath !== openSelection.filePath) {
+        return {
+          ok: false,
+          error: `apply_selection_diff path mismatch (${normalizedPath} != ${openSelection.filePath}).`
+        };
+      }
+    }
+    const expectedHash = typeof action.expectedSelectionHash === "string" ? action.expectedSelectionHash.trim() : "";
+    if (!expectedHash) {
+      return {
+        ok: false,
+        error: "expectedSelectionHash is required."
+      };
+    }
+    const currentHash = typeof openSelection.selectionHash === "string" ? openSelection.selectionHash.trim() : "";
+    if (currentHash && expectedHash !== currentHash) {
+      return {
+        ok: false,
+        error: "Selection hash mismatch. Re-open and reselect target range."
+      };
+    }
+    const contractDiff = this.parseSelectionDiffContractDiff(action.diff || "");
+    if (!contractDiff.ok) {
+      return {
+        ok: false,
+        error: contractDiff.error || "Invalid unified diff."
+      };
+    }
+    const rangeCheck = this.validateSelectionDiffRange(contractDiff.parsedDiff, openSelection.selectedText || "");
+    if (!rangeCheck.ok) {
+      return {
+        ok: false,
+        error: rangeCheck.error || "Diff exceeds selection range."
+      };
+    }
+    const limits = this.resolveSelectionDiffLimits(action);
+    const limitCheck = this.validateSelectionDiffLimits(contractDiff.parsedDiff, limits);
+    if (!limitCheck.ok) {
+      return {
+        ok: false,
+        error: limitCheck.error || "Diff exceeds patch limits.",
+        limits,
+        limitCheck
+      };
+    }
+    const frontmatterCheck = this.detectFrontmatterMutationInSelectionDiff(
+      openSelection.selectedText || "",
+      contractDiff.diffBody,
+      contractDiff.parsedDiff
+    );
+    if (!frontmatterCheck.ok) {
+      return {
+        ok: false,
+        error: frontmatterCheck.error || "Frontmatter changes are blocked."
+      };
+    }
+    return {
+      ok: true,
+      diffBody: contractDiff.diffBody,
+      diffWithHeader: contractDiff.diffWithHeader,
+      parsedDiff: contractDiff.parsedDiff,
+      limits,
+      limitCheck
+    };
+  }
+  buildSelectionDiffActionAnswerFromContractDiff(openSelection, diffWithHeader) {
+    const payload = {
+      actions: [
+        {
+          type: "apply_selection_diff",
+          path: openSelection.filePath,
+          expectedSelectionHash: openSelection.selectionHash,
+          diff: diffWithHeader,
+          maxChangedLines: MAX_SELECTION_DIFF_CHANGED_LINES,
+          maxHunks: MAX_SELECTION_DIFF_HUNKS
+        }
+      ]
+    };
+    return `\`\`\`omni-forge-actions
+${JSON.stringify(payload, null, 2)}
+\`\`\``;
+  }
+  hasValidSelectionDiffActionInAnswer(answer, question, qaModel, openSelection) {
+    const parsed = this.parseQaAgentActionPlanFromAnswer({
+      answer,
+      question,
+      model: qaModel
+    });
+    if (!parsed.plan || !openSelection) {
+      return false;
+    }
+    if (parsed.answerWithoutPlan.trim().length > 0) {
+      return false;
+    }
+    if (parsed.plan.actions.length !== 1) {
+      return false;
+    }
+    const action = parsed.plan.actions[0];
+    const validation = this.validateSelectionDiffActionAgainstOpenSelection(action, openSelection);
+    return validation.ok;
+  }
+  hasRunnableGameScaffold(answer) {
+    const hasCodeFence = /```[a-zA-Z0-9_-]*\n[\s\S]*?```/.test(answer);
+    if (!hasCodeFence) {
+      return false;
+    }
+    return /(파일\s*구조|file\s*structure|index\.html|main\.js|game\.js|app\.js|package\.json|실행\s*방법|run\s*command|npm\s+run|python\s+\w+\.py)/i.test(
+      answer
+    );
+  }
+  describeOrchestrationModelTrace(stages, baseModel) {
+    const orderedRoles = ["orchestrator", "architect", "coder", "debugger", "safeguard"];
+    const included = orderedRoles.filter((role) => stages.includes(role));
+    const parts = [`base=${baseModel || "(empty)"}`];
+    for (const role of included) {
+      parts.push(`${role}=${this.resolveQaModelForRole(role) || baseModel || "(empty)"}`);
+    }
+    return parts.join(" | ");
+  }
+  async ensureAgentMutatingActionPlan(params) {
+    const {
+      question,
+      draftAnswer,
+      sourceBlocks,
+      qaBaseUrl,
+      qaModel,
+      openFilePath,
+      onEvent,
+      abortSignal
+    } = params;
+    this.emitQaEvent(
+      onEvent,
+      "warning",
+      "Agent mode: mutating intent detected but no executable mutation action found. Retrying action planner."
+    );
+    const activeLine = openFilePath ? `Active open markdown file: ${openFilePath}` : "Active open markdown file: (none)";
+    const systemPrompt = [
+      "You are an action planner for Obsidian file operations.",
+      "Return markdown only.",
+      "First include 1 short sentence in Korean.",
+      "Then include exactly ONE `omni-forge-actions` fenced block with strict JSON.",
+      "For mutating requests, include at least one of: write_note, append_note, delete_note, run_shell.",
+      "Do NOT return read-only plans for edit/delete/create requests.",
+      "If user says this note/current note/이 노트, use the active open markdown file path provided.",
+      "Never emit multiple action blocks."
+    ].join("\n");
+    const userPrompt = [
+      `Question: ${question}`,
+      activeLine,
+      "",
+      "Current draft answer:",
+      draftAnswer,
+      "",
+      "Source excerpts:",
+      this.buildLocalQaSourceContext(sourceBlocks)
+    ].join("\n");
+    try {
+      const completion = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        onEvent,
+        abortSignal
+      });
+      const split = splitThinkingBlocks(completion.answer);
+      const candidate = split.answer.trim() || completion.answer.trim();
+      if (!candidate) {
+        this.emitQaEvent(onEvent, "warning", "Agent action retry returned empty output.");
+        return draftAnswer;
+      }
+      if (!this.hasMutatingQaActionInAnswer(candidate, question, qaModel)) {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          "Agent action retry still has no mutating action; keeping original answer."
+        );
+        return draftAnswer;
+      }
+      this.emitQaEvent(onEvent, "generation", "Agent action planner retry applied");
+      return candidate;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown agent action retry error";
+      this.emitQaEvent(onEvent, "warning", "Agent action retry failed", { detail: message });
+      return draftAnswer;
+    }
+  }
+  async ensureSelectionDiffActionPlan(params) {
+    const {
+      question,
+      draftAnswer,
+      sourceBlocks,
+      qaBaseUrl,
+      qaModel,
+      openFilePath,
+      openSelection,
+      routingLog,
+      onEvent,
+      abortSignal
+    } = params;
+    if (!openSelection) {
+      return draftAnswer;
+    }
+    if (this.hasValidSelectionDiffActionInAnswer(draftAnswer, question, qaModel, openSelection)) {
+      return draftAnswer;
+    }
+    this.emitQaEvent(
+      onEvent,
+      "warning",
+      "EDIT_NOTE task requires apply_selection_diff with unified diff. Retrying coder planner."
+    );
+    const coderPrimary = this.resolveRouterRoleModelForQa("Coder", qaModel).model || qaModel;
+    const coderFallback = this.resolveRouterRoleModelForQa("Architect", qaModel).model;
+    const attemptModels = [coderPrimary].filter((model) => typeof model === "string" && model.trim().length > 0);
+    if (coderFallback && !attemptModels.includes(coderFallback)) {
+      attemptModels.push(coderFallback);
+    }
+    if (attemptModels.length < 2 && qaModel && !attemptModels.includes(qaModel)) {
+      attemptModels.push(qaModel);
+    }
+    if (attemptModels.length < 2 && attemptModels[0]) {
+      attemptModels.push(attemptModels[0]);
+    }
+    const maxAttempts = Math.min(2, attemptModels.length);
+    const selectionPreview = this.trimQaToolText(openSelection.selectedText, MAX_SELECTION_DIFF_CONTEXT_CHARS);
+    const systemPrompt = [
+      `You are Omni-Forge Coder running Coder Prompt Contract ${CODER_PROMPT_CONTRACT_VERSION} for EDIT_NOTE.`,
+      "Output unified diff only.",
+      "Do not output prose, JSON, explanation, or any non-diff text.",
+      "Do not wrap output in markdown code fences.",
+      "Use exactly one selection header line, then unified diff hunks.",
+      `The first non-empty line MUST be ${CODER_PROMPT_CONTRACT_SELECTION_HEADER}.`,
+      "After the header, output only @@ hunks with standard diff line prefixes (space/+/-).",
+      "Path headers are forbidden: diff --git, index, ---, +++.",
+      "Patch scope is CURRENT_SELECTION only.",
+      "Frontmatter edits are forbidden. Regenerate patch without frontmatter changes.",
+      "Do not emit multiple alternatives."
+    ].join("\n");
+    const userPrompt = [
+      `[CODER_PROMPT_CONTRACT_${CODER_PROMPT_CONTRACT_VERSION}]`,
+      "TASK=EDIT_NOTE",
+      `ACTIVE_FILE=${openFilePath || openSelection.filePath}`,
+      `SELECTION_FILE=${openSelection.filePath}`,
+      `SELECTION_RANGE=${openSelection.fromOffset}-${openSelection.toOffset}`,
+      `SELECTION_HASH=${openSelection.selectionHash}`,
+      `HEADER=${CODER_PROMPT_CONTRACT_SELECTION_HEADER}`,
+      `MAX_CHANGED_LINES=${MAX_SELECTION_DIFF_CHANGED_LINES}`,
+      `MAX_HUNKS=${MAX_SELECTION_DIFF_HUNKS}`,
+      "",
+      "[REQUEST]",
+      question,
+      "",
+      "[CURRENT_SELECTION]",
+      "```text",
+      selectionPreview,
+      "```",
+      "",
+      "[SOURCE_EXCERPTS]",
+      this.buildLocalQaSourceContext(sourceBlocks),
+      "",
+      "[OUTPUT_TEMPLATE]",
+      `${CODER_PROMPT_CONTRACT_SELECTION_HEADER}`,
+      "@@ -oldStart,oldCount +newStart,newCount @@",
+      " <space/context>",
+      "-old line",
+      "+new line"
+    ].join("\n");
+    let lastCandidate = draftAnswer;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const model = attemptModels[attempt];
+      if (!model) {
+        continue;
+      }
+      if (attempt > 0 && routingLog && typeof routingLog === "object") {
+        routingLog.fallbackUsed = true;
+      }
+      try {
+        this.emitQaEvent(
+          onEvent,
+          "generation",
+          `Selection-diff planner attempt ${attempt + 1}/${maxAttempts} (${model})`
+        );
+        const completion = await this.requestLocalQaCompletion({
+          qaBaseUrl,
+          qaModel: model,
+          systemPrompt,
+          userPrompt,
+          history: [],
+          onEvent,
+          abortSignal
+        });
+        const split = splitThinkingBlocks(completion.answer);
+        const candidate = split.answer.trim() || completion.answer.trim();
+        if (!candidate) {
+          continue;
+        }
+        lastCandidate = candidate;
+        if (routingLog && typeof routingLog === "object" && !routingLog.modelUsed.includes(model)) {
+          routingLog.modelUsed.push(model);
+        }
+        const contractDiff = this.parseSelectionDiffContractDiff(candidate);
+        if (!contractDiff.ok) {
+          this.emitQaEvent(onEvent, "warning", "Selection-diff contract violation", {
+            detail: contractDiff.error || "Output must be unified diff only."
+          });
+          continue;
+        }
+        const validation = this.validateSelectionDiffActionAgainstOpenSelection(
+          {
+            type: "apply_selection_diff",
+            path: openSelection.filePath,
+            expectedSelectionHash: openSelection.selectionHash,
+            diff: contractDiff.diffWithHeader,
+            maxChangedLines: MAX_SELECTION_DIFF_CHANGED_LINES,
+            maxHunks: MAX_SELECTION_DIFF_HUNKS
+          },
+          openSelection
+        );
+        if (!validation.ok) {
+          this.emitQaEvent(onEvent, "warning", "Selection-diff contract validation failed", {
+            detail: validation.error || "Failed contract validation."
+          });
+          continue;
+        }
+        const wrappedAnswer = this.buildSelectionDiffActionAnswerFromContractDiff(
+          openSelection,
+          contractDiff.diffWithHeader
+        );
+        lastCandidate = wrappedAnswer;
+        if (this.hasValidSelectionDiffActionInAnswer(wrappedAnswer, question, qaModel, openSelection)) {
+          if (attempt > 0) {
+            this.emitQaEvent(onEvent, "warning", "Selection-diff planner used fallback model.");
+          }
+          this.emitQaEvent(onEvent, "generation", "Selection-diff planner retry applied");
+          return wrappedAnswer;
+        }
+      } catch (error) {
+        if (this.isAbortError(error)) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : "Unknown selection-diff planner error";
+        this.emitQaEvent(onEvent, "warning", "Selection-diff planner attempt failed", {
+          detail: message
+        });
+      }
+    }
+    this.emitQaEvent(
+      onEvent,
+      "warning",
+      "Selection-diff planner failed to produce valid unified diff action."
+    );
+    return lastCandidate || draftAnswer;
+  }
+  async applyGameBuildScaffoldPass(params) {
+    const { question, answer, sourceBlocks, qaBaseUrl, onEvent, abortSignal } = params;
+    let passModel = this.resolvePassModelOrWarn("coder", onEvent);
+    if (!passModel) {
+      passModel = this.resolvePassModelOrWarn("orchestrator", onEvent);
+    }
+    if (!passModel) {
+      return answer;
+    }
+    this.emitQaEvent(onEvent, "generation", `Running game scaffold pass (${passModel})`);
+    const systemPrompt = [
+      "You are a game scaffold builder.",
+      "Return markdown only.",
+      "Produce runnable starter code with minimal playable loop.",
+      "Must include: objective, file structure, full code blocks per file, run/test commands.",
+      "Prefer simple web stack (HTML/CSS/JS) unless user requested another engine.",
+      "Keep scope to a 20-minute learning game when user requests educational game."
+    ].join("\n");
+    const userPrompt = [
+      `Question: ${question}`,
+      "",
+      "Draft answer:",
+      answer,
+      "",
+      "Source excerpts:",
+      this.buildLocalQaSourceContext(sourceBlocks)
+    ].join("\n");
+    try {
+      const improved = await this.requestLocalQaCompletion({
+        qaBaseUrl,
+        qaModel: passModel,
+        systemPrompt,
+        userPrompt,
+        history: [],
+        abortSignal
+      });
+      const split = splitThinkingBlocks(improved.answer);
+      const normalized = split.answer.trim() || improved.answer.trim();
+      if (normalized.length > 0 && this.hasRunnableGameScaffold(normalized)) {
+        this.emitQaEvent(onEvent, "generation", "Game scaffold pass applied");
+        return normalized;
+      }
+      this.emitQaEvent(onEvent, "warning", "Game scaffold pass returned non-runnable structure");
+      return answer;
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown game scaffold error";
+      this.emitQaEvent(onEvent, "warning", "Game scaffold pass failed", { detail: message });
+      return answer;
+    }
+  }
   resolveQaPrimaryRole() {
     return this.settings.qaRolePreset;
   }
@@ -9987,8 +12737,9 @@ ${item.content}`;
       case "image_generator":
         return this.settings.qaImageGeneratorModel;
       case "coder":
-      case "debugger":
         return this.settings.qaCoderModel;
+      case "debugger":
+        return this.settings.qaDebuggerModel;
       case "architect":
         return this.settings.qaArchitectModel;
       case "orchestrator":
@@ -10003,6 +12754,9 @@ ${item.content}`;
     const roleModel = this.getQaRoleModelOverride(role).trim();
     const qa = this.settings.qaOllamaModel.trim();
     const fallback = this.settings.ollamaModel.trim();
+    if (this.getQaChatModelFamilyForQa() === "cloud") {
+      return qa || roleModel || fallback;
+    }
     return roleModel || qa || fallback;
   }
   isVisionCapableModel(modelName) {
@@ -10049,6 +12803,13 @@ ${item.content}`;
     return (_a = detectedVision[0]) != null ? _a : null;
   }
   shouldUseLightweightQaPipeline(question, intent) {
+    const mode = this.settings.qaConversationMode;
+    if (mode === "orchestration" || mode === "plan") {
+      return false;
+    }
+    if (mode === "agent") {
+      return true;
+    }
     if (intent === "plan" || intent === "comparison") {
       return false;
     }
@@ -10117,12 +12878,13 @@ ${item.content}`;
     const stages = ["orchestrator"];
     const normalized = question.toLowerCase();
     const debugSignals = /(버그|오류|에러|예외|실패|고장|재현|원인|로그|debug|bug|error|exception|trace|crash|failure)/i;
-    const codingSignals = /(코드|구현|함수|클래스|리팩터|테스트|스크립트|쿼리|api|endpoint|typescript|javascript|python|sql|regex|algorithm|implement|code|refactor|test)/i;
+    const codingSignals = /(코드|구현|함수|클래스|리팩터|테스트|스크립트|쿼리|api|endpoint|typescript|javascript|python|sql|regex|algorithm|implement|code|refactor|test|게임|game|gameplay|unity|godot|pygame|phaser)/i;
     const architectureSignals = /(아키텍처|설계|구조|시스템|모듈|컴포넌트|인터페이스|확장성|trade[- ]?off|architecture|design|scalability|boundary|topology|pattern)/i;
     const safeguardSignals = /(보안|개인정보|규정|정책|위험|컴플라이언스|security|privacy|compliance|policy|risk|safety)/i;
     const wantsDebug = debugSignals.test(normalized);
-    const wantsCoding = codingSignals.test(normalized);
-    const wantsArchitecture = architectureSignals.test(normalized) || intent === "plan" || intent === "comparison";
+    const wantsGameBuild = this.matchesGameBuildIntent(question);
+    const wantsCoding = codingSignals.test(normalized) || wantsGameBuild;
+    const wantsArchitecture = architectureSignals.test(normalized) || wantsGameBuild || intent === "plan" || intent === "comparison";
     const wantsSafeguard = safeguardSignals.test(normalized);
     if (wantsArchitecture) {
       stages.push("architect");
@@ -10130,6 +12892,9 @@ ${item.content}`;
     if (wantsDebug) {
       stages.push("debugger");
     } else if (wantsCoding) {
+      stages.push("coder");
+    }
+    if (wantsGameBuild) {
       stages.push("coder");
     }
     if (wantsSafeguard || intent === "plan" || intent === "comparison" || this.settings.qaSafeguardPassEnabled || stages.length === 1) {
@@ -10171,7 +12936,7 @@ ${item.content}`;
       case "orchestrator":
         return "Role preset: Orchestrator. Break work into phases, dependencies, risks, and clear execution order.";
       case "coder":
-        return "Role preset: Coder. Prefer implementation-level guidance, code-path reasoning, and practical next steps.";
+        return "Role preset: Coder. For EDIT_NOTE tasks, output unified diff only with CURRENT_SELECTION header, no path headers, and no frontmatter edits.";
       case "debugger":
         return "Role preset: Debugger. Prioritize root-cause analysis, reproducible checks, and verification steps.";
       case "architect":
@@ -10292,40 +13057,51 @@ ${item.content}`;
       "- read_note: read file content (`path` required; vault-relative or allowed absolute path).",
       "- write_note: overwrite/create file (`path`, `content` required; vault-relative or allowed absolute path).",
       "- append_note: append to file (`path`, `content` required; vault-relative or allowed absolute path).",
+      "- delete_note: delete file (`path` required; vault-relative or allowed absolute path).",
       '- list_folder: list folder (`path` required; use "." for vault root, or allowed absolute path).',
+      "- apply_selection_diff: apply unified diff to CURRENT open selection only (`diff` required, `path` optional).",
+      `- apply_selection_diff diff must start with header line: ${CODER_PROMPT_CONTRACT_SELECTION_HEADER}.`,
+      "- apply_selection_diff must be selection-only patch: no `diff --git`, `---`, `+++` path headers.",
       shellLine,
       "Action schema examples:",
       '{ "type": "read_note", "path": "Projects/TODO.md" }',
       '{ "type": "read_note", "path": "/absolute/path/project/README.md" }',
       '{ "type": "write_note", "path": "Projects/plan.md", "content": "# Plan" }',
       '{ "type": "append_note", "path": "Daily/2026-02-16.md", "content": "\\n- done" }',
+      '{ "type": "delete_note", "path": "Daily/old-note.md" }',
       '{ "type": "list_folder", "path": "." }',
+      `{ "type": "apply_selection_diff", "path": "Notes/active.md", "expectedSelectionHash": "abcd1234", "diff": "${CODER_PROMPT_CONTRACT_SELECTION_HEADER}\\n@@ -1,2 +1,2 @@\\n-old\\n+new" }`,
       '{ "type": "run_shell", "command": "npm run check", "cwd": "obsidian-plugin/omni-forge", "timeoutSec": 20 }',
+      "If prompt includes an active open markdown file path and user says 'this note/current note/이 노트', use that exact path.",
+      `For selection edits, use apply_selection_diff + unified diff with ${CODER_PROMPT_CONTRACT_SELECTION_HEADER} header. Do not rewrite whole file.`,
+      "Diff must stay inside given selection range. If out-of-range, or if frontmatter would change, regenerate diff.",
+      "For frontmatter delete requests, propose actionable write/delete steps. Avoid read-only plans.",
       "When actions are included, keep non-action answer brief and focused.",
       "Never include multiple action blocks."
     ];
   }
-  buildLocalQaSystemPrompt(intent, preferDetailed, hasSourceContext, roleOverride) {
+  buildLocalQaSystemPrompt(intent, preferDetailed, hasSourceContext, roleOverride, question = "") {
     const role = roleOverride != null ? roleOverride : this.resolveQaPrimaryRole();
     const toneLine = preferDetailed ? "Keep tone natural, direct, and sufficiently detailed." : "Keep tone natural, direct, and concise.";
     return [
       "You are a local-note assistant for Obsidian.",
       hasSourceContext ? "Answer only from the provided sources." : "No note sources were provided for this turn. You may answer from general knowledge with explicit uncertainty notes.",
       this.getQaPreferredLanguageInstruction(),
+      this.getQaConversationModeInstruction(),
       ...this.getQaAgentToolInstructionLines(),
       this.getQaRolePresetInstruction(role),
       toneLine,
       "Output in markdown.",
       hasSourceContext ? "When making claims, cite source paths inline in parentheses." : "Do not fabricate source citations when no source context is provided.",
       "If evidence is insufficient, state it clearly and do not invent facts.",
-      ...this.getQaContractLines(intent, preferDetailed),
+      ...this.getQaContractLines(intent, preferDetailed, this.settings.qaConversationMode, question),
       this.getQaRoleSystemPrompt(role) ? `Role system prompt (${role}):
 ${this.getQaRoleSystemPrompt(role)}` : "",
       this.settings.qaCustomSystemPrompt.trim() ? `Custom system prompt:
 ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     ].filter((line) => line.length > 0).join("\n");
   }
-  buildLocalQaUserPrompt(question, sourceContext, selectionInventoryContext, attachmentLabels = []) {
+  buildLocalQaUserPrompt(question, sourceContext, selectionInventoryContext, attachmentLabels = [], activeOpenFilePath = "", activeOpenSelection = null) {
     const sourceBlock = sourceContext.trim() || "(no source excerpts provided)";
     const hasVisionAttachment = attachmentLabels.some(
       (label) => label.startsWith("[IMG]") || label.startsWith("[PDF]")
@@ -10337,12 +13113,34 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     ] : [];
     const attachmentPriorityLine = attachmentLabels.length > 0 ? "Priority rule (strict): treat attachments as PRIMARY evidence. Use selected-note excerpts only as SECONDARY fallback when attachment evidence is missing." : "";
     const imageHandlingLine = hasVisionAttachment ? "Image/PDF attachments are already included in this request. Do not ask user for local file paths." : "";
+    const activeFilePath = activeOpenFilePath.trim();
+    const activeFileBlock = activeFilePath ? [
+      "",
+      `Active open markdown file: ${activeFilePath}`,
+      "If user says 'this note/current note/이 노트', treat it as the active open markdown file path above."
+    ] : [];
+    const selectionTextRaw = activeOpenSelection && typeof activeOpenSelection.selectedText === "string" ? activeOpenSelection.selectedText : "";
+    const selectionPreview = selectionTextRaw ? this.trimQaToolText(selectionTextRaw, MAX_SELECTION_DIFF_CONTEXT_CHARS) : "";
+    const selectionBlock = activeOpenSelection && selectionPreview ? [
+      "",
+      `Active open selection target: ${activeOpenSelection.filePath}`,
+      `Selection range (offset): ${activeOpenSelection.fromOffset}-${activeOpenSelection.toOffset}`,
+      `Selection hash: ${activeOpenSelection.selectionHash}`,
+      `For EDIT_NOTE tasks, return unified diff with ${CODER_PROMPT_CONTRACT_SELECTION_HEADER} header that applies ONLY to this selected text.`,
+      "If any hunk goes outside this selection range, or frontmatter would change, regenerate diff. Never use path-based multi-file diff headers.",
+      "Selected text (PRIMARY edit target):",
+      "```text",
+      selectionPreview,
+      "```"
+    ] : [];
     const inventoryBlock = (selectionInventoryContext == null ? void 0 : selectionInventoryContext.trim()) ? ["", "Selection inventory metadata:", selectionInventoryContext.trim()] : [];
     return [
       `Question: ${question}`,
       "",
       attachmentPriorityLine,
       imageHandlingLine,
+      ...activeFileBlock,
+      ...selectionBlock,
       "Sources:",
       sourceBlock,
       ...attachmentBlock,
@@ -10379,6 +13177,336 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       images: userImages.length > 0 ? userImages : void 0
     });
     return messages;
+  }
+  extractQaTextFromUnknownContent(content) {
+    if (typeof content === "string") {
+      return content;
+    }
+    if (Array.isArray(content)) {
+      return content.map((item) => this.extractQaTextFromUnknownContent(item)).filter((item) => item.length > 0).join("\n");
+    }
+    if (!content || typeof content !== "object") {
+      return "";
+    }
+    const parsed = content;
+    if (typeof parsed.text === "string") {
+      return parsed.text;
+    }
+    if (typeof parsed.output_text === "string") {
+      return parsed.output_text;
+    }
+    if (typeof parsed.content === "string") {
+      return parsed.content;
+    }
+    if (Array.isArray(parsed.content)) {
+      return this.extractQaTextFromUnknownContent(parsed.content);
+    }
+    if (typeof parsed.message === "string") {
+      return parsed.message;
+    }
+    if (typeof parsed.input_text === "string") {
+      return parsed.input_text;
+    }
+    return "";
+  }
+  buildCloudQaMessages(systemPrompt, userPrompt, history) {
+    const messages = [
+      { role: "system", content: systemPrompt }
+    ];
+    for (const turn of history.slice(-6)) {
+      messages.push({
+        role: turn.role,
+        content: turn.text
+      });
+    }
+    messages.push({
+      role: "user",
+      content: userPrompt
+    });
+    return messages;
+  }
+  async resolveCodexCliExecutable() {
+    if (await this.isShellCommandAvailable("codex")) {
+      return "codex";
+    }
+    const absoluteCandidates = [
+      "/Users/piman/.local/bin/codex",
+      "/opt/homebrew/bin/codex",
+      "/usr/local/bin/codex"
+    ];
+    for (const candidate of absoluteCandidates) {
+      try {
+        await nodeFs.promises.access(candidate);
+        return candidate;
+      } catch (e) {
+      }
+    }
+    return null;
+  }
+  async requestCodexCliCompletion(params) {
+    const {
+      qaModel,
+      systemPrompt,
+      userPrompt,
+      history,
+      onToken,
+      onEvent,
+      abortSignal
+    } = params;
+    if (abortSignal == null ? void 0 : abortSignal.aborted) {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    const codexBin = await this.resolveCodexCliExecutable();
+    if (!codexBin) {
+      throw new Error("codex CLI is not available on PATH. Install Codex CLI or set OpenAI API key.");
+    }
+    const historyText = history.length > 0 ? history.slice(-6).map(
+      (turn) => `${turn.role === "assistant" ? "Assistant" : "User"}: ${turn.text}`
+    ).join("\n") : "(none)";
+    const prompt = [
+      "System instructions:",
+      systemPrompt,
+      "",
+      "Conversation so far:",
+      historyText,
+      "",
+      userPrompt
+    ].join("\n");
+    const tempRoot = await nodeFs.promises.mkdtemp(
+      nodePath.join(nodeOs.tmpdir(), "omni-forge-codex-")
+    );
+    try {
+      const promptPath = nodePath.join(tempRoot, "prompt.txt");
+      const outputPath = nodePath.join(tempRoot, "answer.txt");
+      await nodeFs.promises.writeFile(promptPath, prompt, "utf8");
+      const command = [
+        this.shellQuoteArg(codexBin),
+        "exec",
+        "--skip-git-repo-check",
+        "--model",
+        this.shellQuoteArg(qaModel),
+        "--output-last-message",
+        this.shellQuoteArg(outputPath),
+        "-",
+        "<",
+        this.shellQuoteArg(promptPath)
+      ].join(" ");
+      this.emitQaEvent(onEvent, "generation", "Using local codex CLI fallback (codex exec)");
+      const result = await execAsync(command, {
+        timeout: 24e4,
+        maxBuffer: 8 * 1024 * 1024
+      });
+      if (abortSignal == null ? void 0 : abortSignal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+      let answer = "";
+      try {
+        answer = (await nodeFs.promises.readFile(outputPath, "utf8")).trim();
+      } catch (e) {
+      }
+      if (!answer) {
+        answer = (result.stdout || "").trim();
+      }
+      if (!answer) {
+        throw new Error("codex exec returned empty output.");
+      }
+      onToken == null ? void 0 : onToken(answer);
+      return {
+        answer,
+        thinking: "",
+        endpoint: "codex-exec"
+      };
+    } finally {
+      await nodeFs.promises.rm(tempRoot, { recursive: true, force: true }).catch(() => {
+      });
+    }
+  }
+  extractCloudChatCompletionAnswer(payload) {
+    var _a, _b, _c, _d;
+    const firstChoice = Array.isArray(payload == null ? void 0 : payload.choices) ? payload.choices[0] : null;
+    const messageText = this.extractQaTextFromUnknownContent((_a = firstChoice == null ? void 0 : firstChoice.message) == null ? void 0 : _a.content).trim();
+    if (messageText) {
+      return messageText;
+    }
+    const choiceText = this.extractQaTextFromUnknownContent(firstChoice == null ? void 0 : firstChoice.text).trim();
+    if (choiceText) {
+      return choiceText;
+    }
+    const outputText = this.extractQaTextFromUnknownContent(payload == null ? void 0 : payload.output_text).trim();
+    if (outputText) {
+      return outputText;
+    }
+    const deltaText = this.extractQaTextFromUnknownContent(
+      (_d = (_c = (_b = firstChoice == null ? void 0 : firstChoice.delta) == null ? void 0 : _b.content) != null ? _c : firstChoice == null ? void 0 : firstChoice.delta) != null ? _d : ""
+    ).trim();
+    return deltaText;
+  }
+  extractCloudResponsesAnswer(payload) {
+    const outputText = this.extractQaTextFromUnknownContent(payload == null ? void 0 : payload.output_text).trim();
+    if (outputText) {
+      return outputText;
+    }
+    if (Array.isArray(payload == null ? void 0 : payload.output)) {
+      const merged = payload.output.map((item) => this.extractQaTextFromUnknownContent(item == null ? void 0 : item.content)).filter((item) => item.length > 0).join("\n").trim();
+      if (merged) {
+        return merged;
+      }
+    }
+    if (Array.isArray(payload == null ? void 0 : payload.data)) {
+      const merged = payload.data.map((item) => this.extractQaTextFromUnknownContent(item == null ? void 0 : item.output)).filter((item) => item.length > 0).join("\n").trim();
+      if (merged) {
+        return merged;
+      }
+    }
+    return this.extractCloudChatCompletionAnswer(payload);
+  }
+  async requestCloudQaCompletion(params) {
+    const {
+      qaBaseUrl,
+      qaModel,
+      systemPrompt,
+      userPrompt,
+      history,
+      images,
+      onToken,
+      onEvent,
+      abortSignal
+    } = params;
+    const base = toOpenAICompatibleBase(qaBaseUrl);
+    const headers = {
+      "Content-Type": "application/json"
+    };
+    const profile = this.getQaChatModelProfileForQa();
+    const configuredProfileModel = (profile === "claude" ? this.settings.anthropicModel : profile === "gemini" ? this.settings.geminiModel : this.settings.openAIModel).trim();
+    const effectiveModel = configuredProfileModel || qaModel;
+    if (!effectiveModel) {
+      throw new Error("Cloud model is empty.");
+    }
+    const apiKey = (profile === "claude" ? this.settings.anthropicApiKey : profile === "gemini" ? this.settings.geminiApiKey : this.settings.openAIApiKey).trim() || this.settings.openAIApiKey.trim();
+    let baseHost = "";
+    try {
+      baseHost = new URL(base).hostname.toLowerCase();
+    } catch (e) {
+      baseHost = "";
+    }
+    const isOpenAiPublicHost = baseHost === "api.openai.com" || baseHost.endsWith(".openai.com");
+    if (!apiKey && isOpenAiPublicHost) {
+      if (profile === "codex") {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          "OpenAI API key is empty for codex profile. Falling back to local codex CLI session."
+        );
+        return this.requestCodexCliCompletion({
+          qaModel: effectiveModel,
+          systemPrompt,
+          userPrompt,
+          history,
+          onToken,
+          onEvent,
+          abortSignal
+        });
+      }
+      throw new Error(
+        "Cloud request blocked: API key is empty for OpenAI host. Set API key or use a local OpenAI-compatible bridge URL."
+      );
+    }
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+      headers["x-api-key"] = apiKey;
+    }
+    if (images && images.length > 0) {
+      this.emitQaEvent(
+        onEvent,
+        "warning",
+        "Cloud bridge request is using text/OCR context only for attachments."
+      );
+    }
+    this.emitQaEvent(
+      onEvent,
+      "generation",
+      `Cloud profile=${profile || "codex"}, model=${effectiveModel}`
+    );
+    const messages = this.buildCloudQaMessages(systemPrompt, userPrompt, history);
+    try {
+      this.emitQaEvent(onEvent, "generation", "Using OpenAI-compatible /chat/completions endpoint");
+      const chatResponse = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers,
+        signal: abortSignal,
+        body: JSON.stringify({
+          model: effectiveModel,
+          messages,
+          stream: false
+        })
+      });
+      if (!chatResponse.ok) {
+        throw new Error(`Cloud chat completion failed: ${chatResponse.status}`);
+      }
+      const chatRaw = await chatResponse.text();
+      let chatPayload = {};
+      try {
+        chatPayload = chatRaw ? JSON.parse(chatRaw) : {};
+      } catch (e) {
+        chatPayload = {};
+      }
+      const answer = this.extractCloudChatCompletionAnswer(chatPayload).trim() || chatRaw.trim();
+      if (answer) {
+        onToken == null ? void 0 : onToken(answer);
+        return {
+          answer,
+          thinking: "",
+          endpoint: "chat.completions"
+        };
+      }
+      throw new Error("Cloud chat completion returned an empty answer.");
+    } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown cloud chat completion error";
+      this.emitQaEvent(onEvent, "warning", "Falling back to /responses endpoint", {
+        detail: message
+      });
+    }
+    const responsesInput = messages.map((message) => ({
+      role: message.role,
+      content: [
+        {
+          type: "input_text",
+          text: this.extractQaTextFromUnknownContent(message.content)
+        }
+      ]
+    }));
+    const responsesResponse = await fetch(`${base}/responses`, {
+      method: "POST",
+      headers,
+      signal: abortSignal,
+      body: JSON.stringify({
+        model: effectiveModel,
+        input: responsesInput
+      })
+    });
+    if (!responsesResponse.ok) {
+      throw new Error(`Cloud responses request failed: ${responsesResponse.status}`);
+    }
+    const responsesRaw = await responsesResponse.text();
+    let responsesPayload = {};
+    try {
+      responsesPayload = responsesRaw ? JSON.parse(responsesRaw) : {};
+    } catch (e) {
+      responsesPayload = {};
+    }
+    const answer = this.extractCloudResponsesAnswer(responsesPayload).trim() || responsesRaw.trim();
+    if (!answer) {
+      throw new Error("Cloud responses endpoint returned an empty answer.");
+    }
+    onToken == null ? void 0 : onToken(answer);
+    return {
+      answer,
+      thinking: "",
+      endpoint: "responses"
+    };
   }
   extractOllamaTokenChunk(payload) {
     let token = "";
@@ -10647,6 +13775,19 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       abortSignal
     } = params;
     const hasImages = Boolean(images && images.length > 0);
+    if (this.getQaChatModelFamilyForQa() === "cloud") {
+      return this.requestCloudQaCompletion({
+        qaBaseUrl,
+        qaModel,
+        systemPrompt,
+        userPrompt,
+        history,
+        images,
+        onToken,
+        onEvent,
+        abortSignal
+      });
+    }
     if (hasImages) {
       this.emitQaEvent(
         onEvent,
@@ -10758,7 +13899,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       "Do not add facts not present in draft answer or provided source excerpts.",
       "Preserve source path citations whenever possible.",
       "Return markdown only.",
-      ...this.getQaContractLines(intent, preferDetailed)
+      ...this.getQaContractLines(intent, preferDetailed, this.settings.qaConversationMode, question)
     ].join("\n");
     const userPrompt = [
       `Question: ${question}`,
@@ -10806,6 +13947,10 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     if (!model) {
       this.emitQaEvent(onEvent, "warning", `Skipping ${role} pass: model is empty`);
       return null;
+    }
+    const isCloudFamily = this.getQaChatModelFamilyForQa() === "cloud";
+    if (isCloudFamily) {
+      return model;
     }
     const detected = this.getDetectedOllamaModelNames();
     if (detected.length > 0 && !this.hasDetectedOllamaModel(model)) {
@@ -10856,6 +14001,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       "- Execution plan/checklist",
       "- Role coordination summary (architect/coder/debugger/safeguard: responsibility, output, handoff, unresolved)",
       "- Deliverables (report/PPT/materials/code)",
+      "- If task requests software/game creation, include runnable scaffold code and file layout.",
       "- Risks and safeguards",
       "- Next actions",
       roleSystemPrompt ? `Role system prompt (orchestrator):
@@ -11033,7 +14179,9 @@ ${roleSystemPrompt}` : ""
       "read_note",
       "write_note",
       "append_note",
+      "delete_note",
       "list_folder",
+      "apply_selection_diff",
       "run_shell"
     ];
     if (!allowedTypes.includes(type)) {
@@ -11049,11 +14197,28 @@ ${roleSystemPrompt}` : ""
     if (typeof parsed.command === "string") {
       action.command = parsed.command.trim();
     }
+    if (typeof parsed.diff === "string") {
+      action.diff = parsed.diff;
+    } else if (typeof parsed.patch === "string") {
+      action.diff = parsed.patch;
+    }
+    if (typeof parsed.expectedSelectionHash === "string") {
+      action.expectedSelectionHash = parsed.expectedSelectionHash.trim();
+    }
+    if (typeof parsed.expectedSelectionText === "string") {
+      action.expectedSelectionText = parsed.expectedSelectionText;
+    }
     if (typeof parsed.cwd === "string") {
       action.cwd = parsed.cwd.trim();
     }
     if (typeof parsed.timeoutSec === "number" && Number.isFinite(parsed.timeoutSec)) {
       action.timeoutSec = Math.floor(parsed.timeoutSec);
+    }
+    if (typeof parsed.maxChangedLines === "number" && Number.isFinite(parsed.maxChangedLines)) {
+      action.maxChangedLines = Math.max(1, Math.floor(parsed.maxChangedLines));
+    }
+    if (typeof parsed.maxHunks === "number" && Number.isFinite(parsed.maxHunks)) {
+      action.maxHunks = Math.max(1, Math.floor(parsed.maxHunks));
     }
     return action;
   }
@@ -11065,8 +14230,12 @@ ${roleSystemPrompt}` : ""
         return `write_note path=${action.path || "(missing)"}`;
       case "append_note":
         return `append_note path=${action.path || "(missing)"}`;
+      case "delete_note":
+        return `delete_note path=${action.path || "(missing)"}`;
       case "list_folder":
         return `list_folder path=${action.path || "(missing)"}`;
+      case "apply_selection_diff":
+        return `apply_selection_diff path=${action.path || "(selection-context)"}`;
       case "run_shell":
         return `run_shell command=${action.command || "(missing)"}`;
       default:
@@ -11154,6 +14323,604 @@ ${roleSystemPrompt}` : ""
     }
     return `${normalized.slice(0, maxChars)}
 ...(truncated ${normalized.length - maxChars} chars)`;
+  }
+  normalizeUnifiedDiffText(rawDiff) {
+    return this.getPatchParser().normalizeUnifiedDiffText(rawDiff);
+  }
+  getPatchParser() {
+    if (!this.patchParser) {
+      this.patchParser = new PatchParser();
+    }
+    return this.patchParser;
+  }
+  getPatchApplier() {
+    if (!this.patchApplier) {
+      this.patchApplier = new PatchApplier(this.getPatchParser());
+    }
+    return this.patchApplier;
+  }
+  resolveSelectionDiffLimits(action = {}) {
+    const requestedChangedLines = typeof action.maxChangedLines === "number" && Number.isFinite(action.maxChangedLines) ? action.maxChangedLines : MAX_SELECTION_DIFF_CHANGED_LINES;
+    const requestedHunks = typeof action.maxHunks === "number" && Number.isFinite(action.maxHunks) ? action.maxHunks : MAX_SELECTION_DIFF_HUNKS;
+    return {
+      maxChangedLines: Math.max(1, Math.min(MAX_SELECTION_DIFF_CHANGED_LINES, Math.floor(requestedChangedLines))),
+      maxHunks: Math.max(1, Math.min(MAX_SELECTION_DIFF_HUNKS, Math.floor(requestedHunks)))
+    };
+  }
+  validateSelectionDiffLimits(parsedDiff, limits) {
+    return this.getPatchParser().validateLimits(parsedDiff, limits);
+  }
+  parseUnifiedDiffHunks(diffText) {
+    return this.getPatchParser().parse(diffText);
+  }
+  countParsedUnifiedDiffChangedLines(parsedDiff) {
+    return this.getPatchParser().countChangedLines(parsedDiff);
+  }
+  countUnifiedDiffChangedLines(diffText) {
+    const parsed = this.parseUnifiedDiffHunks(diffText);
+    if (parsed.error) {
+      return 0;
+    }
+    return this.countParsedUnifiedDiffChangedLines(parsed);
+  }
+  isValidUnifiedDiff(diffText) {
+    const parsed = this.parseUnifiedDiffHunks(diffText);
+    if (parsed.error) {
+      return false;
+    }
+    return this.countParsedUnifiedDiffChangedLines(parsed) > 0;
+  }
+  validateSelectionDiffRange(parsedDiff, selectionText) {
+    return this.getPatchParser().validateSelectionRange(parsedDiff, selectionText);
+  }
+  buildPatchPreviewSummaryFromParsedDiff(parsedDiff) {
+    if (!parsedDiff || parsedDiff.error) {
+      return {
+        added: 0,
+        removed: 0,
+        context: 0,
+        hunks: 0,
+        changed: 0
+      };
+    }
+    let added = 0;
+    let removed = 0;
+    let context = 0;
+    for (const hunk of parsedDiff.hunks) {
+      for (const line of hunk.lines) {
+        if (line.prefix === "+") {
+          added += 1;
+        } else if (line.prefix === "-") {
+          removed += 1;
+        } else {
+          context += 1;
+        }
+      }
+    }
+    return {
+      added,
+      removed,
+      context,
+      hunks: parsedDiff.hunks.length,
+      changed: added + removed
+    };
+  }
+  estimatePatchPreviewRisk(params) {
+    const reasons = [];
+    let score = 0;
+    if (params.applyMode === "fuzzy") {
+      score += 4;
+      reasons.push("Fuzzy 전략은 문맥 오인 가능성이 있어 추가 확인이 필요합니다.");
+    }
+    if (params.changed >= 120) {
+      score += 3;
+      reasons.push("변경 줄 수가 큽니다.");
+    } else if (params.changed >= 60) {
+      score += 2;
+      reasons.push("변경 규모가 중간 이상입니다.");
+    } else if (params.changed >= 24) {
+      score += 1;
+    }
+    if (params.hunks >= 6) {
+      score += 2;
+      reasons.push("Hunk 수가 많습니다.");
+    } else if (params.hunks >= 3) {
+      score += 1;
+    }
+    if (params.removed >= Math.max(18, params.added * 2)) {
+      score += 1;
+      reasons.push("삭제 비중이 높습니다.");
+    }
+    let level = "low";
+    if (score >= 6) {
+      level = "high";
+    } else if (score >= 3) {
+      level = "medium";
+    }
+    if (params.applyMode === "fuzzy" && level !== "high") {
+      level = "high";
+    }
+    const requireExtraConfirm = level === "high" || params.applyMode === "fuzzy";
+    let warningTitle = "주의: Patch 검토 필요";
+    if (params.applyMode === "fuzzy") {
+      warningTitle = "주의: Fuzzy Patch 적용";
+    } else if (level === "high") {
+      warningTitle = "주의: 고위험 Patch";
+    } else if (level === "medium") {
+      warningTitle = "주의: 중위험 Patch";
+    }
+    const warningDetail = reasons.length > 0 ? reasons.join(" ") : "적용 전 변경 내용을 다시 확인하세요.";
+    return {
+      level,
+      reasons,
+      requireExtraConfirm,
+      warningTitle,
+      warningDetail
+    };
+  }
+  buildPatchPreviewModel(params) {
+    const {
+      filePath,
+      fromOffset,
+      toOffset,
+      parsedDiff,
+      applyMode,
+      strictError
+    } = params;
+    const summaryBase = this.buildPatchPreviewSummaryFromParsedDiff(parsedDiff);
+    const risk = this.estimatePatchPreviewRisk({
+      applyMode,
+      changed: summaryBase.changed,
+      hunks: summaryBase.hunks,
+      added: summaryBase.added,
+      removed: summaryBase.removed
+    });
+    const badges = [
+      "selection-only",
+      applyMode === "fuzzy" ? "fuzzy" : "strict",
+      `risk:${risk.level}`
+    ];
+    if (risk.requireExtraConfirm) {
+      badges.push("confirm-required");
+    }
+    const hunks = (parsedDiff && !parsedDiff.error ? parsedDiff.hunks : []).map((hunk, index) => {
+      let added = 0;
+      let removed = 0;
+      let context = 0;
+      for (const line of hunk.lines) {
+        if (line.prefix === "+") {
+          added += 1;
+        } else if (line.prefix === "-") {
+          removed += 1;
+        } else {
+          context += 1;
+        }
+      }
+      const header = `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`;
+      const label = `#${index + 1} ${hunk.oldStart}:${hunk.oldCount} -> ${hunk.newStart}:${hunk.newCount}`;
+      const searchText = `${label}
+${header}
+${hunk.lines.map((line) => `${line.prefix}${line.text}`).join("\n")}`.toLowerCase();
+      return {
+        id: `hunk-${index + 1}`,
+        index: index + 1,
+        header,
+        label,
+        added,
+        removed,
+        context,
+        lines: hunk.lines.map((line) => ({
+          prefix: line.prefix,
+          text: line.text
+        })),
+        searchText
+      };
+    });
+    const strategyParts = [
+      applyMode === "fuzzy" ? "PatchApplier: strict -> fuzzy" : "PatchApplier: strict"
+    ];
+    if (strictError && applyMode === "fuzzy") {
+      strategyParts.push(`strict 실패: ${this.trimQaToolText(strictError, 160)}`);
+    }
+    return {
+      title: "Patch Preview / 선택영역 패치 미리보기",
+      scopeText: `Scope: ${filePath} | offset ${fromOffset}-${toOffset}`,
+      strategyText: `Strategy: ${strategyParts.join(" | ")}`,
+      riskLevel: risk.level,
+      warningTitle: risk.warningTitle,
+      warningDetail: risk.warningDetail,
+      requireExtraConfirm: risk.requireExtraConfirm,
+      summary: {
+        added: summaryBase.added,
+        removed: summaryBase.removed,
+        hunks: summaryBase.hunks,
+        changed: summaryBase.changed,
+        badges
+      },
+      hunks
+    };
+  }
+  applyParsedUnifiedDiffStrictToText(sourceText, parsedDiff) {
+    return this.getPatchApplier().applyStrict(sourceText, parsedDiff);
+  }
+  applyParsedUnifiedDiffFuzzyToText(sourceText, parsedDiff) {
+    return this.getPatchApplier().applyFuzzy(sourceText, parsedDiff);
+  }
+  applySelectionPatchWithPatchApplier(sourceText, diffText, parsedDiff = null) {
+    const parsed = parsedDiff || this.parseUnifiedDiffHunks(diffText);
+    if (parsed.error) {
+      return {
+        ok: false,
+        mode: "none",
+        error: parsed.error,
+        changedLines: 0,
+        strictError: parsed.error,
+        fuzzyError: ""
+      };
+    }
+    const rangeCheck = this.validateSelectionDiffRange(parsed, sourceText);
+    if (!rangeCheck.ok) {
+      return {
+        ok: false,
+        mode: "none",
+        error: rangeCheck.error || "Diff exceeds selection range.",
+        changedLines: this.countParsedUnifiedDiffChangedLines(parsed),
+        strictError: rangeCheck.error || "",
+        fuzzyError: "",
+        outOfRange: true
+      };
+    }
+    return this.getPatchApplier().apply(sourceText, diffText, parsed);
+  }
+  applyUnifiedDiffToText(sourceText, diffText) {
+    const parsed = this.parseUnifiedDiffHunks(diffText);
+    return this.applyParsedUnifiedDiffStrictToText(sourceText, parsed);
+  }
+  resolveOpenMarkdownEditorForPath(filePath) {
+    const normalized = (0, import_obsidian4.normalizePath)((filePath != null ? filePath : "").trim());
+    if (!normalized) {
+      return null;
+    }
+    const leaves = this.app.workspace.getLeavesOfType("markdown");
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (!(view instanceof import_obsidian4.MarkdownView)) {
+        continue;
+      }
+      const file = view.file;
+      if (!(file instanceof import_obsidian4.TFile) || file.extension !== "md") {
+        continue;
+      }
+      if (file.path !== normalized || !view.editor) {
+        continue;
+      }
+      return {
+        view,
+        editor: view.editor
+      };
+    }
+    return null;
+  }
+  async executeSelectionDiffAction(action, executionContext) {
+    const selection = executionContext.openSelection;
+    const routingLog = executionContext.routingLog && typeof executionContext.routingLog === "object" ? executionContext.routingLog : null;
+    const auditState = {
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      planId: executionContext.planId || "",
+      taskType: executionContext.taskType || "QA_CHAT",
+      roles: routingLog && Array.isArray(routingLog.roles) ? [...routingLog.roles] : [],
+      modelUsed: routingLog && Array.isArray(routingLog.modelUsed) ? [...routingLog.modelUsed] : [],
+      fallbackUsed: Boolean(routingLog && routingLog.fallbackUsed),
+      safeguardPassed: Boolean(routingLog && routingLog.safeguardPassed),
+      actionType: "apply_selection_diff",
+      filePath: "",
+      selectionFrom: null,
+      selectionTo: null,
+      expectedSelectionHash: "",
+      currentSelectionHash: "",
+      diffHash: "",
+      changedLines: 0,
+      applyMode: "none"
+    };
+    const finalize = async (status, title, detail, extra = {}) => {
+      const result = { status, title, detail };
+      if (status === "ok") {
+        await this.appendSelectionDiffAuditLog({
+          ...auditState,
+          ...extra,
+          status,
+          title,
+          detail
+        });
+      }
+      return result;
+    };
+    if (!selection) {
+      return finalize("blocked", "apply_selection_diff", "No active open selection snapshot is available.");
+    }
+    auditState.filePath = selection.filePath;
+    auditState.selectionFrom = selection.fromOffset;
+    auditState.selectionTo = selection.toOffset;
+    const targetPath = (0, import_obsidian4.normalizePath)(((action.path != null ? action.path : selection.filePath) || "").trim());
+    auditState.filePath = targetPath || selection.filePath;
+    if (!targetPath) {
+      return finalize("error", "apply_selection_diff", "Target path is empty.");
+    }
+    if (targetPath !== selection.filePath) {
+      return finalize(
+        "blocked",
+        "apply_selection_diff",
+        `Target path mismatch. selection=${selection.filePath}, action=${targetPath}`
+      );
+    }
+    const editorContext = this.resolveOpenMarkdownEditorForPath(targetPath);
+    if (!editorContext) {
+      return finalize("blocked", "apply_selection_diff", "Target markdown note is not open in editor.");
+    }
+    const editor = editorContext.editor;
+    const fullText = editor.getValue();
+    if (selection.toOffset > fullText.length || selection.fromOffset < 0 || selection.fromOffset >= selection.toOffset) {
+      return finalize("blocked", "apply_selection_diff", "Selection offsets are out of current editor range.");
+    }
+    const currentSelectionText = fullText.slice(selection.fromOffset, selection.toOffset);
+    const currentHash = this.hashString(`${selection.filePath}
+${currentSelectionText}`);
+    auditState.currentSelectionHash = currentHash;
+    const expectedHash = (action.expectedSelectionHash || selection.selectionHash || "").trim();
+    auditState.expectedSelectionHash = expectedHash;
+    if (expectedHash && currentHash !== expectedHash) {
+      return finalize("blocked", "apply_selection_diff", "Selection hash mismatch. Re-open and reselect target range.");
+    }
+    if (typeof action.expectedSelectionText === "string" && action.expectedSelectionText.length > 0 && action.expectedSelectionText !== currentSelectionText) {
+      return finalize("blocked", "apply_selection_diff", "Selection text mismatch. Re-open and reselect target range.");
+    }
+    const contractValidation = this.validateSelectionDiffActionAgainstOpenSelection(
+      action,
+      {
+        filePath: selection.filePath,
+        selectedText: currentSelectionText,
+        selectionHash: currentHash
+      }
+    );
+    if (!contractValidation.ok) {
+      return finalize(
+        "blocked",
+        "apply_selection_diff",
+        `${contractValidation.error || "Invalid selection diff contract."} Re-generate unified diff.`
+      );
+    }
+    const diff = contractValidation.diffBody;
+    const parsedDiff = contractValidation.parsedDiff;
+    const limits = contractValidation.limits;
+    const limitCheck = contractValidation.limitCheck;
+    auditState.diffHash = this.hashString(contractValidation.diffWithHeader);
+    auditState.changedLines = limitCheck.changedLines;
+    const preflight = this.applySelectionPatchWithPatchApplier(currentSelectionText, diff, parsedDiff);
+    if (!preflight.ok) {
+      return finalize(
+        preflight.outOfRange ? "blocked" : "error",
+        "apply_selection_diff",
+        `${preflight.error || "Failed to apply unified diff."} Regenerate unified diff.`,
+        {
+          applyMode: preflight.mode || "none",
+          strictError: preflight.strictError || "",
+          fuzzyError: preflight.fuzzyError || "",
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks
+        }
+      );
+    }
+    const previewModel = this.buildPatchPreviewModel({
+      filePath: selection.filePath,
+      fromOffset: selection.fromOffset,
+      toOffset: selection.toOffset,
+      applyMode: preflight.mode || "strict",
+      strictError: preflight.strictError || "",
+      parsedDiff
+    });
+    const preview = await PatchPreviewModal.ask(this.app, previewModel);
+    if (preview.decision !== "apply") {
+      return finalize(
+        "blocked",
+        "apply_selection_diff",
+        "Patch preview cancelled by user.",
+        { applyMode: preflight.mode || "strict", previewDecision: "cancel" }
+      );
+    }
+    const latestFullText = editor.getValue();
+    if (selection.toOffset > latestFullText.length || selection.fromOffset < 0 || selection.fromOffset >= selection.toOffset) {
+      return finalize("blocked", "apply_selection_diff", "Selection offsets changed while preview was open. Re-open and reselect target range.");
+    }
+    const latestSelectionText = latestFullText.slice(selection.fromOffset, selection.toOffset);
+    const latestHash = this.hashString(`${selection.filePath}
+${latestSelectionText}`);
+    auditState.currentSelectionHash = latestHash;
+    if (expectedHash && latestHash !== expectedHash) {
+      return finalize("blocked", "apply_selection_diff", "Selection hash mismatch after preview. Re-open and reselect target range.");
+    }
+    if (!expectedHash && latestHash !== currentHash) {
+      return finalize("blocked", "apply_selection_diff", "Selection changed while preview was open. Regenerate unified diff.");
+    }
+    if (typeof action.expectedSelectionText === "string" && action.expectedSelectionText.length > 0 && action.expectedSelectionText !== latestSelectionText) {
+      return finalize("blocked", "apply_selection_diff", "Selection text mismatch after preview. Re-open and reselect target range.");
+    }
+    const latestRangeCheck = this.validateSelectionDiffRange(parsedDiff, latestSelectionText);
+    if (!latestRangeCheck.ok) {
+      return finalize(
+        "blocked",
+        "apply_selection_diff",
+        `${latestRangeCheck.error} Re-select target range and regenerate unified diff.`
+      );
+    }
+    const liveLimitCheck = this.validateSelectionDiffLimits(parsedDiff, limits);
+    if (!liveLimitCheck.ok) {
+      return finalize(
+        "blocked",
+        "apply_selection_diff",
+        `${liveLimitCheck.error} Re-generate unified diff.`,
+        {
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks
+        }
+      );
+    }
+    const applied = this.applySelectionPatchWithPatchApplier(latestSelectionText, diff, parsedDiff);
+    if (!applied.ok) {
+      return finalize(
+        applied.outOfRange ? "blocked" : "error",
+        "apply_selection_diff",
+        `${applied.error || "Failed to apply unified diff."} Regenerate unified diff.`,
+        {
+          applyMode: applied.mode || "none",
+          strictError: applied.strictError || "",
+          fuzzyError: applied.fuzzyError || "",
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks
+        }
+      );
+    }
+    auditState.applyMode = applied.mode || "strict";
+    const patchedFullText = `${latestFullText.slice(0, selection.fromOffset)}${applied.text}${latestFullText.slice(selection.toOffset)}`;
+    const guardResult = this.runFrontmatterLintGuardAfterPatch({
+      beforeText: latestFullText,
+      patchedText: patchedFullText,
+      mode: "selection"
+    });
+    if (!guardResult.ok) {
+      return finalize(
+        "blocked",
+        "apply_selection_diff",
+        `${guardResult.error} Re-generate unified diff.`,
+        {
+          applyMode: applied.mode || "none",
+          strictError: applied.strictError || "",
+          maxChangedLines: limits.maxChangedLines,
+          maxHunks: limits.maxHunks
+        }
+      );
+    }
+    const finalFullText = guardResult.text;
+    const patchedFromOffset = selection.fromOffset;
+    const patchedToOffset = selection.fromOffset + applied.text.length;
+    let finalFromOffset = this.mapOffsetAfterFrontmatterGuard(
+      patchedFromOffset,
+      guardResult.beforeBodyStartOffset,
+      guardResult.bodyOffsetDelta
+    );
+    let finalToOffset = this.mapOffsetAfterFrontmatterGuard(
+      patchedToOffset,
+      guardResult.beforeBodyStartOffset,
+      guardResult.bodyOffsetDelta
+    );
+    finalFromOffset = Math.max(0, Math.min(finalFullText.length, finalFromOffset));
+    finalToOffset = Math.max(finalFromOffset, Math.min(finalFullText.length, finalToOffset));
+    editor.setValue(finalFullText);
+    editor.setSelection(editor.offsetToPos(finalFromOffset), editor.offsetToPos(finalToOffset));
+    const finalSelectedText = finalFullText.slice(finalFromOffset, finalToOffset);
+    executionContext.openSelection = {
+      ...selection,
+      fromOffset: finalFromOffset,
+      toOffset: finalToOffset,
+      selectedText: finalSelectedText,
+      selectionHash: this.hashString(`${selection.filePath}
+${finalSelectedText}`),
+      capturedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    return finalize(
+      "ok",
+      `apply_selection_diff ${selection.filePath}`,
+      `Applied unified diff to selection (${selection.fromOffset}-${selection.toOffset}), changed lines=${applied.changedLines}, hunks=${liveLimitCheck.hunks}, mode=${applied.mode || "strict"}.`,
+      {
+        applyMode: applied.mode || "strict",
+        usedTrimmedMatch: Boolean(applied.usedTrimmedMatch),
+        strictError: applied.strictError || "",
+        previewDecision: "apply",
+        frontmatterGuardApplied: Boolean(guardResult.guardApplied),
+        frontmatterUpdated: true,
+        maxChangedLines: limits.maxChangedLines,
+        maxHunks: limits.maxHunks
+      }
+    );
+  }
+  evaluateQaActionPlanSafeguard(plan, context = {}) {
+    const reasons = [];
+    let containsExternalAccess = false;
+    let modifiesOutsideWorkspace = false;
+    let isMassEdit = false;
+    const taskType = context.taskType || plan.taskType || "QA_CHAT";
+    const openSelection = context.openSelection || plan.openSelection || null;
+    let mutatingActions = 0;
+    let applySelectionDiffActions = 0;
+    for (const action of plan.actions) {
+      if (action.type === "run_shell") {
+        const command = (action.command || "").toLowerCase();
+        if (/(https?:\/\/|curl\s|wget\s|browser|open\s|osascript|xdg-open|start\s+)/i.test(command)) {
+          containsExternalAccess = true;
+          reasons.push("run_shell contains external/network/browser access signal.");
+        }
+        if (taskType === "EDIT_NOTE") {
+          containsExternalAccess = true;
+          reasons.push("EDIT_NOTE task blocks run_shell action.");
+        }
+      }
+      if (action.type === "list_folder") {
+        const folderPath = (action.path || "").trim();
+        if (folderPath === "." || folderPath === "/" || folderPath === "\\") {
+          isMassEdit = true;
+          reasons.push("Vault-wide folder scan is blocked by safeguard.");
+        }
+      }
+      if (action.type === "write_note" || action.type === "append_note" || action.type === "delete_note" || action.type === "apply_selection_diff") {
+        mutatingActions += 1;
+      }
+      if (action.type === "apply_selection_diff") {
+        applySelectionDiffActions += 1;
+        const validation = this.validateSelectionDiffActionAgainstOpenSelection(action, openSelection);
+        if (!validation.ok) {
+          isMassEdit = true;
+          reasons.push(`apply_selection_diff contract violation: ${validation.error}`);
+        }
+      }
+      if (typeof action.path === "string" && this.isAbsoluteQaPath(action.path.trim()) && !this.settings.qaAgentShellFullAccess) {
+        try {
+          this.resolveQaAgentPathTarget(
+            action.path,
+            `${action.type}.path`,
+            action.type === "list_folder" ? "folder" : "file"
+          );
+        } catch (error) {
+          modifiesOutsideWorkspace = true;
+          reasons.push(`Action path outside allowed workspace roots: ${action.path}`);
+        }
+      }
+    }
+    if (taskType === "EDIT_NOTE" && plan.actions.some(
+      (action) => action.type === "write_note" || action.type === "append_note" || action.type === "delete_note"
+    )) {
+      isMassEdit = true;
+      reasons.push("EDIT_NOTE task only allows selection diff edits.");
+    }
+    if (taskType === "EDIT_NOTE" && applySelectionDiffActions !== 1) {
+      isMassEdit = true;
+      reasons.push(`EDIT_NOTE task requires exactly one apply_selection_diff action (found ${applySelectionDiffActions}).`);
+    }
+    if (mutatingActions > 6) {
+      isMassEdit = true;
+      reasons.push(`Too many mutating actions (${mutatingActions}).`);
+    }
+    const passed = !containsExternalAccess && !modifiesOutsideWorkspace && !isMassEdit;
+    return {
+      passed,
+      containsExternalAccess,
+      modifiesOutsideWorkspace,
+      isMassEdit,
+      reasons
+    };
+  }
+  formatQaSafeguardFailureText(safety) {
+    const header = "### Safeguard blocked action plan";
+    const detailLines = safety.reasons.length > 0 ? safety.reasons.map((reason) => `- ${reason}`) : ["- blocked by safeguard rules"];
+    return [header, ...detailLines].join("\n");
   }
   resolveSafeQaAgentPath(rawPath, label) {
     const normalized = (0, import_obsidian4.normalizePath)((rawPath != null ? rawPath : "").trim());
@@ -11280,7 +15047,7 @@ ${roleSystemPrompt}` : ""
     }
     await this.app.vault.create(path, content);
   }
-  async executeQaAgentAction(action) {
+  async executeQaAgentAction(action, executionContext = {}) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     try {
       if (action.type === "read_note") {
@@ -11368,6 +15135,52 @@ ${roleSystemPrompt}` : ""
           detail: `Appended ${appendText.length} chars (total ${merged.length}).`
         };
       }
+      if (action.type === "delete_note") {
+        const target = this.resolveQaAgentPathTarget(
+          action.path || "",
+          "delete_note.path",
+          "file"
+        );
+        if (target.mode === "vault") {
+          const entry = this.app.vault.getAbstractFileByPath(target.path);
+          if (entry instanceof import_obsidian4.TFile) {
+            await this.app.vault.delete(entry, true);
+          } else {
+            const exists = await this.app.vault.adapter.exists(target.path);
+            if (!exists) {
+              return {
+                status: "error",
+                title: `delete_note ${target.path}`,
+                detail: "File does not exist."
+              };
+            }
+            await this.app.vault.adapter.remove(target.path);
+          }
+        } else {
+          try {
+            const stat = await nodeFs.promises.stat(target.path);
+            if (stat.isDirectory()) {
+              return {
+                status: "blocked",
+                title: `delete_note ${target.path}`,
+                detail: "Path is a directory. delete_note only allows file deletion."
+              };
+            }
+            await nodeFs.promises.unlink(target.path);
+          } catch (error) {
+            return {
+              status: "error",
+              title: `delete_note ${target.path}`,
+              detail: "File does not exist or cannot be deleted."
+            };
+          }
+        }
+        return {
+          status: "ok",
+          title: `delete_note ${target.path}`,
+          detail: "File deleted."
+        };
+      }
       if (action.type === "list_folder") {
         const target = this.resolveQaAgentPathTarget(
           action.path || ".",
@@ -11423,6 +15236,9 @@ ${roleSystemPrompt}` : ""
           title: `list_folder ${target.path}`,
           detail: lines.join("\n")
         };
+      }
+      if (action.type === "apply_selection_diff") {
+        return await this.executeSelectionDiffAction(action, executionContext);
       }
       if (action.type === "run_shell") {
         if (!this.settings.qaAgentAllowShellTool) {
@@ -11509,6 +15325,12 @@ ${stderr}` : ""
       `Actions: ${plan.actions.length}`,
       ""
     ];
+    const executionContext = {
+      openSelection: plan.openSelection || null,
+      taskType: plan.taskType || "QA_CHAT",
+      routingLog: plan.routingLog || null,
+      planId: plan.id
+    };
     for (let index = 0; index < plan.actions.length; index += 1) {
       const action = plan.actions[index];
       const actionLabel = this.summarizeQaAgentAction(action);
@@ -11517,7 +15339,7 @@ ${stderr}` : ""
         "info",
         `Executing action ${index + 1}/${plan.actions.length}: ${actionLabel}`
       );
-      const result = await this.executeQaAgentAction(action);
+      const result = await this.executeQaAgentAction(action, executionContext);
       if (result.status === "ok") {
         this.emitQaEvent(onEvent, "info", `Action completed: ${actionLabel}`);
       } else if (result.status === "blocked") {
@@ -11552,7 +15374,7 @@ ${stderr}` : ""
     };
   }
   async applyQaAgentActionsFromAnswer(params) {
-    const { answer, question, qaModel, onEvent, abortSignal } = params;
+    const { answer, question, qaModel, onEvent, abortSignal, openSelection, taskType, routingLog } = params;
     if (abortSignal == null ? void 0 : abortSignal.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError");
     }
@@ -11565,6 +15387,15 @@ ${stderr}` : ""
       model: qaModel
     });
     if (!parsed.plan) {
+      if (taskType === "EDIT_NOTE") {
+        const reason = parsed.warning || "Missing omni-forge-actions block for EDIT_NOTE.";
+        return [
+          parsed.answerWithoutPlan,
+          "### Safeguard blocked action plan",
+          `- ${reason}`,
+          "- EDIT_NOTE는 apply_selection_diff(unified diff) 액션이 필요합니다."
+        ].filter((line) => line.trim().length > 0).join("\n\n");
+      }
       if (!parsed.warning) {
         return parsed.answerWithoutPlan;
       }
@@ -11573,6 +15404,45 @@ ${stderr}` : ""
     }
     if (parsed.warning) {
       this.emitQaEvent(onEvent, "warning", parsed.warning);
+    }
+    if ((taskType || "QA_CHAT") === "EDIT_NOTE" && parsed.answerWithoutPlan.trim().length > 0) {
+      this.emitQaEvent(onEvent, "warning", "EDIT_NOTE contract violation: non-diff text detected.");
+      return [
+        parsed.answerWithoutPlan,
+        "### Safeguard blocked action plan",
+        `- Coder Prompt Contract ${CODER_PROMPT_CONTRACT_VERSION}: unified diff only output is required.`,
+        "- diff 외 텍스트가 포함되어 실행을 차단했습니다. 패치를 재생성하세요."
+      ].filter((line) => line.trim().length > 0).join("\n\n");
+    }
+    parsed.plan.taskType = taskType || "QA_CHAT";
+    parsed.plan.openSelection = openSelection || null;
+    if (routingLog && typeof routingLog === "object") {
+      parsed.plan.routingLog = {
+        taskType: routingLog.taskType,
+        roles: [...routingLog.roles],
+        modelUsed: [...routingLog.modelUsed],
+        fallbackUsed: routingLog.fallbackUsed,
+        safeguardPassed: routingLog.safeguardPassed
+      };
+    }
+    const safety = this.evaluateQaActionPlanSafeguard(parsed.plan, {
+      taskType: parsed.plan.taskType,
+      openSelection: parsed.plan.openSelection
+    });
+    if (!safety.passed) {
+      if (routingLog && typeof routingLog === "object") {
+        routingLog.safeguardPassed = false;
+      }
+      this.emitQaEvent(onEvent, "warning", "Safeguard blocked agent action plan.", {
+        detail: safety.reasons.join(" | ")
+      });
+      return [
+        parsed.answerWithoutPlan || "(Action-only response)",
+        this.formatQaSafeguardFailureText(safety)
+      ].filter((line) => line.trim().length > 0).join("\n\n");
+    }
+    if (routingLog && typeof routingLog === "object") {
+      routingLog.safeguardPassed = true;
     }
     if (this.settings.qaAgentRequireApproval) {
       if (abortSignal == null ? void 0 : abortSignal.aborted) {
@@ -11672,6 +15542,22 @@ ${stderr}` : ""
         }
         const plan = this.pendingQaActionPlan;
         this.pendingQaActionPlan = null;
+        const safety = this.evaluateQaActionPlanSafeguard(plan, {
+          taskType: plan.taskType || "QA_CHAT",
+          openSelection: plan.openSelection || null
+        });
+        if (!safety.passed) {
+          if (plan.routingLog && typeof plan.routingLog === "object") {
+            plan.routingLog.safeguardPassed = false;
+          }
+          return this.buildQaAgentControlResult(
+            safeQuestion,
+            this.formatQaSafeguardFailureText(safety)
+          );
+        }
+        if (plan.routingLog && typeof plan.routingLog === "object") {
+          plan.routingLog.safeguardPassed = true;
+        }
         const report = await this.executeQaAgentActionPlan(plan, onEvent);
         return this.buildQaAgentControlResult(safeQuestion, report);
       }
@@ -11681,18 +15567,70 @@ ${stderr}` : ""
     const normalizedExternal = this.normalizeQaExternalAttachments(externalAttachments);
     const openFilePath = (0, import_obsidian4.normalizePath)(((_a = options.openFilePath) != null ? _a : "").trim());
     const openFileEntry = openFilePath ? this.app.vault.getAbstractFileByPath(openFilePath) : null;
-    const openFile = qaContextEnabled && openFileEntry instanceof import_obsidian4.TFile && openFileEntry.extension === "md" ? openFileEntry : null;
+    const openFile = openFileEntry instanceof import_obsidian4.TFile && openFileEntry.extension === "md" ? openFileEntry : null;
+    const openSelection = this.normalizeQaOpenSelectionContext(options.openSelection, openFilePath);
     const hasImageAttachments = normalizedExternal.images.length > 0;
     const hasPdfAttachments = normalizedExternal.pdfLabels.length > 0;
-    const hasVisionAttachments = hasImageAttachments || hasPdfAttachments;
+    const hasVisionAttachments = hasImageAttachments;
+    const isCloudFamily = this.getQaChatModelFamilyForQa() === "cloud";
     const hasExternalContext = normalizedExternal.textDocs.length > 0 || normalizedExternal.images.length > 0 || normalizedExternal.pdfLabels.length > 0;
+    const routingContext = {
+      hasSelection: Boolean(openSelection),
+      hasOpenFile: Boolean(openFilePath),
+      hasAttachments: hasExternalContext
+    };
     const intent = this.detectLocalQaIntent(safeQuestion);
     const preferDetailed = this.shouldPreferDetailedAnswer(safeQuestion, intent);
     const safeTopK = Math.max(1, Math.min(15, topK));
-    const qaBaseUrl = this.resolveQaBaseUrl();
+    let qaBaseUrl = this.resolveQaBaseUrl();
     if (!qaBaseUrl) {
       throw new Error("Q&A base URL is empty.");
     }
+    if (!isCloudFamily && !this.isLocalEndpoint(qaBaseUrl)) {
+      const localBase = this.settings.ollamaBaseUrl.trim();
+      if (localBase && this.isLocalEndpoint(localBase)) {
+        qaBaseUrl = localBase;
+        this.settings.qaOllamaBaseUrl = localBase;
+        void this.saveSettings().catch(() => {
+        });
+        this.emitQaEvent(
+          onEvent,
+          "info",
+          "Local mode: restored Q&A base URL to local Ollama endpoint."
+        );
+      }
+    }
+    if (isCloudFamily) {
+      let changed = false;
+      if (!this.settings.qaAllowNonLocalEndpoint) {
+        this.settings.qaAllowNonLocalEndpoint = true;
+        changed = true;
+        this.emitQaEvent(
+          onEvent,
+          "info",
+          "Cloud mode: auto-enabled non-local endpoint policy for this session."
+        );
+      }
+      const beforeAllowlist = this.settings.qaAllowedOutboundHosts;
+      this.appendQaAllowedOutboundHostFromUrl(qaBaseUrl);
+      if (beforeAllowlist !== this.settings.qaAllowedOutboundHosts) {
+        changed = true;
+        this.emitQaEvent(
+          onEvent,
+          "info",
+          "Cloud mode: endpoint host added to outbound allowlist."
+        );
+      }
+      if (changed) {
+        void this.saveSettings().catch(() => {
+        });
+      }
+    }
+    this.emitQaEvent(
+      onEvent,
+      "info",
+      `Endpoint policy precheck: family=${isCloudFamily ? "cloud" : "local"}, base=${qaBaseUrl}, allowNonLocal=${this.settings.qaAllowNonLocalEndpoint ? "ON" : "OFF"}`
+    );
     const endpointPolicyError = this.validateQaEndpointPolicy(qaBaseUrl);
     if (endpointPolicyError) {
       throw new Error(endpointPolicyError);
@@ -11705,17 +15643,17 @@ ${stderr}` : ""
       );
     }
     let primaryRole = this.resolveQaPrimaryRole();
-    if (hasVisionAttachments && primaryRole !== "ask_vision") {
+    if (hasVisionAttachments && !isCloudFamily && primaryRole !== "ask_vision") {
       primaryRole = "ask_vision";
       this.emitQaEvent(
         onEvent,
         "info",
-        "Vision-compatible attachments detected (image/pdf); switching role to Ask (vision) for this turn."
+        "Vision-compatible image attachments detected; switching role to Ask (vision) for this turn."
       );
     }
     let qaModel = this.resolveQaModelForRole(primaryRole);
     const detectedModels = this.getDetectedOllamaModelNames();
-    if (qaModel && detectedModels.length > 0 && !this.hasDetectedOllamaModel(qaModel)) {
+    if (!isCloudFamily && qaModel && detectedModels.length > 0 && !this.hasDetectedOllamaModel(qaModel)) {
       const roleFallback = this.resolveDetectedRoleFallbackModel(primaryRole);
       if (roleFallback) {
         this.emitQaEvent(
@@ -11732,7 +15670,7 @@ ${stderr}` : ""
         );
       }
     }
-    if (hasVisionAttachments && !this.isVisionCapableModel(qaModel)) {
+    if (!isCloudFamily && hasVisionAttachments && !this.isVisionCapableModel(qaModel)) {
       const visionFallback = this.resolveVisionModelForImageAttachments();
       if (visionFallback) {
         this.emitQaEvent(
@@ -11745,7 +15683,7 @@ ${stderr}` : ""
         this.emitQaEvent(
           onEvent,
           "error",
-          "No vision-capable local model detected. Image/PDF understanding is unavailable in current setup."
+          "No vision-capable local model detected. Image understanding is unavailable in current setup."
         );
         throw new Error(
           "\uBE44\uC804 \uBAA8\uB378\uC774 \uAC10\uC9C0\uB418\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4. \uC774\uBBF8\uC9C0/PDF \uCCA8\uBD80\uB97C \uCC98\uB9AC\uD558\uB824\uBA74 Guide\uC758 \uBE44\uC804 \uBAA8\uB378 \uC124\uCE58 \uC548\uB0B4\uB97C \uBA3C\uC800 \uC644\uB8CC\uD558\uC138\uC694."
@@ -11755,9 +15693,30 @@ ${stderr}` : ""
     if (!qaModel) {
       throw new Error("Q&A model is empty.");
     }
-    if (!isOllamaModelAllowedForQaRole(primaryRole, qaModel)) {
+    if (!isCloudFamily && !isOllamaModelAllowedForQaRole(primaryRole, qaModel)) {
       throw new Error(`Q&A model is not suitable: ${qaModel}`);
     }
+    const routingLog = this.buildTaskRoutingForQa(safeQuestion, routingContext, qaModel);
+    this.lastQaRoutingLog = {
+      taskType: routingLog.taskType,
+      roles: [...routingLog.roles],
+      modelUsed: [...routingLog.modelUsed],
+      fallbackUsed: routingLog.fallbackUsed,
+      safeguardPassed: routingLog.safeguardPassed
+    };
+    this.emitQaEvent(
+      onEvent,
+      "info",
+      `RoleRouter: task=${routingLog.taskType} | roles=${routingLog.roles.join(" -> ")}`
+    );
+    if (routingLog.modelUsed.length > 0) {
+      this.emitQaEvent(
+        onEvent,
+        "info",
+        `RoleRouter models: ${routingLog.modelUsed.join(", ")}${routingLog.fallbackUsed ? " (fallback used)" : ""}`
+      );
+    }
+    this.emitQaEvent(onEvent, "generation", `Primary QA model selected: ${qaModel}`);
     try {
       throwIfAborted();
       let embeddingModel = this.settings.semanticOllamaModel.trim();
@@ -11981,13 +15940,16 @@ ${stderr}` : ""
         intent,
         preferDetailed,
         hasSourceContext,
-        primaryRole
+        primaryRole,
+        safeQuestion
       );
       const userPrompt = this.buildLocalQaUserPrompt(
         safeQuestion,
         sourceContext,
         selectionInventoryContext,
-        attachmentLabels
+        attachmentLabels,
+        openFilePath,
+        openSelection
       );
       this.emitQaEvent(onEvent, "generation", "Generation started");
       this.setStatus("asking local qa model...");
@@ -12013,7 +15975,10 @@ ${stderr}` : ""
       }
       const hasAgentActionBlock = this.settings.qaAgentToolModeEnabled && /```omni-forge-actions[\s\S]*?```/i.test(initialAnswer);
       let finalAnswer = initialAnswer;
-      if (!hasSourceContext) {
+      const conversationMode = this.getQaConversationModeForQa();
+      const wantsGameBuild = this.isGameBuildTask(safeQuestion);
+      const canRunPipelineWithoutSources = conversationMode === "orchestration" || conversationMode === "plan" || conversationMode === "agent";
+      if (!hasSourceContext && !canRunPipelineWithoutSources) {
         this.emitQaEvent(
           onEvent,
           "info",
@@ -12044,6 +16009,13 @@ ${stderr}` : ""
           });
         }
       } else {
+        if (!hasSourceContext && canRunPipelineWithoutSources) {
+          this.emitQaEvent(
+            onEvent,
+            "info",
+            "No source context, but orchestration/plan mode keeps rewrite pipeline enabled."
+          );
+        }
         throwIfAborted();
         finalAnswer = await this.repairQaStructureIfNeeded({
           intent,
@@ -12067,13 +16039,49 @@ ${stderr}` : ""
             "Simple question detected; skipping heavy pipeline passes for faster response."
           );
         }
-        const pipelineStages = useLightweightPipeline ? [] : this.resolveQaPipelineStages(safeQuestion, intent);
+        let pipelineStages = useLightweightPipeline ? [] : this.resolveQaPipelineStages(safeQuestion, intent);
+        if (conversationMode === "agent") {
+          pipelineStages = this.mapTaskRolesToStagesForQa(routingLog.roles);
+          this.emitQaEvent(
+            onEvent,
+            "info",
+            `Agent mode RoleRouter pipeline: ${pipelineStages.length > 0 ? pipelineStages.join(" -> ") : "(none)"}`
+          );
+        } else if (conversationMode === "orchestration" && pipelineStages.length > 0 && !pipelineStages.includes("orchestrator")) {
+          pipelineStages = ["orchestrator", ...pipelineStages];
+        }
+        if (conversationMode === "orchestration" && wantsGameBuild) {
+          const ensureStageBeforeSafeguard = (stage) => {
+            if (pipelineStages.includes(stage)) {
+              return;
+            }
+            const safeguardIndex = pipelineStages.indexOf("safeguard");
+            if (safeguardIndex >= 0) {
+              pipelineStages.splice(safeguardIndex, 0, stage);
+            } else {
+              pipelineStages.push(stage);
+            }
+          };
+          ensureStageBeforeSafeguard("orchestrator");
+          ensureStageBeforeSafeguard("architect");
+          ensureStageBeforeSafeguard("coder");
+          if (!pipelineStages.includes("safeguard")) {
+            pipelineStages.push("safeguard");
+          }
+        }
         if (pipelineStages.length > 0) {
           this.emitQaEvent(
             onEvent,
             "generation",
             `Pipeline: ${pipelineStages.join(" -> ")}`
           );
+          if (conversationMode === "orchestration") {
+            this.emitQaEvent(
+              onEvent,
+              "generation",
+              `Orchestration model trace: ${this.describeOrchestrationModelTrace(pipelineStages, qaModel)}`
+            );
+          }
         }
         for (const stage of pipelineStages) {
           throwIfAborted();
@@ -12110,6 +16118,60 @@ ${stderr}` : ""
           });
         }
       }
+      if (conversationMode === "orchestration" && wantsGameBuild && !this.hasRunnableGameScaffold(finalAnswer)) {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          "Game request detected but runnable scaffold is missing; running focused game scaffold pass."
+        );
+        finalAnswer = await this.applyGameBuildScaffoldPass({
+          question: safeQuestion,
+          answer: finalAnswer,
+          sourceBlocks,
+          qaBaseUrl,
+          onEvent,
+          abortSignal
+        });
+      }
+      if (conversationMode === "agent" && this.settings.qaAgentToolModeEnabled) {
+        if (routingLog.taskType === "EDIT_NOTE" && openSelection) {
+          finalAnswer = await this.ensureSelectionDiffActionPlan({
+            question: safeQuestion,
+            draftAnswer: finalAnswer,
+            sourceBlocks,
+            qaBaseUrl,
+            qaModel,
+            openFilePath,
+            openSelection,
+            routingLog,
+            onEvent,
+            abortSignal
+          });
+          if (!this.hasValidSelectionDiffActionInAnswer(finalAnswer, safeQuestion, qaModel, openSelection)) {
+            this.emitQaEvent(
+              onEvent,
+              "warning",
+              "EDIT_NOTE diff planner failed after retries. Apply step will remain blocked."
+            );
+            finalAnswer = [
+              finalAnswer,
+              "### EDIT_NOTE 실행 차단",
+              "- 유효한 unified diff 액션 생성에 실패하여 자동 적용을 중단합니다."
+            ].filter((line) => line.trim().length > 0).join("\n\n");
+          }
+        } else if (this.isLikelyAgentMutationTask(safeQuestion) && !this.hasMutatingQaActionInAnswer(finalAnswer, safeQuestion, qaModel)) {
+          finalAnswer = await this.ensureAgentMutatingActionPlan({
+            question: safeQuestion,
+            draftAnswer: finalAnswer,
+            sourceBlocks,
+            qaBaseUrl,
+            qaModel,
+            openFilePath,
+            onEvent,
+            abortSignal
+          });
+        }
+      }
       const shouldSkipLanguageGuard = this.settings.qaAgentToolModeEnabled && /```omni-forge-actions[\s\S]*?```/i.test(finalAnswer);
       if (!shouldSkipLanguageGuard) {
         throwIfAborted();
@@ -12134,8 +16196,18 @@ ${stderr}` : ""
         question: safeQuestion,
         qaModel,
         onEvent,
-        abortSignal
+        abortSignal,
+        openSelection,
+        taskType: routingLog.taskType,
+        routingLog
       });
+      this.lastQaRoutingLog = {
+        taskType: routingLog.taskType,
+        roles: [...routingLog.roles],
+        modelUsed: [...routingLog.modelUsed],
+        fallbackUsed: routingLog.fallbackUsed,
+        safeguardPassed: routingLog.safeguardPassed
+      };
       return {
         question: safeQuestion,
         answer: answerWithActions,
@@ -12521,7 +16593,7 @@ ${stderr}` : ""
     }
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }
-  async openSelectionModal() {
+  async openSelectionModal(context = null) {
     const allFiles = this.getAllMarkdownFiles();
     const allFolders = this.getAllFolders();
     new SelectionModal(
@@ -12543,7 +16615,8 @@ ${stderr}` : ""
           `Selection saved. Files: ${payload.selectedFilePaths.length}, folders: ${payload.selectedFolderPaths.length}, expanded markdown files: ${expandedCount}`,
           5e3
         );
-      }
+      },
+      context
     ).open();
   }
   async askBackupDecision() {
