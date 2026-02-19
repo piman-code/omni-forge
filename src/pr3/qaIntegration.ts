@@ -1,5 +1,5 @@
 import { retrieveByVector, type RetrievalInput } from "../pr2/retrievalBridge.ts";
-import { toEvidenceMarkdownFromHits } from "./qaBridge.ts";
+import { composeAnswer } from "../pr4/answerComposer.ts";
 
 type HitLike = {
   docPath?: unknown;
@@ -33,17 +33,7 @@ export async function runQA(input: RetrievalInput): Promise<string> {
   const hits = (result.hits ?? []) as HitLike[];
 
   // 3) 요약: evidenceMarkdown의 앞부분 2~3줄만 뽑기
-  const summaryLines = evidenceMarkdown
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-    .slice(0, 3)
-    .map((l) => l.replace(/^[-*]\s+/, ""));
-
-  const summary =
-    summaryLines.length > 0
-      ? summaryLines.join("\n")
-      : "관련 근거를 기반으로 답변을 구성했습니다.";
+  const summary = composeAnswer({ question: input.query, hits });
 
   // 4) 근거 bullet: (docPath, chunkId) 중복 제거 + score 내림차순 정렬
   const evidenceMap = new Map<string, EvidenceItem>();
