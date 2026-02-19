@@ -27,7 +27,6 @@ export async function runQA(input: RetrievalInput): Promise<string> {
   const result = await retrieveByVector(input);
 
   // 1) 기존 동작(근거 마크다운 생성)은 그대로 유지
-  const evidenceMarkdown = toEvidenceMarkdownFromHits(result.hits);
 
   // 2) hits를 안전하게 가져오기
   const hits = (result.hits ?? []) as HitLike[];
