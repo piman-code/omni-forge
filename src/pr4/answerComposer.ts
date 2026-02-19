@@ -100,7 +100,19 @@ export function composeAnswer({ question, hits }: ComposeAnswerInput): string {
   const rankedHits = rankHits(hits);
 
   if (rankedHits.length === 0) {
-    return "관련 근거가 충분하지 않습니다. (근거 부족)";
+    return [
+      "## 📌 답변 요약",
+      "관련 근거가 충분하지 않습니다. (근거 부족)",
+      "",
+      "## 🔎 근거",
+      "- 없음",
+      "",
+      "## 🔗 참조 노트",
+      "- 없음",
+      "",
+      "## 📊 신뢰도",
+      "0",
+    ].join("\n");
   }
 
   const topHits = pickTopDistinctDocPaths(rankedHits, 2);
@@ -115,10 +127,35 @@ export function composeAnswer({ question, hits }: ComposeAnswerInput): string {
     : `근거 ${rankedHits.length}건 기반 요약`;
   const topLine = `핵심 근거: ${formatTopEvidence(topHits[0])}`;
 
-  if (topHits.length === 1) {
-    return [questionLine, evidenceLine, topLine].join("\n");
+  const evidenceBullets = [`- ${topLine}`];
+
+  if (topHits.length > 1) {
+    const secondLine = `보조 근거: ${formatTopEvidence(topHits[1])}`;
+    evidenceBullets.push(`- ${secondLine}`);
   }
 
-  const secondLine = `보조 근거: ${formatTopEvidence(topHits[1])}`;
-  return [questionLine, evidenceLine, topLine, secondLine].join("\n");
+  const referenceNotes = Array.from(
+    new Set(topHits.map((h) => `- [[${h.docPath}]]`))
+  );
+
+  // 간단 신뢰도 계산 (PR-6 계산과 충돌 없음, 출력용 보조 지표)
+  const confidence = Math.min(
+    100,
+    Math.max(0, Math.round((rankedHits.length / 5) * 100))
+  );
+
+  return [
+    "## 📌 답변 요약",
+    questionLine,
+    evidenceLine,
+    "",
+    "## 🔎 근거",
+    ...evidenceBullets,
+    "",
+    "## 🔗 참조 노트",
+    ...referenceNotes,
+    "",
+    "## 📊 신뢰도",
+    String(confidence),
+  ].join("\n");
 }
