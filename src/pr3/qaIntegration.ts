@@ -23,26 +23,10 @@ function normalizeConfidenceScore(score: number): number {
   return score / (1 + score);
 }
 
-type HitLike = {
-  docPath?: unknown;
-  path?: unknown;
-  chunkId?: unknown;
-  id?: unknown;
-  score?: unknown;
-};
-
-type EvidenceItem = {
-  docPath: string;
-  chunkId: string;
-  score: number | null;
-};
-
-function normalizeConfidenceScore(score: number): number {
-  if (!Number.isFinite(score)) return 0;
-  if (score >= 0 && score <= 1) return score;
-  if (score <= 0) return 0;
-  // 0..1 범위를 벗어난 양수 score는 완만하게 1에 수렴
-  return score / (1 + score);
+function saturatingCountFactor(count: number, pivot: number): number {
+  if (!Number.isFinite(count) || count <= 0) return 0;
+  const safePivot = pivot > 0 ? pivot : 1;
+  return count / (count + safePivot);
 }
 
 export async function runQA(input: RetrievalInput): Promise<string> {
@@ -108,13 +92,22 @@ export async function runQA(input: RetrievalInput): Promise<string> {
     .map((docPath) => `- [[${docPath}]]`)
     .join("\n");
 
-  // 6) 신뢰도: 0..1은 그대로, 그 외 score는 완만한 변환 적용
   const scores = evidenceItems
     .map((item) => item.score)
     .filter((s): s is number => typeof s === "number");
 
   const maxScore = scores.length > 0 ? Math.max(...scores) : Number.NaN;
-  const confidence = Math.round(normalizeConfidenceScore(maxScore) * 100);
+
+  const maxScoreFactor = normalizeConfidenceScore(maxScore);
+  const evidenceCountFactor = saturatingCountFactor(evidenceItems.length, 3);
+  const docPathDiversityFactor = saturatingCountFactor(referencePathSet.size, 2);
+
+  const confidenceRaw =
+    maxScoreFactor * 0.6 +
+    evidenceCountFactor * 0.25 +
+    docPathDiversityFactor * 0.15;
+
+  const confidence = Math.max(0, Math.min(100, Math.round(confidenceRaw * 100)));
 
   // 7) 스펙 템플릿으로 최종 문자열 반환
   return [
