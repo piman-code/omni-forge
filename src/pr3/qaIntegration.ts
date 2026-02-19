@@ -23,6 +23,28 @@ function normalizeConfidenceScore(score: number): number {
   return score / (1 + score);
 }
 
+type HitLike = {
+  docPath?: unknown;
+  path?: unknown;
+  chunkId?: unknown;
+  id?: unknown;
+  score?: unknown;
+};
+
+type EvidenceItem = {
+  docPath: string;
+  chunkId: string;
+  score: number | null;
+};
+
+function normalizeConfidenceScore(score: number): number {
+  if (!Number.isFinite(score)) return 0;
+  if (score >= 0 && score <= 1) return score;
+  if (score <= 0) return 0;
+  // 0..1 범위를 벗어난 양수 score는 완만하게 1에 수렴
+  return score / (1 + score);
+}
+
 export async function runQA(input: RetrievalInput): Promise<string> {
   const result = await retrieveByVector(input);
 
