@@ -1,0 +1,52 @@
+name: PR Smoke Gates
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runqa_gate:
+    name: smoke:pr3:runqa (required gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run PR3 runQA smoke
+        run: npx --yes tsx scripts/pr3-runqa-smoke.ts
+
+  smoke_arch_verify:
+    name: smoke-and-arch-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run PR smoke+arch verification set
+        run: |
+          npx --yes tsx scripts/pr0-smoke.ts
+          npx --yes tsx scripts/pr1-chunk-smoke.ts
+          npx --yes tsx scripts/pr1-index-smoke.ts
+          npx --yes tsx scripts/pr1-retrieve-smoke.ts
+          npx --yes tsx scripts/pr2-smoke.ts
+          npx --yes tsx scripts/pr3-qa-smoke.ts
