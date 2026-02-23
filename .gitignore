@@ -17,3 +17,6 @@ lint/
 security/
 ui/
 styles/
+
+# Temp smoke artifacts
+.tmp/
