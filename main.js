@@ -2149,6 +2149,89 @@ var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian4.Moda
     });
   }
 };
+var HwpIngestDecisionModal = class _HwpIngestDecisionModal extends import_obsidian4.Modal {
+  constructor(app, fileLabel, sourceLabel, onResolve) {
+    super(app);
+    this.applyToAll = false;
+    this.resolved = false;
+    this.fileLabel = fileLabel;
+    this.sourceLabel = sourceLabel;
+    this.onResolve = onResolve;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "HWP/HWPX 처리 방식을 선택하세요" });
+    contentEl.createEl("p", {
+      text: `감지 파일: ${this.fileLabel}`
+    });
+    contentEl.createEl("p", {
+      text: "현재 HWP/HWPX 직접 변환은 미지원입니다. 선택한 방식에 따라 분기 처리합니다."
+    });
+    const flow = contentEl.createEl("ul");
+    flow.createEl("li", {
+      text: "A) PDF까지만 변환(권장): 이번 파일은 parser.md 생성 없이 건너뜁니다."
+    });
+    flow.createEl("li", {
+      text: "B) PDF 변환 후 MD까지: 안내용 parser.md를 생성해 파이프라인 상태를 기록합니다."
+    });
+    flow.createEl("li", {
+      text: "C) 취소: 이번 파일 처리를 중단합니다."
+    });
+    const rememberRow = contentEl.createDiv();
+    rememberRow.style.display = "flex";
+    rememberRow.style.alignItems = "center";
+    rememberRow.style.gap = "8px";
+    rememberRow.style.marginTop = "10px";
+    const rememberCheckbox = rememberRow.createEl("input", { type: "checkbox" });
+    rememberCheckbox.onchange = () => {
+      this.applyToAll = rememberCheckbox.checked;
+    };
+    rememberRow.createEl("span", {
+      text: `이번 ${this.sourceLabel} 업로드의 HWP/HWPX 전체에 동일 적용`
+    });
+    const footer = contentEl.createDiv();
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "8px";
+    footer.style.marginTop = "14px";
+    const cancelButton = footer.createEl("button", { text: "C) 취소" });
+    cancelButton.onclick = () => {
+      this.resolve({ mode: "cancel", applyToAll: this.applyToAll });
+    };
+    const mdButton = footer.createEl("button", { text: "B) PDF 후 MD까지" });
+    mdButton.onclick = () => {
+      this.resolve({ mode: "pdf_to_md", applyToAll: this.applyToAll });
+    };
+    const pdfOnlyButton = footer.createEl("button", {
+      text: "A) PDF까지만(권장)",
+      cls: "mod-cta"
+    });
+    pdfOnlyButton.onclick = () => {
+      this.resolve({ mode: "pdf_only", applyToAll: this.applyToAll });
+    };
+  }
+  onClose() {
+    this.contentEl.empty();
+    if (!this.resolved) {
+      this.resolved = true;
+      this.onResolve({ mode: "cancel", applyToAll: false });
+    }
+  }
+  resolve(decision) {
+    if (this.resolved) {
+      return;
+    }
+    this.resolved = true;
+    this.onResolve(decision);
+    this.close();
+  }
+  static ask(app, fileLabel, sourceLabel) {
+    return new Promise((resolve2) => {
+      new _HwpIngestDecisionModal(app, fileLabel, sourceLabel, resolve2).open();
+    });
+  }
+};
 var CapacityGuardModal = class _CapacityGuardModal extends import_obsidian4.Modal {
   constructor(app, selectedCount, recommendedMax, modelName, semanticEnabled, onResolve) {
     super(app);
@@ -5318,6 +5401,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.fileOpenEventBound = false;
     this.lastKnownOpenMarkdownPath = null;
     this.commandAvailabilityCache = /* @__PURE__ */ new Map();
+    this.parserHwpLastDecisionSummary = "미선택";
+    this.parserHwpBatchPolicySummary = "OFF(파일별 선택)";
     this.plugin = plugin;
   }
   getViewType() {
@@ -5356,6 +5441,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     if (initialOpen instanceof import_obsidian4.TFile) {
       this.lastKnownOpenMarkdownPath = initialOpen.path;
     }
+    this.parserHwpLastDecisionSummary = this.plugin.parserHwpLastDecisionSummary || "미선택";
+    this.parserHwpBatchPolicySummary = this.plugin.parserHwpBatchPolicySummary || "OFF(파일별 선택)";
     await this.refreshFromSettingsForQa();
     this.refreshThreadMeta();
   }
@@ -6184,6 +6271,70 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   isPdfExt(ext) {
     return ext.toLowerCase() === "pdf";
   }
+  isHwpExt(ext) {
+    const lower = ext.toLowerCase();
+    return lower === "hwp" || lower === "hwpx";
+  }
+  describeParserHwpDecision(mode) {
+    switch (mode) {
+      case "pdf_only":
+        return "A: PDF까지만(권장)";
+      case "pdf_to_md":
+        return "B: PDF 변환 후 MD까지";
+      case "cancel":
+        return "C: 취소";
+      default:
+        return "미선택";
+    }
+  }
+  describeParserHwpBatchPolicy(mode) {
+    return mode ? `ON(${this.describeParserHwpDecision(mode)})` : "OFF(파일별 선택)";
+  }
+  syncParserHwpStatus(decisionMode, batchMode) {
+    this.parserHwpLastDecisionSummary = this.describeParserHwpDecision(decisionMode);
+    this.parserHwpBatchPolicySummary = this.describeParserHwpBatchPolicy(batchMode);
+    if (typeof this.plugin.setParserHwpIngestStatusForQa === "function") {
+      this.plugin.setParserHwpIngestStatusForQa(
+        this.parserHwpLastDecisionSummary,
+        this.parserHwpBatchPolicySummary
+      );
+    }
+    void this.refreshScopeLabel();
+  }
+  async resolveParserHwpDecision(fileLabel, sourceLabel, batchState) {
+    if (batchState && batchState.mode) {
+      this.syncParserHwpStatus(batchState.mode, batchState.mode);
+      return { mode: batchState.mode, applyToAll: true, reused: true };
+    }
+    const picked = await HwpIngestDecisionModal.ask(this.app, fileLabel, sourceLabel);
+    const mode = picked && (picked.mode === "pdf_only" || picked.mode === "pdf_to_md" || picked.mode === "cancel") ? picked.mode : "cancel";
+    const applyToAll = picked && picked.applyToAll === true;
+    if (batchState && applyToAll) {
+      batchState.mode = mode;
+    }
+    this.syncParserHwpStatus(mode, batchState && batchState.mode ? batchState.mode : null);
+    return { mode, applyToAll, reused: false };
+  }
+  buildParserHwpPlaceholderAttachment(fileLabel, sourcePath, sourceLabel) {
+    const lines = [
+      `HWP attachment detected: ${fileLabel}`,
+      `Source: ${sourceLabel}`,
+      "Selected path: PDF 변환 후 MD까지",
+      "",
+      "현재 HWP/HWPX 직접 변환은 미지원입니다.",
+      "외부 도구로 HWP/HWPX -> PDF 변환 후 PDF 파일을 다시 첨부하면 본문 파싱을 진행할 수 있습니다.",
+      "이 문서는 parser 상태 기록용 안내 스텁입니다."
+    ];
+    if (sourcePath) {
+      lines.push(`source_path=${sourcePath}`);
+    }
+    return {
+      kind: "text",
+      label: this.normalizeAttachmentLabel(`${fileLabel} (hwp-parser.md)`, `hwp-${Date.now()}`),
+      path: sourcePath,
+      content: this.clampAttachmentText(lines.join("\n"))
+    };
+  }
   isLikelyTextFile(file) {
     if (file.type.startsWith("text/")) {
       return true;
@@ -6651,8 +6802,53 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       content: clipped
     };
   }
-  async readVaultFileAsAttachment(file) {
+  async readVaultFileAsAttachment(file, options = null) {
     const ext = file.extension.toLowerCase();
+    if (this.isHwpExt(ext)) {
+      const parserSource = options && typeof options === "object" ? options.parserIngestSource : "";
+      if (!parserSource) {
+        return {
+          kind: "text",
+          label: this.normalizeAttachmentLabel(file.name, file.path),
+          path: file.path,
+          content: this.clampAttachmentText([
+            `HWP attachment: ${file.name}`,
+            "현재 HWP/HWPX 직접 파싱/변환은 미지원입니다.",
+            "권장 경로: HWP/HWPX -> PDF 변환 후 PDF 첨부 또는 parser ingest 사용"
+          ].join("\n"))
+        };
+      }
+      const decision = await this.resolveParserHwpDecision(
+        file.name,
+        parserSource,
+        options && typeof options === "object" ? options.hwpBatchState : null
+      );
+      if (decision.mode === "cancel") {
+        this.pushMessage({
+          role: "system",
+          text: `HWP 처리 취소: ${file.name} (${parserSource})`,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        new import_obsidian4.Notice(`HWP 취소: ${file.name}`);
+        return null;
+      }
+      if (decision.mode === "pdf_only") {
+        this.pushMessage({
+          role: "system",
+          text: `HWP 선택(A: PDF까지만): ${file.name} (${parserSource}) - 현재 직접 변환 미지원으로 파일을 건너뜁니다.`,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        new import_obsidian4.Notice(`HWP A 선택: ${file.name} (건너뜀)`);
+        return null;
+      }
+      const placeholder = this.buildParserHwpPlaceholderAttachment(file.name, file.path, parserSource);
+      this.pushMessage({
+        role: "system",
+        text: `HWP 선택(B: PDF 후 MD): ${file.name} (${parserSource}) - 안내용 parser.md 스텁을 생성합니다.`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      return placeholder;
+    }
     if (this.isImageExt(ext)) {
       const adapter = this.app.vault.adapter;
       if (typeof adapter.readBinary !== "function") {
@@ -6773,10 +6969,55 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     return null;
   }
-  async readExternalFileAsAttachment(file) {
+  async readExternalFileAsAttachment(file, options = null) {
     var _a;
     const absolutePath = this.extractDesktopAbsolutePathFromFile(file);
     const ext = (_a = file.name.toLowerCase().split(".").pop()) != null ? _a : "";
+    if (this.isHwpExt(ext)) {
+      const parserSource = options && typeof options === "object" ? options.parserIngestSource : "";
+      if (!parserSource) {
+        return {
+          kind: "text",
+          label: this.normalizeAttachmentLabel(file.name, `hwp-${Date.now()}`),
+          path: absolutePath,
+          content: this.clampAttachmentText([
+            `HWP attachment: ${file.name}`,
+            "현재 HWP/HWPX 직접 파싱/변환은 미지원입니다.",
+            "권장 경로: HWP/HWPX -> PDF 변환 후 PDF 첨부 또는 parser ingest 사용"
+          ].join("\n"))
+        };
+      }
+      const decision = await this.resolveParserHwpDecision(
+        file.name,
+        parserSource,
+        options && typeof options === "object" ? options.hwpBatchState : null
+      );
+      if (decision.mode === "cancel") {
+        this.pushMessage({
+          role: "system",
+          text: `HWP 처리 취소: ${file.name} (${parserSource})`,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        new import_obsidian4.Notice(`HWP 취소: ${file.name}`);
+        return null;
+      }
+      if (decision.mode === "pdf_only") {
+        this.pushMessage({
+          role: "system",
+          text: `HWP 선택(A: PDF까지만): ${file.name} (${parserSource}) - 현재 직접 변환 미지원으로 파일을 건너뜁니다.`,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        new import_obsidian4.Notice(`HWP A 선택: ${file.name} (건너뜀)`);
+        return null;
+      }
+      const placeholder = this.buildParserHwpPlaceholderAttachment(file.name, absolutePath, parserSource);
+      this.pushMessage({
+        role: "system",
+        text: `HWP 선택(B: PDF 후 MD): ${file.name} (${parserSource}) - 안내용 parser.md 스텁을 생성합니다.`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      return placeholder;
+    }
     if (file.type.startsWith("image/") || this.isImageExt(ext)) {
       if (file.size > 4 * 1024 * 1024) {
         return null;
@@ -6876,7 +7117,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     return void 0;
   }
-  async collectAttachmentsFromDrop(dataTransfer) {
+  async collectAttachmentsFromDrop(dataTransfer, options = null) {
     var _a;
     const collected = [];
     const seen = /* @__PURE__ */ new Set();
@@ -6897,7 +7138,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         break;
       }
       try {
-        pushItem(await this.readExternalFileAsAttachment(file));
+        pushItem(await this.readExternalFileAsAttachment(file, options));
       } catch (e) {
       }
     }
@@ -6918,7 +7159,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           continue;
         }
         try {
-          pushItem(await this.readVaultFileAsAttachment(file));
+          pushItem(await this.readVaultFileAsAttachment(file, options));
         } catch (e) {
         }
       }
@@ -7129,7 +7370,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.accept = ".md,.txt,.json,.yml,.yaml,.csv,.ts,.js,.py,.java,.go,.rs,.c,.cpp,.html,.css,.pdf,image/*";
+    input.accept = ".md,.txt,.json,.yml,.yaml,.csv,.ts,.js,.py,.java,.go,.rs,.c,.cpp,.html,.css,.pdf,.hwp,.hwpx,image/*";
     input.style.display = "none";
     document.body.appendChild(input);
     input.onchange = async () => {
@@ -7137,12 +7378,16 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       try {
         const files = Array.from((_a = input.files) != null ? _a : []);
         const attachments = [];
+        const ingestOptions = {
+          parserIngestSource: "picker",
+          hwpBatchState: { mode: null }
+        };
         for (const file of files) {
           if (attachments.length >= LOCAL_QA_MAX_ATTACHMENTS) {
             break;
           }
           try {
-            const parsed = await this.readExternalFileAsAttachment(file);
+            const parsed = await this.readExternalFileAsAttachment(file, ingestOptions);
             if (parsed) {
               attachments.push(parsed);
             }
@@ -7167,7 +7412,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     if (!dataTransfer) {
       return;
     }
-    const attachments = await this.collectAttachmentsFromDrop(dataTransfer);
+    const attachments = await this.collectAttachmentsFromDrop(dataTransfer, {
+      parserIngestSource: "drop",
+      hwpBatchState: { mode: null }
+    });
     if (attachments.length === 0) {
       new import_obsidian4.Notice("드롭한 항목에서 파서 인게스트 가능한 파일을 찾지 못했습니다.");
       return;
@@ -7178,7 +7426,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.accept = ".md,.txt,.json,.yml,.yaml,.csv,.ts,.js,.py,.java,.go,.rs,.c,.cpp,.html,.css,.pdf,image/*";
+    input.accept = ".md,.txt,.json,.yml,.yaml,.csv,.ts,.js,.py,.java,.go,.rs,.c,.cpp,.html,.css,.pdf,.hwp,.hwpx,image/*";
     input.style.display = "none";
     document.body.appendChild(input);
     input.onchange = async () => {
@@ -7199,7 +7447,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           }
         }
         if (attachments.length === 0) {
-          new import_obsidian4.Notice("\uCCA8\uBD80\uD560 \uC218 \uC788\uB294 \uD30C\uC77C(\uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF)\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+          new import_obsidian4.Notice("\uCCA8\uBD80\uD560 \uC218 \uC788\uB294 \uD30C\uC77C(\uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF/HWP)\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
         } else {
           this.mergePendingAttachments(attachments);
           this.pushMessage({
@@ -7223,7 +7471,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     const attachments = await this.collectAttachmentsFromDrop(dataTransfer);
     if (attachments.length === 0) {
-      new import_obsidian4.Notice("\uB4DC\uB798\uADF8\uD55C \uD56D\uBAA9\uC5D0\uC11C \uC77D\uC744 \uC218 \uC788\uB294 \uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF\uB97C \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+      new import_obsidian4.Notice("\uB4DC\uB798\uADF8\uD55C \uD56D\uBAA9\uC5D0\uC11C \uC77D\uC744 \uC218 \uC788\uB294 \uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF/HWP\uB97C \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
       return;
     }
     this.mergePendingAttachments(attachments);
@@ -7895,7 +8143,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const model = this.plugin.getQaModelLabelForQa(role);
     const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "auto / \uC790\uB3D9" : "manual / \uC218\uB3D9";
     const fullSummary = `Scope / \uBC94\uC704: files=${fileCount}, folders=${folderCount}, attachments=${attachmentCount}`;
-    const runtimeSummary = `convo=${conversationMode} | preset=${presetLabel} | QA=${model} | sync=${syncMode}`;
+    const runtimeSummary = `convo=${conversationMode} | preset=${presetLabel} | QA=${model} | sync=${syncMode} | hwp=${this.parserHwpLastDecisionSummary} | batch=${this.parserHwpBatchPolicySummary}`;
     this.scopeEl.empty();
     this.scopeEl.setAttr("title", fullSummary);
     this.scopeEl.createDiv({
@@ -9655,7 +9903,7 @@ ${availability.note}`).addText(
     containerEl.createEl("h3", { text: "Parser pipeline / \uD30C\uC11C \uD30C\uC774\uD504\uB77C\uC778" });
     containerEl.createEl("p", {
       cls: "omni-forge-settings-guide-note",
-      text: "PDF/\uC774\uBBF8\uC9C0 \uD30C\uC11C\uB97C \uC911\uC2EC\uC73C\uB85C \uCCA8\uBD80 \uCEE8\uD14D\uC2A4\uD2B8 \uD488\uC9C8\uC744 \uB192\uC785\uB2C8\uB2E4. excel/hwp\uB294 \uD604\uC7AC \uBBF8\uB9AC\uBCF4\uAE30 \uC218\uC900\uC774\uBA70 \uCD94\uD6C4 \uD655\uC7A5\uB429\uB2C8\uB2E4."
+      text: "PDF/\uC774\uBBF8\uC9C0 \uD30C\uC11C\uB97C \uC911\uC2EC\uC73C\uB85C \uCCA8\uBD80 \uCEE8\uD14D\uC2A4\uD2B8 \uD488\uC9C8\uC744 \uB192\uC785\uB2C8\uB2E4. HWP/HWPX\uB294 \uAC10\uC9C0 \uC2DC A/B/C \uBD84\uAE30 \uC120\uD0DD \uBAA8\uB2EC\uC744 \uD45C\uC2DC\uD558\uBA70, \uC9C1\uC811 \uBCC0\uD658\uC740 \uBBF8\uC9C0\uC6D0\uC785\uB2C8\uB2E4."
     });
     new import_obsidian4.Setting(containerEl).setName("Parser mode").setDesc("Fast\uB294 \uACBD\uB7C9 \uD30C\uC11C, Detailed\uB294 OCR \uD398\uC774\uC9C0 \uD655\uC7A5\uACFC \uAE34 \uD14D\uC2A4\uD2B8 \uCD94\uCD9C\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.").addDropdown(
       (dropdown) => dropdown.addOption("fast", "Fast / \uBE60\uB978 \uD30C\uC11C").addOption("detailed", "Detailed / \uC0C1\uC138 \uD30C\uC11C").setValue(this.plugin.settings.qaParserMode).onChange(async (value) => {
@@ -9671,6 +9919,7 @@ ${availability.note}`).addText(
         this.display();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("HWP ingest status").setDesc(this.plugin.getParserHwpIngestStatusSummaryForQa());
     const parserList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     parserList.createEl("li", {
       text: t("PDF: pdftotext(text extraction) + pdftoppm/tesseract(OCR) + fallback", "PDF: pdftotext(\uD14D\uC2A4\uD2B8 \uCD94\uCD9C) + pdftoppm/tesseract(OCR) + fallback")
@@ -9679,7 +9928,7 @@ ${availability.note}`).addText(
       text: t("Image: tesseract OCR + original image context", "Image: tesseract OCR + \uC6D0\uBCF8 \uC774\uBBF8\uC9C0 \uCEE8\uD14D\uC2A4\uD2B8")
     });
     parserList.createEl("li", {
-      text: t("Excel/HWP: currently preview-level support (attach text-exported copy recommended)", "Excel/HWP: \uD604\uC7AC \uBBF8\uB9AC\uBCF4\uAE30 \uC218\uC900(\uD14D\uC2A4\uD2B8 \uBCC0\uD658\uBCF8 \uCCA8\uBD80 \uAD8C\uC7A5)")
+      text: t("HWP/HWPX: choose A/B/C branch on detect. Direct conversion is not supported yet (external PDF conversion recommended).", "HWP/HWPX: 감지 시 A/B/C 분기 선택. 직접 변환은 아직 미지원(외부 PDF 변환본 첨부 권장)")
     });
     const tips = containerEl.createEl("details", { cls: "omni-forge-chat-collapsible omni-forge-settings-parser-tips" });
     tips.open = false;
@@ -11496,6 +11745,8 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       tesseract: false
     };
     this.parserToolSummary = "Parser tool check has not run yet.";
+    this.parserHwpLastDecisionSummary = "미선택";
+    this.parserHwpBatchPolicySummary = "OFF(파일별 선택)";
   }
   async onload() {
     await this.loadSettings();
@@ -12169,6 +12420,13 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getParserToolReadinessLinesForQa() {
     const tools = ["pdftotext", "pdftoppm", "tesseract"];
     return tools.map((tool) => `${tool}: ${this.parserToolStatus[tool] ? "ready" : "missing"}`);
+  }
+  setParserHwpIngestStatusForQa(lastDecision, batchPolicy) {
+    this.parserHwpLastDecisionSummary = lastDecision && lastDecision.trim() ? lastDecision.trim() : "미선택";
+    this.parserHwpBatchPolicySummary = batchPolicy && batchPolicy.trim() ? batchPolicy.trim() : "OFF(파일별 선택)";
+  }
+  getParserHwpIngestStatusSummaryForQa() {
+    return `HWP 선택 결과: ${this.parserHwpLastDecisionSummary} | 일괄 정책: ${this.parserHwpBatchPolicySummary}`;
   }
   async isShellCommandAvailable(command) {
     const safe = command.trim();
