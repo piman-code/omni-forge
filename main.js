@@ -36,7 +36,9 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_child_process = require("child_process");
+var nodeCrypto = __toESM(require("crypto"));
 var nodeFs = __toESM(require("fs"));
+var nodeHttp = __toESM(require("http"));
 var nodeOs = __toESM(require("os"));
 var nodePath = __toESM(require("path"));
 var import_util = require("util");
@@ -398,7 +400,12 @@ var OpenAICompatibleProvider = class extends BaseProvider {
     var _a, _b, _c, _d;
     const url = `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const headers = {};
-    if (this.config.apiKey) {
+    if (typeof this.config.getAuthHeaders === "function") {
+      const authHeaders = await this.config.getAuthHeaders();
+      if (authHeaders && typeof authHeaders === "object") {
+        Object.assign(headers, authHeaders);
+      }
+    } else if (this.config.apiKey) {
       headers.Authorization = `Bearer ${this.config.apiKey}`;
     }
     const response = await (0, import_obsidian2.requestUrl)({
@@ -558,7 +565,49 @@ function toOpenAICompatibleBase(baseUrl) {
   const cleaned = baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   return `${cleaned}/v1`;
 }
-function getProviderModelLabel(settings) {
+function toBase64Url(input) {
+  return input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function parseOAuthTokenPayload(response) {
+  var _a;
+  if (((_a = response == null ? void 0 : response.json) == null ? void 0 : _a.constructor) === Object || Array.isArray(response == null ? void 0 : response.json)) {
+    return response.json;
+  }
+  const rawText = typeof (response == null ? void 0 : response.text) === "string" ? response.text.trim() : "";
+  if (!rawText) {
+    return {};
+  }
+  try {
+    return JSON.parse(rawText);
+  } catch (e) {
+    return {};
+  }
+}
+function resolveOAuthTokenExpiryMs(payload) {
+  if (!payload || typeof payload !== "object") {
+    return 0;
+  }
+  const expiresIn = Number(payload.expires_in);
+  if (Number.isFinite(expiresIn) && expiresIn > 0) {
+    return Date.now() + Math.floor(expiresIn * 1e3);
+  }
+  const expiresAtRaw = payload.expires_at;
+  const expiresAtNumber = Number(expiresAtRaw);
+  if (Number.isFinite(expiresAtNumber) && expiresAtNumber > 0) {
+    return expiresAtNumber > 1e12 ? Math.floor(expiresAtNumber) : Math.floor(expiresAtNumber * 1e3);
+  }
+  if (typeof expiresAtRaw === "string" && expiresAtRaw.trim()) {
+    const parsed = Date.parse(expiresAtRaw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return 0;
+}
+function isCloudProviderForOAuthBridge(provider) {
+  return provider === "openai" || provider === "anthropic" || provider === "gemini";
+}
+function getProviderModelLabelRaw(settings) {
   switch (settings.provider) {
     case "ollama":
       return settings.ollamaModel;
@@ -573,6 +622,35 @@ function getProviderModelLabel(settings) {
     default:
       return "unknown";
   }
+}
+function resolveOAuthBridgeBaseUrl(settings) {
+  const bridgeBase = typeof settings.oauthBridgeBaseUrl === "string" ? settings.oauthBridgeBaseUrl.trim() : "";
+  const fallbackOpenAIBase = typeof settings.openAIBaseUrl === "string" ? settings.openAIBaseUrl.trim() : "";
+  return toOpenAICompatibleBase(
+    bridgeBase || fallbackOpenAIBase || DEFAULT_SETTINGS.openAIBaseUrl || "https://api.openai.com/v1"
+  );
+}
+function resolveOAuthBridgeModel(settings) {
+  const override = typeof settings.oauthBridgeModel === "string" ? settings.oauthBridgeModel.trim() : "";
+  return override || getProviderModelLabelRaw(settings);
+}
+function resolveCloudProviderApiKey(settings) {
+  switch (settings.provider) {
+    case "anthropic":
+      return settings.anthropicApiKey.trim() || settings.openAIApiKey.trim() || void 0;
+    case "gemini":
+      return settings.geminiApiKey.trim() || settings.openAIApiKey.trim() || void 0;
+    case "openai":
+      return settings.openAIApiKey.trim() || void 0;
+    default:
+      return void 0;
+  }
+}
+function getProviderModelLabel(settings) {
+  if (settings.oauthBridgeEnabled === true && isCloudProviderForOAuthBridge(settings.provider)) {
+    return resolveOAuthBridgeModel(settings);
+  }
+  return getProviderModelLabelRaw(settings);
 }
 function scoreOllamaModel(modelName) {
   if (!isOllamaModelAnalyzable(modelName)) {
@@ -715,6 +793,19 @@ async function detectOllamaModels(baseUrl) {
   };
 }
 function createProvider(settings) {
+  const authHeaderResolver = arguments.length > 1 ? arguments[1] : void 0;
+  const oauthEnabled = settings.oauthEnabled === true;
+  const oauthBridgeEnabled = settings.oauthBridgeEnabled === true;
+  if ((oauthBridgeEnabled || oauthEnabled) && isCloudProviderForOAuthBridge(settings.provider)) {
+    const baseUrl = oauthBridgeEnabled ? resolveOAuthBridgeBaseUrl(settings) : toOpenAICompatibleBase(settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+    const model = oauthBridgeEnabled ? resolveOAuthBridgeModel(settings) : getProviderModelLabelRaw(settings);
+    return new OpenAICompatibleProvider(settings, {
+      baseUrl,
+      model,
+      apiKey: oauthEnabled ? void 0 : resolveCloudProviderApiKey(settings),
+      getAuthHeaders: oauthEnabled ? authHeaderResolver : void 0
+    });
+  }
   const providerMap = {
     ollama: () => new OllamaProvider(settings),
     lmstudio: () => new OpenAICompatibleProvider(settings, {
@@ -725,7 +816,8 @@ function createProvider(settings) {
     openai: () => new OpenAICompatibleProvider(settings, {
       baseUrl: toOpenAICompatibleBase(settings.openAIBaseUrl),
       model: settings.openAIModel,
-      apiKey: settings.openAIApiKey.trim()
+      apiKey: oauthEnabled ? void 0 : settings.openAIApiKey.trim(),
+      getAuthHeaders: oauthEnabled ? authHeaderResolver : void 0
     }),
     anthropic: () => new AnthropicProvider(settings),
     gemini: () => new GeminiProvider(settings)
@@ -733,7 +825,8 @@ function createProvider(settings) {
   return providerMap[settings.provider]();
 }
 async function analyzeWithFallback(settings, request) {
-  const provider = createProvider(settings);
+  const authHeaderResolver = arguments.length > 2 ? arguments[2] : void 0;
+  const provider = createProvider(settings, authHeaderResolver);
   const providerModel = getProviderModelLabel(settings);
   const startedAt = Date.now();
   try {
@@ -1418,6 +1511,185 @@ async function searchSemanticNotesByQuery(app, files, settings, query, topK, abo
 
 // src/main.ts
 var execAsync = (0, import_util.promisify)(import_child_process.exec);
+function shellQuoteForExec(value) {
+  const source = value == null ? "" : String(value);
+  return `'${source.replace(/'/g, `'"'"'`)}'`;
+}
+function sanitizeTempFileNameForHwp(rawName, fallbackBase, extHint = "") {
+  const source = typeof rawName === "string" && rawName.trim() ? rawName.trim() : fallbackBase;
+  const normalized = source.normalize("NFKD").replace(/[^\x20-\x7E]/g, "");
+  const collapsed = normalized.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-");
+  const trimmed = collapsed.replace(/^-+|-+$/g, "") || fallbackBase;
+  const ext = typeof extHint === "string" ? extHint.trim().replace(/^\.+/, "").toLowerCase() : "";
+  if (!ext) {
+    return trimmed;
+  }
+  return trimmed.toLowerCase().endsWith(`.${ext}`) ? trimmed : `${trimmed}.${ext}`;
+}
+async function resolveSofficeExecutableForHwpPoC() {
+  try {
+    await execAsync("command -v soffice");
+    return "soffice";
+  } catch (e) {
+  }
+  const candidates = [
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    "/opt/homebrew/bin/soffice",
+    "/usr/local/bin/soffice",
+    "/usr/bin/soffice"
+  ];
+  for (const candidate of candidates) {
+    try {
+      await nodeFs.promises.access(candidate, nodeFs.constants.X_OK);
+      return candidate;
+    } catch (e) {
+    }
+  }
+  return null;
+}
+function normalizeHwpAutoConvertDetail(raw, fallback = "") {
+  const base = typeof raw === "string" && raw.trim() ? raw.trim() : fallback;
+  if (!base) {
+    return "";
+  }
+  const compact = base.replace(/\s+/g, " ").trim();
+  return compact.length > 180 ? `${compact.slice(0, 177)}...` : compact;
+}
+function describeHwpAutoConvertStatus(status, detail = "") {
+  const suffix = detail ? ` (${detail})` : "";
+  switch (status) {
+    case "ok":
+      return `soffice ready${suffix}`;
+    case "non_hwp":
+      return `skipped(non-hwp)${suffix}`;
+    case "binary_missing":
+      return `binary unavailable${suffix}`;
+    case "soffice_unavailable":
+      return `soffice missing${suffix}`;
+    case "soffice_failed":
+      return `soffice failed${suffix}`;
+    case "pdf_missing":
+      return `pdf not generated${suffix}`;
+    case "pdf_parser_unavailable":
+      return `pdf parser chain unavailable${suffix}`;
+    case "pdf_parser_failed":
+      return `pdf parser chain failed${suffix}`;
+    default:
+      return `unknown${suffix}`;
+  }
+}
+async function runHwpToPdfParserPocWithSoffice(options) {
+  const ext = typeof (options == null ? void 0 : options.ext) === "string" ? options.ext.trim().toLowerCase() : "";
+  if (ext !== "hwp") {
+    return {
+      attempted: false,
+      ok: false,
+      status: "non_hwp",
+      message: "only .hwp is supported for this PoC route"
+    };
+  }
+  const binarySource = options == null ? void 0 : options.binary;
+  if (!(binarySource instanceof ArrayBuffer) && !ArrayBuffer.isView(binarySource)) {
+    return {
+      attempted: true,
+      ok: false,
+      status: "binary_missing",
+      message: "input binary unavailable"
+    };
+  }
+  if (typeof (options == null ? void 0 : options.parsePdf) !== "function") {
+    return {
+      attempted: true,
+      ok: false,
+      status: "pdf_parser_unavailable",
+      message: "pdf parser chain callback unavailable"
+    };
+  }
+  const sofficeBin = await resolveSofficeExecutableForHwpPoC();
+  if (!sofficeBin) {
+    return {
+      attempted: true,
+      ok: false,
+      status: "soffice_unavailable",
+      message: "command not found"
+    };
+  }
+  const inputBuffer = binarySource instanceof ArrayBuffer ? Buffer.from(binarySource) : Buffer.from(binarySource.buffer, binarySource.byteOffset, binarySource.byteLength);
+  const fileName = typeof (options == null ? void 0 : options.fileName) === "string" && options.fileName.trim() ? options.fileName.trim() : "document.hwp";
+  const tmpRoot = await nodeFs.promises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "omni-forge-hwp-soffice-"));
+  const outDir = nodePath.join(tmpRoot, "out");
+  try {
+    await nodeFs.promises.mkdir(outDir, { recursive: true });
+    const inputName = sanitizeTempFileNameForHwp(fileName, "document", "hwp");
+    const inputPath = nodePath.join(tmpRoot, inputName);
+    await nodeFs.promises.writeFile(inputPath, inputBuffer);
+    const convertCommand = [
+      shellQuoteForExec(sofficeBin),
+      "--headless",
+      "--convert-to",
+      "pdf",
+      "--outdir",
+      shellQuoteForExec(outDir),
+      shellQuoteForExec(inputPath)
+    ].join(" ");
+    try {
+      await execAsync(convertCommand, { timeout: 9e4, maxBuffer: 10 * 1024 * 1024 });
+    } catch (error) {
+      const detail = normalizeHwpAutoConvertDetail(
+        error && typeof error.stderr === "string" ? error.stderr : error instanceof Error ? error.message : "",
+        "conversion command failed"
+      );
+      return {
+        attempted: true,
+        ok: false,
+        status: "soffice_failed",
+        message: detail
+      };
+    }
+    const pdfCandidates = (await nodeFs.promises.readdir(outDir)).filter((name) => name.toLowerCase().endsWith(".pdf")).sort((a, b) => a.localeCompare(b));
+    if (pdfCandidates.length === 0) {
+      return {
+        attempted: true,
+        ok: false,
+        status: "pdf_missing",
+        message: "converted pdf not found in output directory"
+      };
+    }
+    const pdfPath = nodePath.join(outDir, pdfCandidates[0]);
+    const pdfBinary = await nodeFs.promises.readFile(pdfPath);
+    try {
+      const parsed = await options.parsePdf(pdfBinary, pdfPath);
+      return {
+        attempted: true,
+        ok: true,
+        status: "ok",
+        message: "hwp->pdf conversion and pdf parser chain completed",
+        parsed,
+        pdfPath,
+        pdfBinary,
+        sofficeBin
+      };
+    } catch (error) {
+      const detail = normalizeHwpAutoConvertDetail(
+        error instanceof Error ? error.message : "",
+        "pdf parser chain failed"
+      );
+      return {
+        attempted: true,
+        ok: false,
+        status: "pdf_parser_failed",
+        message: detail,
+        pdfPath,
+        pdfBinary
+      };
+    }
+  } finally {
+    try {
+      await nodeFs.promises.rm(tmpRoot, { recursive: true, force: true });
+    } catch (e) {
+    }
+  }
+}
 var DEFAULT_SETTINGS = {
   settingsViewMode: "full",
   settingsUiLanguage: "ko",
@@ -1432,6 +1704,22 @@ var DEFAULT_SETTINGS = {
   openAIBaseUrl: "https://api.openai.com/v1",
   openAIModel: "gpt-5.3-codex",
   openAIApiKey: "",
+  oauthBridgeEnabled: false,
+  oauthBridgeBaseUrl: "",
+  oauthBridgeModel: "",
+  oauthEnabled: false,
+  oauthProviderPreset: "custom",
+  oauthProvider: "generic",
+  oauthAuth0Domain: "",
+  oauthAuthUrl: "",
+  oauthTokenUrl: "",
+  oauthClientId: "",
+  oauthScopes: "",
+  oauthRedirectUri: "http://127.0.0.1:8765/callback",
+  oauthUsePkce: true,
+  oauthAccessToken: "",
+  oauthRefreshToken: "",
+  oauthTokenExpiry: 0,
   anthropicModel: "claude-3-7-sonnet-latest",
   anthropicApiKey: "",
   geminiModel: "gemini-2.5-pro",
@@ -1445,6 +1733,9 @@ var DEFAULT_SETTINGS = {
   analyzeTopic: true,
   analyzeLinked: true,
   forceAllToAllLinkedEnabled: false,
+  analyzeLinkedScopeMode: "selected_only",
+  relatedScopeMaxCandidates: 120,
+  relatedScopeTimeBudgetMs: 150,
   analyzeIndex: true,
   maxTags: 8,
   maxLinked: 8,
@@ -1509,7 +1800,12 @@ var DEFAULT_SETTINGS = {
   qaThreadAutoSyncEnabled: true,
   qaPdfAttachmentEnabled: true,
   qaContextInChat: true,
+  qaRequireSelectionForSelectedAsk: true,
+  qaParserInboxWatchEnabled: false,
+  qaParserInboxFolder: "inbox",
+  qaParserIngestOutputFormat: "md",
   qaParserMode: "fast",
+  qaParserInboxCollapsedDefault: true,
   qaAgentToolModeEnabled: false,
   qaAgentRequireApproval: true,
   qaAgentAllowShellTool: false,
@@ -1533,6 +1829,9 @@ var DEFAULT_SETTINGS = {
   propertyCleanupKeys: "related",
   propertyCleanupPrefixes: "",
   propertyCleanupKeepKeys: "date created,date updated,date modified,created,updated,modified",
+  autoCreateTargetFolders: false,
+  applyMode: "metadata_only",
+  moveConflictPolicy: "suffix",
   targetFilePaths: [],
   targetFolderPaths: [],
   includeSubfoldersInFolderSelection: true,
@@ -1555,6 +1854,8 @@ var SELECTION_DIFF_AUDIT_LOG_FILE = "selection-diff-audit.jsonl";
 var ANALYSIS_CACHE_VERSION = 1;
 var ANALYSIS_CACHE_MAX_ENTRIES = 4e3;
 var ANALYSIS_HARD_MAX_CANDIDATES = 120;
+var LINKED_SCOPE_MAX_CANDIDATES_HARD = 600;
+var LINKED_SCOPE_TIME_BUDGET_MS_HARD = 2e3;
 var MAX_SELECTION_DIFF_CONTEXT_CHARS = 4e3;
 var MAX_SELECTION_DIFF_CHANGED_LINES = 200;
 var MAX_SELECTION_DIFF_HUNKS = 20;
@@ -2149,89 +2450,6 @@ var BackupConfirmModal = class _BackupConfirmModal extends import_obsidian4.Moda
     });
   }
 };
-var HwpIngestDecisionModal = class _HwpIngestDecisionModal extends import_obsidian4.Modal {
-  constructor(app, fileLabel, sourceLabel, onResolve) {
-    super(app);
-    this.applyToAll = false;
-    this.resolved = false;
-    this.fileLabel = fileLabel;
-    this.sourceLabel = sourceLabel;
-    this.onResolve = onResolve;
-  }
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("h2", { text: "HWP/HWPX 처리 방식을 선택하세요" });
-    contentEl.createEl("p", {
-      text: `감지 파일: ${this.fileLabel}`
-    });
-    contentEl.createEl("p", {
-      text: "현재 HWP/HWPX 직접 변환은 미지원입니다. 선택한 방식에 따라 분기 처리합니다."
-    });
-    const flow = contentEl.createEl("ul");
-    flow.createEl("li", {
-      text: "A) PDF까지만 변환(권장): 이번 파일은 parser.md 생성 없이 건너뜁니다."
-    });
-    flow.createEl("li", {
-      text: "B) PDF 변환 후 MD까지: 안내용 parser.md를 생성해 파이프라인 상태를 기록합니다."
-    });
-    flow.createEl("li", {
-      text: "C) 취소: 이번 파일 처리를 중단합니다."
-    });
-    const rememberRow = contentEl.createDiv();
-    rememberRow.style.display = "flex";
-    rememberRow.style.alignItems = "center";
-    rememberRow.style.gap = "8px";
-    rememberRow.style.marginTop = "10px";
-    const rememberCheckbox = rememberRow.createEl("input", { type: "checkbox" });
-    rememberCheckbox.onchange = () => {
-      this.applyToAll = rememberCheckbox.checked;
-    };
-    rememberRow.createEl("span", {
-      text: `이번 ${this.sourceLabel} 업로드의 HWP/HWPX 전체에 동일 적용`
-    });
-    const footer = contentEl.createDiv();
-    footer.style.display = "flex";
-    footer.style.justifyContent = "flex-end";
-    footer.style.gap = "8px";
-    footer.style.marginTop = "14px";
-    const cancelButton = footer.createEl("button", { text: "C) 취소" });
-    cancelButton.onclick = () => {
-      this.resolve({ mode: "cancel", applyToAll: this.applyToAll });
-    };
-    const mdButton = footer.createEl("button", { text: "B) PDF 후 MD까지" });
-    mdButton.onclick = () => {
-      this.resolve({ mode: "pdf_to_md", applyToAll: this.applyToAll });
-    };
-    const pdfOnlyButton = footer.createEl("button", {
-      text: "A) PDF까지만(권장)",
-      cls: "mod-cta"
-    });
-    pdfOnlyButton.onclick = () => {
-      this.resolve({ mode: "pdf_only", applyToAll: this.applyToAll });
-    };
-  }
-  onClose() {
-    this.contentEl.empty();
-    if (!this.resolved) {
-      this.resolved = true;
-      this.onResolve({ mode: "cancel", applyToAll: false });
-    }
-  }
-  resolve(decision) {
-    if (this.resolved) {
-      return;
-    }
-    this.resolved = true;
-    this.onResolve(decision);
-    this.close();
-  }
-  static ask(app, fileLabel, sourceLabel) {
-    return new Promise((resolve2) => {
-      new _HwpIngestDecisionModal(app, fileLabel, sourceLabel, resolve2).open();
-    });
-  }
-};
 var CapacityGuardModal = class _CapacityGuardModal extends import_obsidian4.Modal {
   constructor(app, selectedCount, recommendedMax, modelName, semanticEnabled, onResolve) {
     super(app);
@@ -2629,19 +2847,21 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
     this.settings = pluginSettings || { ...DEFAULT_SETTINGS };
     this.recommendations = Array.isArray(recommendations) ? recommendations : [];
     this.selectedFilePaths = /* @__PURE__ */ new Set();
+    this.latestMovePlan = null;
+    this.movePreviewEl = null;
   }
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
     ensurePR3ScopeStatusStyle();
-    contentEl.createEl("h2", { text: "Folder reclassification preview (preview only)" });
+    contentEl.createEl("h2", { text: "Folder reclassification preview + move apply" });
     const scope = createPR3Step2ScopeFromSettings(this.settings);
     const scopeStatus = contentEl.createDiv({ cls: "pr3-scope-status" });
     scopeStatus.createEl("div", { text: `Scope Policy: ${scope.policy}` });
     scopeStatus.createEl("div", { text: `Mode: ${scope.mode}` });
     scopeStatus.createEl("div", { text: `Path Semantics: ${scope.pathSemantics}` });
     if (scope.roots.length === 0) {
-      scopeStatus.createEl("div", { text: "Roots: (none — deny-all)" });
+      scopeStatus.createEl("div", { text: "Roots: (none - deny-all)" });
     } else {
       scopeStatus.createEl("div", { text: `Roots: ${scope.roots.join(", ")}` });
     }
@@ -2658,6 +2878,9 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
         text: "Scope is informational only. No enforcement is applied."
       });
     }
+    scopeStatus.createEl("small", {
+      text: `Move Apply: mode=${this.getCurrentApplyMode()}, autoCreateTargetFolders=${this.getAutoCreateTargetFolders() ? "true" : "false"}, conflictPolicy=${this.getCurrentMoveConflictPolicy()}`
+    });
     this.rows = this.buildRows(this.recommendations);
     for (const row of this.rows) {
       if (!row.needsReview) {
@@ -2712,6 +2935,21 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
     } else if (typeof console !== "undefined" && typeof console.warn === "function") {
       console.warn("[Omni-Forge] PR3 folder diagnosis summary skipped due to UI payload risk", diagnosis);
     }
+    const templateSection = contentEl.createDiv();
+    templateSection.style.marginBottom = "12px";
+    const templateLabel = templateSection.createEl("small", {
+      text: "v1.4 Folder Intelligence output template"
+    });
+    templateLabel.style.opacity = "0.8";
+    const templateBlock = templateSection.createEl("pre", {
+      text: this.buildFolderIntelligenceTemplateMarkdown(this.rows, diagnosis)
+    });
+    templateBlock.style.whiteSpace = "pre-wrap";
+    templateBlock.style.border = "1px solid var(--background-modifier-border)";
+    templateBlock.style.borderRadius = "8px";
+    templateBlock.style.padding = "8px";
+    templateBlock.style.marginTop = "6px";
+    templateBlock.style.background = "var(--background-secondary)";
     const list = contentEl.createDiv();
     list.style.maxHeight = "52vh";
     list.style.overflow = "auto";
@@ -2740,6 +2978,7 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
             this.selectedFilePaths.delete(row.filePath);
           }
           this.updateSummary();
+          this.refreshMovePreview(false);
         };
         const clusterBadgeText = row.needsReview === true ? "🟡 Needs Review" : row.suggestedFolder !== dominantFolder ? "🔴 Outlier" : "🟢 Dominant Cluster";
         const clusterBadge = top.createEl("small", { text: clusterBadgeText });
@@ -2775,7 +3014,9 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
         reviewBadge.style.marginLeft = "auto";
         section.createEl("div", { text: `Current folder: ${row.currentFolder}` });
         section.createEl("div", { text: `Suggested folder: ${row.suggestedFolder}` });
+        section.createEl("div", { text: `Reason: ${row.reasonSummary}` });
         section.createEl("div", { text: `Score: ${row.score.toFixed(3)}` });
+        section.createEl("div", { text: `Confidence: ${row.confidence}` });
         if (row.evidence.length > 0) {
           const evidenceBlock = section.createDiv();
           evidenceBlock.style.marginTop = "4px";
@@ -2786,6 +3027,12 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
         }
       }
     }
+    this.movePreviewEl = contentEl.createDiv({ cls: "pr3-move-preview" });
+    this.movePreviewEl.style.marginTop = "10px";
+    this.movePreviewEl.style.padding = "8px";
+    this.movePreviewEl.style.border = "1px dashed var(--background-modifier-border)";
+    this.movePreviewEl.style.borderRadius = "8px";
+    this.refreshMovePreview(false);
     const footer = contentEl.createDiv();
     footer.style.display = "flex";
     footer.style.justifyContent = "flex-end";
@@ -2793,24 +3040,358 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
     footer.style.marginTop = "12px";
     const cancelButton = footer.createEl("button", { text: "Cancel" });
     cancelButton.onclick = () => this.close();
-    const applyButton = footer.createEl("button", { text: "Apply", cls: "mod-cta" });
-    applyButton.onclick = () => {
-      const selectedCount = this.rows.filter((row) => this.selectedFilePaths.has(row.filePath)).length;
-      new import_obsidian4.Notice(
-        `Folder reclassification preview only: selected ${selectedCount} item(s). No files moved.`,
-        5e3
-      );
-      this.close();
+    const refreshButton = footer.createEl("button", { text: "Dry-run preview" });
+    refreshButton.onclick = () => this.refreshMovePreview(true);
+    const applyButton = footer.createEl("button", { text: "Apply Move", cls: "mod-cta" });
+    applyButton.onclick = async () => {
+      applyButton.disabled = true;
+      try {
+        const result = await this.applySelectedMoves();
+        if (result.applied || result.closed) {
+          this.close();
+        }
+      } finally {
+        applyButton.disabled = false;
+      }
     };
   }
   onClose() {
+    this.latestMovePlan = null;
+    this.movePreviewEl = null;
     this.contentEl.empty();
   }
   updateSummary() {
     if (!this.summaryEl) {
       return;
     }
-    this.summaryEl.setText(`Shown: ${this.rows.length} | Selected: ${this.selectedFilePaths.size}`);
+    this.summaryEl.setText(
+      `Shown: ${this.rows.length} | Selected: ${this.selectedFilePaths.size} | ApplyMode: ${this.getCurrentApplyMode()}`
+    );
+  }
+  getCurrentApplyMode() {
+    return normalizeFolderReclassApplyMode(this.settings.applyMode);
+  }
+  getCurrentMoveConflictPolicy() {
+    return normalizeFolderReclassMoveConflictPolicy(this.settings.moveConflictPolicy);
+  }
+  getAutoCreateTargetFolders() {
+    return this.settings.autoCreateTargetFolders === true;
+  }
+  getFolderPathFromFilePath(filePath) {
+    const normalized = (0, import_obsidian4.normalizePath)(typeof filePath === "string" ? filePath : "");
+    if (!normalized.includes("/")) {
+      return "";
+    }
+    return normalized.slice(0, normalized.lastIndexOf("/"));
+  }
+  getFileNameFromPath(filePath) {
+    const normalized = (0, import_obsidian4.normalizePath)(typeof filePath === "string" ? filePath : "");
+    const chunks = normalized.split("/");
+    return chunks[chunks.length - 1] || "";
+  }
+  formatMovePlanReason(reasonCode) {
+    const map = {
+      source_missing: "source note missing",
+      source_not_markdown: "source is not markdown",
+      invalid_file_name: "invalid file name",
+      same_path: "already in target path",
+      apply_mode_metadata_only: "applyMode=metadata_only",
+      target_folder_missing: "target folder missing and autoCreate disabled",
+      target_conflict_skip: "target conflict (policy=skip)",
+      target_conflict_unresolved: "target conflict unresolved",
+      conflict_suffix: "target conflict resolved by suffix"
+    };
+    return map[reasonCode] || reasonCode || "unknown";
+  }
+  resolveMoveConflictPath(targetPath, sourcePath, policy) {
+    const normalizedTargetPath = (0, import_obsidian4.normalizePath)(targetPath);
+    const normalizedSourcePath = (0, import_obsidian4.normalizePath)(sourcePath);
+    const existing = this.app.vault.getAbstractFileByPath(normalizedTargetPath);
+    if (!existing || existing.path === normalizedSourcePath) {
+      return { ok: true, path: normalizedTargetPath, wasAdjusted: false };
+    }
+    if (policy === "skip") {
+      return { ok: false, reason: "target_conflict_skip" };
+    }
+    const slashIdx = normalizedTargetPath.lastIndexOf("/");
+    const fileName = slashIdx >= 0 ? normalizedTargetPath.slice(slashIdx + 1) : normalizedTargetPath;
+    const folderPath = slashIdx >= 0 ? normalizedTargetPath.slice(0, slashIdx) : "";
+    const dotIdx = fileName.lastIndexOf(".");
+    const hasExt = dotIdx > 0;
+    const stem = hasExt ? fileName.slice(0, dotIdx) : fileName;
+    const ext = hasExt ? fileName.slice(dotIdx) : "";
+    for (let i = 1; i <= 999; i += 1) {
+      const candidateName = `${stem} (${i})${ext}`;
+      const candidatePath = folderPath ? (0, import_obsidian4.normalizePath)(`${folderPath}/${candidateName}`) : (0, import_obsidian4.normalizePath)(candidateName);
+      const candidateExisting = this.app.vault.getAbstractFileByPath(candidatePath);
+      if (!candidateExisting || candidateExisting.path === normalizedSourcePath) {
+        return { ok: true, path: candidatePath, wasAdjusted: true };
+      }
+    }
+    return { ok: false, reason: "target_conflict_unresolved" };
+  }
+  buildMovePlanForSelection() {
+    const applyMode = this.getCurrentApplyMode();
+    const conflictPolicy = this.getCurrentMoveConflictPolicy();
+    const autoCreateTargetFolders = this.getAutoCreateTargetFolders();
+    const selectedRows = this.rows.filter((row) => this.selectedFilePaths.has(row.filePath));
+    const items = [];
+    for (const row of selectedRows) {
+      const sourcePath = (0, import_obsidian4.normalizePath)(row.filePath);
+      const sourceEntry = this.app.vault.getAbstractFileByPath(sourcePath);
+      if (!sourceEntry) {
+        items.push({ sourcePath, status: "skip", reason: "source_missing" });
+        continue;
+      }
+      if (!(sourceEntry instanceof import_obsidian4.TFile) || sourceEntry.extension !== "md") {
+        items.push({ sourcePath, status: "skip", reason: "source_not_markdown" });
+        continue;
+      }
+      const fileName = this.getFileNameFromPath(sourcePath);
+      if (!fileName) {
+        items.push({ sourcePath, status: "skip", reason: "invalid_file_name" });
+        continue;
+      }
+      const targetFolder = normalizeFolderReclassSuggestedFolder(row.suggestedFolder);
+      const targetPath = targetFolder === "(root)" ? fileName : (0, import_obsidian4.normalizePath)(`${targetFolder}/${fileName}`);
+      if (targetPath === sourcePath) {
+        items.push({ sourcePath, targetPath, status: "noop", reason: "same_path" });
+        continue;
+      }
+      if (applyMode === "metadata_only") {
+        items.push({
+          sourcePath,
+          targetPath,
+          status: "skip",
+          reason: "apply_mode_metadata_only",
+          reasonSummary: row.reasonSummary
+        });
+        continue;
+      }
+      const targetFolderPath = this.getFolderPathFromFilePath(targetPath);
+      if (targetFolderPath) {
+        const folderEntry = this.app.vault.getAbstractFileByPath(targetFolderPath);
+        if (!(folderEntry instanceof import_obsidian4.TFolder) && !autoCreateTargetFolders) {
+          items.push({
+            sourcePath,
+            targetPath,
+            status: "skip",
+            reason: "target_folder_missing",
+            reasonSummary: row.reasonSummary
+          });
+          continue;
+        }
+      }
+      const resolved = this.resolveMoveConflictPath(targetPath, sourcePath, conflictPolicy);
+      if (!resolved.ok) {
+        items.push({
+          sourcePath,
+          targetPath,
+          status: "skip",
+          reason: resolved.reason || "target_conflict_unresolved",
+          reasonSummary: row.reasonSummary
+        });
+        continue;
+      }
+      items.push({
+        sourcePath,
+        targetPath: resolved.path,
+        status: "move",
+        reason: resolved.wasAdjusted ? "conflict_suffix" : "ok",
+        reasonSummary: row.reasonSummary
+      });
+    }
+    const moveCount = items.filter((item) => item.status === "move").length;
+    const skipCount = items.filter((item) => item.status === "skip").length;
+    const noopCount = items.filter((item) => item.status === "noop").length;
+    return {
+      applyMode,
+      conflictPolicy,
+      autoCreateTargetFolders,
+      items,
+      moveCount,
+      skipCount,
+      noopCount
+    };
+  }
+  refreshMovePreview(notify) {
+    if (!this.movePreviewEl) {
+      return;
+    }
+    const plan = this.buildMovePlanForSelection();
+    this.latestMovePlan = plan;
+    this.movePreviewEl.empty();
+    this.movePreviewEl.createEl("strong", { text: "Dry-run move preview" });
+    this.movePreviewEl.createEl("div", {
+      text: `mode=${plan.applyMode} | conflictPolicy=${plan.conflictPolicy} | autoCreateTargetFolders=${plan.autoCreateTargetFolders ? "true" : "false"}`
+    });
+    this.movePreviewEl.createEl("div", {
+      text: `Selected=${plan.items.length} | move=${plan.moveCount} | skip=${plan.skipCount} | noop=${plan.noopCount}`
+    });
+    if (plan.items.length === 0) {
+      this.movePreviewEl.createEl("small", { text: "No selected rows." });
+      return;
+    }
+    const list = this.movePreviewEl.createDiv();
+    list.style.marginTop = "6px";
+    const previewItems = plan.items.slice(0, 24);
+    for (const item of previewItems) {
+      const targetText = item.targetPath ? ` -> ${item.targetPath}` : "";
+      const reasonText = item.reason && item.reason !== "ok" ? ` (${this.formatMovePlanReason(item.reason)})` : "";
+      list.createEl("div", {
+        text: `[${item.status}] ${item.sourcePath}${targetText}${reasonText}`
+      });
+    }
+    if (plan.items.length > previewItems.length) {
+      list.createEl("small", { text: `...and ${plan.items.length - previewItems.length} more` });
+    }
+    if (notify) {
+      new import_obsidian4.Notice(
+        `Dry-run: move=${plan.moveCount}, skip=${plan.skipCount}, noop=${plan.noopCount}`,
+        4e3
+      );
+    }
+  }
+  async ensureFolderPathForMove(folderPath) {
+    const normalized = (0, import_obsidian4.normalizePath)(folderPath);
+    if (!normalized) {
+      return;
+    }
+    const parts = normalized.split("/");
+    let currentPath = "";
+    for (const part of parts) {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      const existing = this.app.vault.getAbstractFileByPath(currentPath);
+      if (existing instanceof import_obsidian4.TFolder) {
+        continue;
+      }
+      if (existing instanceof import_obsidian4.TFile) {
+        throw new Error(`Cannot create folder because file exists at ${currentPath}`);
+      }
+      await this.app.vault.createFolder(currentPath);
+    }
+  }
+  async applySelectedMoves() {
+    const plan = this.buildMovePlanForSelection();
+    this.latestMovePlan = plan;
+    this.refreshMovePreview(false);
+    if (plan.applyMode === "metadata_only") {
+      new import_obsidian4.Notice(
+        "Apply mode is metadata_only. Move flow is dry-run only.",
+        5e3
+      );
+      return { applied: false, closed: false };
+    }
+    if (plan.moveCount <= 0) {
+      new import_obsidian4.Notice(
+        `No movable files in dry-run (skip=${plan.skipCount}, noop=${plan.noopCount}).`,
+        5e3
+      );
+      return { applied: false, closed: false };
+    }
+    const approved = typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm(`Apply folder moves now? move=${plan.moveCount}, skip=${plan.skipCount}, noop=${plan.noopCount}`) : true;
+    if (!approved) {
+      return { applied: false, closed: false };
+    }
+    let moved = 0;
+    let skipped = 0;
+    const errors = [];
+    for (const item of plan.items) {
+      if (item.status !== "move") {
+        skipped += 1;
+        continue;
+      }
+      try {
+        const source = this.app.vault.getAbstractFileByPath(item.sourcePath);
+        if (!(source instanceof import_obsidian4.TFile) || source.extension !== "md") {
+          skipped += 1;
+          continue;
+        }
+        const resolvedConflict = this.resolveMoveConflictPath(
+          item.targetPath,
+          source.path,
+          plan.conflictPolicy
+        );
+        if (!resolvedConflict.ok) {
+          skipped += 1;
+          continue;
+        }
+        const finalTargetPath = resolvedConflict.path;
+        const folderPath = this.getFolderPathFromFilePath(finalTargetPath);
+        if (folderPath) {
+          const folderEntry = this.app.vault.getAbstractFileByPath(folderPath);
+          if (!(folderEntry instanceof import_obsidian4.TFolder)) {
+            if (!plan.autoCreateTargetFolders) {
+              skipped += 1;
+              continue;
+            }
+            await this.ensureFolderPathForMove(folderPath);
+          }
+        }
+        await this.app.fileManager.renameFile(source, finalTargetPath);
+        moved += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown folder move error";
+        errors.push(`${item.sourcePath} -> ${item.targetPath}: ${message}`);
+      }
+    }
+    if (errors.length > 0 && typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[Omni-Forge] Folder move apply errors", errors);
+    }
+    new import_obsidian4.Notice(
+      `Folder move apply complete: moved=${moved}, skipped=${skipped}, errors=${errors.length}`,
+      6e3
+    );
+    return { applied: moved > 0, closed: true };
+  }
+  buildFolderIntelligenceTemplateMarkdown(rows, diagnosis) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const safeDiagnosis = diagnosis && typeof diagnosis === "object" ? diagnosis : {
+      cohesionScore: 0,
+      possibleOutlierCount: 0
+    };
+    const clusterCounts = /* @__PURE__ */ new Map();
+    const externalFolderCounts = /* @__PURE__ */ new Map();
+    for (const row of safeRows) {
+      const suggested = row && typeof row.suggestedFolder === "string" && row.suggestedFolder.trim() ? row.suggestedFolder.trim() : "(unknown)";
+      const current = row && typeof row.currentFolder === "string" && row.currentFolder.trim() ? row.currentFolder.trim() : "(unknown)";
+      clusterCounts.set(suggested, (clusterCounts.get(suggested) || 0) + 1);
+      if (suggested !== current) {
+        externalFolderCounts.set(suggested, (externalFolderCounts.get(suggested) || 0) + 1);
+      }
+    }
+    const summarizeMap = (map) => {
+      if (map.size === 0) {
+        return "(none)";
+      }
+      return [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 5).map(([folder, count]) => `${folder} (${count})`).join(", ");
+    };
+    const recommendations = safeRows.filter((row) => row && (row.currentFolder !== row.suggestedFolder || row.needsReview === true)).slice(0, 30);
+    const lines = [
+      "## 📂 폴더 진단",
+      "",
+      `- 응집도 점수: ${Number.isFinite(safeDiagnosis.cohesionScore) ? safeDiagnosis.cohesionScore : 0}/100`,
+      `- 내부 클러스터: ${summarizeMap(clusterCounts)}`,
+      `- 외부 후보 폴더: ${summarizeMap(externalFolderCounts)}`,
+      `- 고립 노트 후보: ${Number.isFinite(safeDiagnosis.possibleOutlierCount) ? safeDiagnosis.possibleOutlierCount : 0}개`,
+      "",
+      "## 🔄 이동 추천 (검증 필요)",
+      ""
+    ];
+    if (recommendations.length === 0) {
+      lines.push("- (추천 항목 없음)");
+      return lines.join("\n");
+    }
+    for (const row of recommendations) {
+      const notePath = typeof row.filePath === "string" ? row.filePath.trim() : "";
+      const noteLink = notePath ? `[[${notePath.replace(/\.md$/i, "")}]]` : "[[unknown-note]]";
+      const target = typeof row.suggestedFolder === "string" && row.suggestedFolder.trim() ? row.suggestedFolder.trim() : "(unknown)";
+      const reasonSummary = typeof row.reasonSummary === "string" && row.reasonSummary.trim() ? row.reasonSummary.trim() : "규칙 기반 분류 결과";
+      const evidence = Array.isArray(row.evidence) && row.evidence.length > 0 && typeof row.evidence[0] === "string" ? row.evidence[0].trim() : "규칙 기반 분류 결과";
+      const confidence = typeof row.confidence === "string" && row.confidence.trim() ? row.confidence.trim() : row.needsReview ? "low" : "high";
+      lines.push(`- ${noteLink} → ${target} (사유: ${reasonSummary} / 근거: ${evidence} / 신뢰도: ${confidence})`);
+    }
+    return lines.join("\n");
   }
   buildFolderDiagnosisSummary(rows) {
     const safeRows = Array.isArray(rows) ? rows : [];
@@ -2857,7 +3438,8 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
       if (!filePath) {
         continue;
       }
-      const needsReview = item.needsReview === true;
+      const needsReview = item.needsReview === true || item.reviewNeeded === true || item.verifyRequired === true;
+      const evidenceRaw = Array.isArray(item.evidence) ? item.evidence : Array.isArray(item.reasonEvidence) ? item.reasonEvidence : Array.isArray(item.evidenceLines) ? item.evidenceLines : [];
       const candidate = {
         filePath,
         currentFolder: normalizeFolderReclassCurrentFolder(item.currentFolder, filePath),
@@ -2866,8 +3448,15 @@ var FolderReclassPreviewModal = class extends import_obsidian4.Modal {
         ),
         score: Number.isFinite(item.score) ? Number(item.score) : 0,
         needsReview,
-        confidence: normalizeFolderReclassConfidence(item.confidence, needsReview),
-        evidence: normalizeFolderReclassEvidenceLines(item.evidence)
+        reasonSummary: normalizeFolderReclassReasonSummary(
+          typeof item.reasonSummary === "string" && item.reasonSummary.trim() ? item.reasonSummary : typeof item.reason === "string" && item.reason.trim() ? item.reason : item.recommendationReason,
+          evidenceRaw
+        ),
+        confidence: normalizeFolderReclassConfidence(
+          typeof item.confidence === "string" && item.confidence.trim() ? item.confidence : typeof item.confidenceLabel === "string" && item.confidenceLabel.trim() ? item.confidenceLabel : item.confidenceLevel,
+          needsReview
+        ),
+        evidence: normalizeFolderReclassEvidenceLines(evidenceRaw)
       };
       const current = bestByFilePath.get(filePath);
       if (!current || this.isBetterCandidateForFile(candidate, current)) {
@@ -4798,6 +5387,31 @@ function normalizeFolderReclassConfidence(value, needsReview) {
   }
   return review ? "low" : "high";
 }
+function normalizeFolderReclassReasonSummary(value, evidence) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (Array.isArray(evidence)) {
+    for (const line of evidence) {
+      if (typeof line === "string" && line.trim()) {
+        return line.trim();
+      }
+    }
+  }
+  return "Rule-based folder recommendation.";
+}
+function normalizeFolderReclassApplyMode(value) {
+  if (value === "metadata_only" || value === "move_only" || value === "metadata_and_move") {
+    return value;
+  }
+  return DEFAULT_SETTINGS.applyMode;
+}
+function normalizeFolderReclassMoveConflictPolicy(value) {
+  if (value === "suffix" || value === "skip") {
+    return value;
+  }
+  return DEFAULT_SETTINGS.moveConflictPolicy;
+}
 function normalizeFolderReclassSuggestedFolder(value) {
   if (typeof value !== "string") {
     return "Inbox";
@@ -4896,6 +5510,18 @@ function buildFolderReclassEvidence(rule) {
     "Manual review recommended before apply."
   ];
 }
+function buildFolderReclassReasonSummary(rule) {
+  if (rule === "meetings") {
+    return 'Matched meeting intent keywords and preferred "Meetings".';
+  }
+  if (rule === "drafts") {
+    return 'Matched draft/work-in-progress keywords and routed to "Drafts".';
+  }
+  if (rule === "projects") {
+    return 'Matched project planning keywords and routed to "Projects".';
+  }
+  return 'No dominant keyword matched; fallback recommendation is "Inbox".';
+}
 function buildFolderReclassSuggestion(candidate, rule) {
   let suggestedFolder = "Inbox";
   let score = 55;
@@ -4917,14 +5543,19 @@ function buildFolderReclassSuggestion(candidate, rule) {
     needsReview = false;
     confidence = "high";
   }
+  const evidence = normalizeFolderReclassEvidenceLines(buildFolderReclassEvidence(rule));
   return {
     filePath: candidate.filePath,
     currentFolder: normalizeFolderReclassCurrentFolder(void 0, candidate.filePath),
     suggestedFolder: normalizeFolderReclassSuggestedFolder(suggestedFolder),
     score,
     needsReview,
+    reasonSummary: normalizeFolderReclassReasonSummary(
+      buildFolderReclassReasonSummary(rule),
+      evidence
+    ),
     confidence: normalizeFolderReclassConfidence(confidence, needsReview),
-    evidence: normalizeFolderReclassEvidenceLines(buildFolderReclassEvidence(rule))
+    evidence
   };
 }
 function recommendFolderReclass(candidates, ctx) {
@@ -4975,15 +5606,25 @@ function createFolderReclassModel(suggestions) {
     if (!filePath) {
       continue;
     }
-    const needsReview = item.needsReview === true;
+    const needsReview = item.needsReview === true || item.reviewNeeded === true || item.verifyRequired === true;
+    const evidenceRaw = Array.isArray(item.evidence) ? item.evidence : Array.isArray(item.reasonEvidence) ? item.reasonEvidence : Array.isArray(item.evidenceLines) ? item.evidenceLines : [];
     const row = {
       filePath,
       currentFolder: normalizeFolderReclassCurrentFolder(item.currentFolder, filePath),
-      suggestedFolder: normalizeFolderReclassSuggestedFolder(item.suggestedFolder),
+      suggestedFolder: normalizeFolderReclassSuggestedFolder(
+        typeof item.suggestedFolder === "string" && item.suggestedFolder.trim() ? item.suggestedFolder : item.targetFolder
+      ),
       score: Number.isFinite(item.score) ? Math.max(0, Math.min(100, Math.round(Number(item.score)))) : 0,
       needsReview,
-      confidence: normalizeFolderReclassConfidence(item.confidence, needsReview),
-      evidence: normalizeFolderReclassEvidenceLines(item.evidence)
+      reasonSummary: normalizeFolderReclassReasonSummary(
+        typeof item.reasonSummary === "string" && item.reasonSummary.trim() ? item.reasonSummary : typeof item.reason === "string" && item.reason.trim() ? item.reason : item.recommendationReason,
+        evidenceRaw
+      ),
+      confidence: normalizeFolderReclassConfidence(
+        typeof item.confidence === "string" && item.confidence.trim() ? item.confidence : typeof item.confidenceLabel === "string" && item.confidenceLabel.trim() ? item.confidenceLabel : item.confidenceLevel,
+        needsReview
+      ),
+      evidence: normalizeFolderReclassEvidenceLines(evidenceRaw)
     };
     const current = byFile.get(filePath);
     if (!current || isBetterFolderReclassSuggestion(row, current)) {
@@ -5371,6 +6012,61 @@ var VaultTextInputModal = class extends import_obsidian4.Modal {
     }
   }
 };
+var HwpIngestChoiceModal = class extends import_obsidian4.Modal {
+  constructor(app, fileName, remainingCount, resolveChoice) {
+    super(app);
+    this.fileName = fileName;
+    this.remainingCount = remainingCount;
+    this.resolveChoice = resolveChoice;
+    this.applyAll = false;
+    this.resolved = false;
+  }
+  onOpen() {
+    const { contentEl, titleEl } = this;
+    titleEl.setText("HWP 업로드 처리 방식 선택");
+    contentEl.empty();
+    contentEl.createEl("p", {
+      text: `HWP는 soffice 감지 시 자동 변환(PoC)을 시도하며 실패 시 가이드로 폴백합니다. HWPX는 XML 1차 추출을 우선 시도합니다: ${this.fileName}`
+    });
+    contentEl.createEl("p", {
+      text: "원하는 진행 방식을 선택하세요."
+    });
+    if (this.remainingCount > 0) {
+      new import_obsidian4.Setting(contentEl).setName(`남은 HWP ${this.remainingCount}개에도 동일 적용`).addToggle((toggle) => {
+        toggle.setValue(false).onChange((value) => {
+          this.applyAll = value;
+        });
+      });
+    }
+    new import_obsidian4.Setting(contentEl).addButton((button) => button.setButtonText("A. PDF까지만 변환(권장)").setCta().onClick(() => {
+      this.finish("pdf_only");
+    }));
+    new import_obsidian4.Setting(contentEl).addButton((button) => button.setButtonText("B. PDF 변환 후 MD까지 진행").onClick(() => {
+      this.finish("pdf_to_md");
+    }));
+    new import_obsidian4.Setting(contentEl).addButton((button) => button.setButtonText("C. 취소").onClick(() => {
+      this.finish("cancel");
+    }));
+  }
+  onClose() {
+    if (!this.resolved) {
+      this.finish("cancel");
+    }
+  }
+  finish(choice) {
+    if (this.resolved) {
+      return;
+    }
+    this.resolved = true;
+    this.resolveChoice({ choice, applyAll: this.applyAll });
+    this.close();
+  }
+  static open(app, fileName, remainingCount = 0) {
+    return new Promise((resolve2) => {
+      new HwpIngestChoiceModal(app, fileName, remainingCount, resolve2).open();
+    });
+  }
+};
 var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -5401,8 +6097,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     this.fileOpenEventBound = false;
     this.lastKnownOpenMarkdownPath = null;
     this.commandAvailabilityCache = /* @__PURE__ */ new Map();
-    this.parserHwpLastDecisionSummary = "미선택";
-    this.parserHwpBatchPolicySummary = "OFF(파일별 선택)";
+    this.parserStatusPanelEl = null;
+    this.hwpChoiceApplyAll = null;
+    this.hwpChoiceApplyAllEnabled = false;
     this.plugin = plugin;
   }
   getViewType() {
@@ -5441,8 +6138,6 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     if (initialOpen instanceof import_obsidian4.TFile) {
       this.lastKnownOpenMarkdownPath = initialOpen.path;
     }
-    this.parserHwpLastDecisionSummary = this.plugin.parserHwpLastDecisionSummary || "미선택";
-    this.parserHwpBatchPolicySummary = this.plugin.parserHwpBatchPolicySummary || "OFF(파일별 선택)";
     await this.refreshFromSettingsForQa();
     this.refreshThreadMeta();
   }
@@ -5554,6 +6249,72 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         return this.localizeChatLabel("Local Flash", "로컬 Flash");
     }
   }
+  refreshParserStatusPanel() {
+    if (!this.parserStatusPanelEl) {
+      return;
+    }
+    const last = this.plugin.getParserInboxLastEventForQa();
+    const status = this.plugin.getParserInboxStatusForQa();
+    const watchOn = this.plugin.settings.qaParserInboxWatchEnabled ? "ON" : "OFF";
+    const parserProfile = this.plugin.getParserModeProfileForQa();
+    const total = Math.max(0, status.total || 0);
+    const processed = Math.max(0, status.processed || 0);
+    const progressPct = total > 0 ? Math.min(100, Math.round(processed / total * 100)) : 0;
+    const elapsedLabel = this.plugin.formatParserEtaMsForQa(status.elapsedMs || 0);
+    const etaLabel = this.plugin.formatParserEtaMsForQa(status.etaMs || 0);
+    const stageMap = {
+      idle: "대기중",
+      scanning: "스캔중",
+      queueing: "대기열 등록 중",
+      converting: "변환중",
+      writing: "결과 저장 중",
+      skip: "스킵",
+      processing: "처리중",
+      done: "완료"
+    };
+    const stageLabel = stageMap[status.stage] || status.stage || "대기중";
+    const messageText = typeof last.message === "string" ? last.message : "";
+    const diagMatch = /^\[([^\]]+)\]/.exec(messageText);
+    this.parserStatusPanelEl.empty();
+    this.parserStatusPanelEl.createDiv({
+      cls: "omni-forge-parser-status-title",
+      text: `Parser inbox · watch ${watchOn}`
+    });
+    const modeRow = this.parserStatusPanelEl.createDiv({ cls: "omni-forge-parser-mode-row" });
+    const modePill = modeRow.createSpan({
+      cls: `omni-forge-status-pill omni-forge-status-pill-parser ${parserProfile.mode === "detailed" ? "is-detailed" : "is-fast"}`,
+      text: parserProfile.mode === "detailed" ? "Detailed · OCR" : "Fast · Speed"
+    });
+    modePill.setAttr(
+      "title",
+      this.localizeChatLabel(
+        parserProfile.summary,
+        parserProfile.mode === "detailed" ? `Detailed 모드: OCR 품질 우선(최대 ${LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED}p)` : `Fast 모드: 속도 우선(최대 ${LOCAL_QA_PDF_OCR_MAX_PAGES_FAST}p)`
+      )
+    );
+    modeRow.createSpan({
+      cls: "omni-forge-parser-status-hint",
+      text: this.localizeChatLabel(
+        parserProfile.recommendation,
+        parserProfile.mode === "detailed" ? "손글씨/깨진 텍스트, 출처 정확도 우선 작업에 권장" : "일상 사용 기본값 권장, 품질 저하 시 OCR 재파싱/상세 모드 전환"
+      )
+    });
+    this.parserStatusPanelEl.createDiv({ text: `진행률: ${processed}/${total} (${progressPct}%)` });
+    this.parserStatusPanelEl.createDiv({ text: `소요시간: ${elapsedLabel}` });
+    this.parserStatusPanelEl.createDiv({ text: `ETA: ${etaLabel}` });
+    this.parserStatusPanelEl.createDiv({ text: `큐 길이: ${Math.max(0, status.queueLength || 0)}` });
+    this.parserStatusPanelEl.createDiv({ text: `현재 단계: ${stageLabel}` });
+    this.parserStatusPanelEl.createDiv({ text: `최근 파일: ${last.fileName}` });
+    this.parserStatusPanelEl.createDiv({ text: `처리 결과: ${last.result} (success:${status.success || 0} / skip:${status.skip || 0} / error:${status.error || 0})` });
+    if (diagMatch && diagMatch[1]) {
+      this.parserStatusPanelEl.createDiv({ cls: "omni-forge-parser-status-hint", text: `진단: ${diagMatch[1]}` });
+    }
+    this.parserStatusPanelEl.createDiv({ text: `메시지: ${messageText}` });
+    if (this.hwpChoiceApplyAllEnabled && this.hwpChoiceApplyAll) {
+      const hwpPolicyLabel = this.hwpChoiceApplyAll === "pdf_only" ? "PDF만" : this.hwpChoiceApplyAll === "pdf_to_md" ? "PDF→MD" : "취소";
+      this.parserStatusPanelEl.createDiv({ text: `HWP 일괄 정책: ${hwpPolicyLabel}` });
+    }
+  }
   render() {
     const { contentEl } = this;
     contentEl.empty();
@@ -5582,6 +6343,15 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       t("Select notes", "노트 선택"),
       async () => {
         await this.plugin.openSelectionForQa();
+        await this.refreshScopeLabel();
+      }
+    );
+    this.createHeaderIconButton(
+      actionRow,
+      "play",
+      t("Analyze selected notes", "선택 노트 즉시 분석"),
+      async () => {
+        await this.plugin.runAnalysis();
         await this.refreshScopeLabel();
       }
     );
@@ -5668,6 +6438,138 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     parserDropButton.addEventListener("drop", (event) => {
       void this.handleParserDrop(event, parserDropButton);
     });
+    const parserQuickWrap = root.createDiv({ cls: "omni-forge-parser-quick-wrap" });
+    const parserQuickHeader = parserQuickWrap.createDiv({ cls: "omni-forge-parser-quick-header" });
+    parserQuickHeader.createDiv({
+      cls: "omni-forge-parser-quick-title",
+      text: t("Parser inbox controls", "파서 inbox 제어")
+    });
+    const parserQuickToggleButton = parserQuickHeader.createEl("button", { text: "" });
+    parserQuickToggleButton.addClass("omni-forge-chat-btn");
+    parserQuickToggleButton.addClass("omni-forge-chat-btn-mini");
+    let parserQuickCollapsed = this.plugin.settings.qaParserInboxCollapsedDefault !== false;
+    const applyParserQuickCollapsed = (collapsed, persist = false) => {
+      parserQuickCollapsed = collapsed;
+      parserQuickToggleButton.textContent = collapsed ? t("Expand", "펼치기") : t("Collapse", "접기");
+      parserQuickToggleButton.setAttr("aria-expanded", collapsed ? "false" : "true");
+      const children = Array.from(parserQuickWrap.children);
+      for (const child of children) {
+        if (child === parserQuickHeader) {
+          continue;
+        }
+        child.style.display = collapsed ? "none" : "";
+      }
+      if (persist) {
+        this.plugin.settings.qaParserInboxCollapsedDefault = collapsed;
+        void this.plugin.saveSettings();
+      }
+    };
+    parserQuickToggleButton.onclick = async () => {
+      applyParserQuickCollapsed(!parserQuickCollapsed, true);
+    };
+    parserQuickWrap.createDiv({
+      cls: "omni-forge-parser-status-hint omni-forge-parser-quick-subtitle",
+      text: t(
+        "Keep Fast mode for speed. Use OCR re-parse when handwritten/garbled Korean text is suspected.",
+        "속도는 Fast 모드 유지, 손글씨/깨진 한글이 의심되면 OCR 재파싱을 사용하세요."
+      )
+    });
+    const parserProfileQuick = this.plugin.getParserModeProfileForQa();
+    const parserSignalRow = parserQuickWrap.createDiv({ cls: "omni-forge-parser-mode-row" });
+    const parserQuickPill = parserSignalRow.createSpan({
+      cls: `omni-forge-status-pill omni-forge-status-pill-parser ${parserProfileQuick.mode === "detailed" ? "is-detailed" : "is-fast"}`,
+      text: parserProfileQuick.mode === "detailed" ? t("Detailed mode", "상세 모드") : t("Fast mode", "빠른 모드")
+    });
+    parserQuickPill.setAttr(
+      "title",
+      t(
+        parserProfileQuick.summary,
+        parserProfileQuick.mode === "detailed" ? `Detailed 모드: OCR 품질 우선(최대 ${LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED}p)` : `Fast 모드: 속도 우선(최대 ${LOCAL_QA_PDF_OCR_MAX_PAGES_FAST}p)`
+      )
+    );
+    parserSignalRow.createSpan({
+      cls: "omni-forge-parser-status-hint",
+      text: t(
+        parserProfileQuick.recommendation,
+        parserProfileQuick.mode === "detailed" ? "출처 정확도 우선/손글씨 인식 작업에 권장" : "일상 기본값 권장, 필요 시 OCR 재파싱/상세 모드 전환"
+      )
+    });
+    const parserQuickRow = parserQuickWrap.createDiv({ cls: "omni-forge-chat-actions omni-forge-chat-actions-compact" });
+    const openInboxButton = parserQuickRow.createEl("button", { text: t("Open inbox", "inbox 열기") });
+    openInboxButton.addClass("omni-forge-chat-btn");
+    openInboxButton.onclick = async () => {
+      await this.plugin.openParserInboxFolderForQa();
+      this.refreshParserStatusPanel();
+    };
+    const scanNowButton = parserQuickRow.createEl("button", { text: t("Scan now", "즉시 스캔") });
+    scanNowButton.addClass("omni-forge-chat-btn");
+    scanNowButton.onclick = async () => {
+      await this.plugin.scanParserInboxNowForQa();
+      this.refreshParserStatusPanel();
+    };
+    const reparseOcrButton = parserQuickRow.createEl("button", { text: t("OCR re-parse", "OCR 재파싱") });
+    reparseOcrButton.addClass("omni-forge-chat-btn");
+    reparseOcrButton.onclick = async () => {
+      await this.plugin.scanParserInboxNowForQa({ forceOcr: true });
+      this.refreshParserStatusPanel();
+    };
+    const formatsButton = parserQuickRow.createEl("button", { text: t("Formats", "지원 포맷") });
+    formatsButton.addClass("omni-forge-chat-btn");
+    formatsButton.onclick = () => {
+      new import_obsidian4.Notice(`Parser formats: ${this.plugin.getParserSupportedFormatsForQa().join(", ")}`, 7e3);
+    };
+    const toggleWatchButton = parserQuickRow.createEl("button");
+    toggleWatchButton.addClass("omni-forge-chat-btn");
+    const updateWatchButtonLabel = () => {
+      const text = this.plugin.settings.qaParserInboxWatchEnabled ? t("Watch ON", "watch ON") : t("Watch OFF", "watch OFF");
+      toggleWatchButton.textContent = text;
+    };
+    updateWatchButtonLabel();
+    toggleWatchButton.onclick = async () => {
+      const next = !this.plugin.settings.qaParserInboxWatchEnabled;
+      await this.plugin.setParserInboxWatchEnabledForQa(next);
+      new import_obsidian4.Notice(`Parser inbox watch: ${next ? "ON" : "OFF"}`, 5e3);
+      updateWatchButtonLabel();
+      this.refreshParserStatusPanel();
+    };
+    this.parserStatusPanelEl = parserQuickWrap.createDiv({ cls: "omni-forge-parser-status-panel" });
+    this.refreshParserStatusPanel();
+    const graphQuickRow = parserQuickWrap.createDiv({ cls: "omni-forge-chat-actions omni-forge-chat-actions-compact" });
+    const graphAnalyzeButton = graphQuickRow.createEl("button", { text: t("Graph analyze", "그래프 분석") });
+    graphAnalyzeButton.addClass("omni-forge-chat-btn");
+    graphAnalyzeButton.onclick = async () => {
+      await this.plugin.runAnalysis();
+      await this.refreshScopeLabel();
+    };
+    const graphApplyButton = graphQuickRow.createEl("button", { text: t("Graph apply", "그래프 반영") });
+    graphApplyButton.addClass("omni-forge-chat-btn");
+    graphApplyButton.onclick = async () => {
+      await this.plugin.applyLinkedEdgesForGraphView();
+      await this.refreshScopeLabel();
+    };
+    const graphHelpButton = graphQuickRow.createEl("button", { text: t("Mode guide", "모드 안내") });
+    graphHelpButton.addClass("omni-forge-chat-btn");
+    graphHelpButton.onclick = () => {
+      new import_obsidian4.Notice(
+        t(
+          "Mode guide: Conversation mode controls agent routing (Ask/Plan/Agent/Orchestration). Parser mode controls attachment extraction (Fast vs Detailed OCR). Recommended default: Ask + Fast. For multi-step planning: Orchestration + Detailed.",
+          "모드 안내: 대화 모드는 에이전트 라우팅(Ask/Plan/Agent/Orchestration)을, 파서 모드는 첨부 추출(Fast vs Detailed OCR)을 제어합니다. 기본 추천은 Ask + Fast, 다단계 작업은 Orchestration + Detailed 입니다."
+        ),
+        9e3
+      );
+    };
+    const hwpGuideRow = parserQuickWrap.createDiv({ cls: "omni-forge-chat-actions omni-forge-chat-actions-compact omni-forge-parser-hwp-row" });
+    const hwpGuide = hwpGuideRow.createDiv({
+      cls: "omni-forge-parser-status-hint",
+      text: "HWP는 soffice 자동변환(PoC) 가능 시 PDF parser chain을 시도하고, 실패 시 기존 가이드로 폴백합니다(HWPX는 XML 1차 추출 우선)."
+    });
+    const hwpHelpButton = hwpGuideRow.createEl("button", { text: t("HWP guide", "HWP 안내") });
+    hwpHelpButton.addClass("omni-forge-chat-btn");
+    hwpHelpButton.onclick = () => {
+      new import_obsidian4.Notice("HWP는 soffice 자동변환(PoC)을 먼저 시도하고, 미탐지/실패 시 PDF/DOCX 수동 변환 안내로 폴백합니다.", 7e3);
+    };
+    void hwpGuide;
+    applyParserQuickCollapsed(parserQuickCollapsed, false);
     const newThreadButton = actionRow.createEl("button", { text: t("New thread", "새 스레드") });
     newThreadButton.addClass("omni-forge-chat-btn");
     newThreadButton.addClass("omni-forge-chat-hidden-action");
@@ -5679,6 +6581,15 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     selectButton.addClass("omni-forge-chat-hidden-action");
     selectButton.onclick = async () => {
       await this.plugin.openSelectionForQa();
+      await this.refreshScopeLabel();
+    };
+    const analyzeSelectionButton = actionRow.createEl("button", {
+      text: t("Analyze selected notes", "선택 노트 즉시 분석")
+    });
+    analyzeSelectionButton.addClass("omni-forge-chat-btn");
+    analyzeSelectionButton.addClass("omni-forge-chat-hidden-action");
+    analyzeSelectionButton.onclick = async () => {
+      await this.plugin.runAnalysis();
       await this.refreshScopeLabel();
     };
     const resetSelectionButton = actionRow.createEl("button", {
@@ -5715,15 +6626,18 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     };
     const optionsDetails = root.createEl("details", { cls: "omni-forge-chat-collapsible omni-forge-chat-options-group" });
     optionsDetails.open = false;
-    optionsDetails.createEl("summary", { text: t("Options", "옵션 도구") });
+    optionsDetails.createEl("summary", { text: t("Workspace options", "작업 옵션") });
     const optionsBody = optionsDetails.createDiv({ cls: "omni-forge-chat-options-group-body" });
     const utilityDetails = optionsBody.createEl("details", { cls: "omni-forge-chat-collapsible" });
     utilityDetails.open = true;
-    utilityDetails.createEl("summary", { text: t("Additional tools", "추가 도구") });
+    utilityDetails.createEl("summary", { text: t("Maintenance tools", "유지보수 도구") });
     utilityDetails.createEl("small", {
-      text: "Cleanup keys\uB294 AI \uBD84\uC11D \uC5C6\uC774 frontmatter \uD0A4\uB9CC \uC815\uB9AC\uD558\uBBC0\uB85C Analyze/Apply\uBCF4\uB2E4 \uC77C\uBC18\uC801\uC73C\uB85C \uBE60\uB985\uB2C8\uB2E4."
+      text: t(
+        "Cleanup Keys edits frontmatter keys only, so it is usually faster than full Analyze/Apply.",
+        "Cleanup Keys는 frontmatter 키만 정리하므로 전체 Analyze/Apply보다 보통 더 빠릅니다."
+      )
     });
-    const utilityRow = utilityDetails.createDiv({ cls: "omni-forge-chat-actions" });
+    const utilityRow = utilityDetails.createDiv({ cls: "omni-forge-chat-actions omni-forge-chat-actions-compact" });
     const cleanupPickerButton = utilityRow.createEl("button", { text: t("Cleanup keys", "정리 키") });
     cleanupPickerButton.addClass("omni-forge-chat-btn");
     cleanupPickerButton.onclick = async () => {
@@ -6016,6 +6930,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     await this.refreshScopeLabel();
     await this.refreshActiveFileStatus();
     this.refreshThreadMeta();
+    this.refreshParserStatusPanel();
   }
   refreshRoleOptions() {
     if (!this.roleSelect) {
@@ -6087,6 +7002,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const presetLabel = this.plugin.getQaPresetProfileLabelForQa();
     const modelFamily = this.plugin.getQaChatModelFamilyForQa();
     const profile = this.plugin.getQaChatModelProfileForQa();
+    const parserProfile = this.plugin.getParserModeProfileForQa();
+    const modelHealth = this.plugin.getQaLocalModelValidationForQa(this.plugin.getQaRolePresetForQa());
     if (this.headerTitleEl) {
       this.headerTitleEl.setText(
         modelFamily === "cloud" ? this.localizeChatLabel("Cloud Chat", "클라우드 채팅") : this.localizeChatLabel("Local Ollama", "로컬 Ollama")
@@ -6103,11 +7020,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     if (this.modelPresetHintEl) {
       this.modelPresetHintEl.setText(
-        `${this.localizeChatLabel("Source", "소스")}=${modelFamily === "cloud" ? this.localizeChatLabel("Cloud", "클라우드") : this.localizeChatLabel("Local", "로컬")} | ${this.localizeChatLabel("Profile", "프로필")}=${this.buildLocalizedChatProfileLabel(profile)} | Preset=${presetLabel} | convo=${this.plugin.getQaConversationModeLabelForQa()} | pipeline=${getQaPipelinePresetLabel(this.plugin.getQaPipelinePresetForQa())}`
+        `${this.localizeChatLabel("Source", "소스")}=${modelFamily === "cloud" ? this.localizeChatLabel("Cloud", "클라우드") : this.localizeChatLabel("Local", "로컬")} | ${this.localizeChatLabel("Profile", "프로필")}=${this.buildLocalizedChatProfileLabel(profile)} | Preset=${presetLabel} | convo=${this.plugin.getQaConversationModeLabelForQa()} | parser=${parserProfile.mode}(${parserProfile.focus}) | pipeline=${getQaPipelinePresetLabel(this.plugin.getQaPipelinePresetForQa())}`
       );
     }
     if (this.modelLayoutSummaryEl) {
       const lines = [
+        `model-check: ${modelHealth.summary}`,
         `ask(text): ${this.plugin.getQaModelLabelForQa("ask")}`,
         `ask(vision): ${this.plugin.getQaModelLabelForQa("ask_vision")}`,
         `image: ${this.plugin.getQaModelLabelForQa("image_generator")}`,
@@ -6275,64 +7193,147 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const lower = ext.toLowerCase();
     return lower === "hwp" || lower === "hwpx";
   }
-  describeParserHwpDecision(mode) {
-    switch (mode) {
-      case "pdf_only":
-        return "A: PDF까지만(권장)";
-      case "pdf_to_md":
-        return "B: PDF 변환 후 MD까지";
-      case "cancel":
-        return "C: 취소";
-      default:
-        return "미선택";
+  isHwpxExt(ext) {
+    return ext.toLowerCase() === "hwpx";
+  }
+  async promptHwpIngestChoice(fileName, remainingCount = 0) {
+    if (this.hwpChoiceApplyAllEnabled && this.hwpChoiceApplyAll) {
+      return this.hwpChoiceApplyAll;
+    }
+    const decision = await HwpIngestChoiceModal.open(this.app, fileName, remainingCount);
+    if (decision.applyAll) {
+      this.hwpChoiceApplyAllEnabled = true;
+      this.hwpChoiceApplyAll = decision.choice;
+    }
+    return decision.choice;
+  }
+  reportHwpChoiceToParserStatus(fileName, choice, options = {}) {
+    const choiceLabel = choice === "pdf_only" ? "PDF만 변환" : choice === "pdf_to_md" ? "PDF→MD" : "취소";
+    const fallbackResult = choice === "cancel" ? "skip" : "guided";
+    const result = typeof options.result === "string" && options.result.trim() ? options.result.trim() : fallbackResult;
+    const statusMeta = typeof options.statusMeta === "string" && options.statusMeta.trim() ? ` | ${options.statusMeta.trim()}` : "";
+    const message = `HWP/HWPX 사용자 선택: ${choiceLabel} | 결과: ${result}${statusMeta}`;
+    this.plugin.setParserInboxLastEvent({
+      fileName,
+      result,
+      message
+    });
+    if (typeof console !== "undefined" && typeof console.info === "function") {
+      console.info(`[Omni-Forge][parser][hwp-choice] ${fileName} -> ${choiceLabel} (${result}${statusMeta})`);
     }
   }
-  describeParserHwpBatchPolicy(mode) {
-    return mode ? `ON(${this.describeParserHwpDecision(mode)})` : "OFF(파일별 선택)";
+  normalizeHwpxExtractedText(raw) {
+    const withoutTags = raw.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">");
+    return withoutTags.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
   }
-  syncParserHwpStatus(decisionMode, batchMode) {
-    this.parserHwpLastDecisionSummary = this.describeParserHwpDecision(decisionMode);
-    this.parserHwpBatchPolicySummary = this.describeParserHwpBatchPolicy(batchMode);
-    if (typeof this.plugin.setParserHwpIngestStatusForQa === "function") {
-      this.plugin.setParserHwpIngestStatusForQa(
-        this.parserHwpLastDecisionSummary,
-        this.parserHwpBatchPolicySummary
-      );
+  async tryExtractHwpxText(binary, originalFileName) {
+    const tmpRoot = await nodeFs.promises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "omni-forge-hwpx-"));
+    const archivePath = nodePath.join(tmpRoot, this.sanitizeIngestFileName(originalFileName || "document.hwpx", "document", "hwpx"));
+    try {
+      await nodeFs.promises.writeFile(archivePath, Buffer.from(binary));
+      const listResult = await execAsync(`unzip -Z1 ${this.shellQuoteArg(archivePath)}`, { timeout: 2e4, maxBuffer: 4 * 1024 * 1024 });
+      const sectionFiles = String(listResult.stdout || "").split(/\r?\n/).map((line) => line.trim()).filter((line) => /^Contents\/section\d+\.xml$/i.test(line)).sort((a, b) => a.localeCompare(b, "en"));
+      if (sectionFiles.length === 0) {
+        return "";
+      }
+      const chunks = [];
+      for (const section of sectionFiles.slice(0, 60)) {
+        try {
+          const xmlResult = await execAsync(`unzip -p ${this.shellQuoteArg(archivePath)} ${this.shellQuoteArg(section)}`, {
+            timeout: 2e4,
+            maxBuffer: 8 * 1024 * 1024
+          });
+          const normalized = this.normalizeHwpxExtractedText(String(xmlResult.stdout || ""));
+          if (normalized) {
+            chunks.push(normalized);
+          }
+        } catch (e) {
+        }
+      }
+      return chunks.join("\n\n").trim();
+    } catch (e) {
+      return "";
+    } finally {
+      try {
+        await nodeFs.promises.rm(tmpRoot, { recursive: true, force: true });
+      } catch (e) {
+      }
     }
-    void this.refreshScopeLabel();
   }
-  async resolveParserHwpDecision(fileLabel, sourceLabel, batchState) {
-    if (batchState && batchState.mode) {
-      this.syncParserHwpStatus(batchState.mode, batchState.mode);
-      return { mode: batchState.mode, applyToAll: true, reused: true };
+  async convertHwpWithUserChoice(file, remainingCount = 0) {
+    const choice = await this.promptHwpIngestChoice(file.name, remainingCount);
+    const ext = (file.name.toLowerCase().split(".").pop() || "").trim();
+    if (choice === "cancel") {
+      this.reportHwpChoiceToParserStatus(file.name, choice, {
+        result: "skip",
+        statusMeta: "auto=not_attempted"
+      });
+      new import_obsidian4.Notice(`HWP 처리 취소: ${file.name}`);
+      return null;
     }
-    const picked = await HwpIngestDecisionModal.ask(this.app, fileLabel, sourceLabel);
-    const mode = picked && (picked.mode === "pdf_only" || picked.mode === "pdf_to_md" || picked.mode === "cancel") ? picked.mode : "cancel";
-    const applyToAll = picked && picked.applyToAll === true;
-    if (batchState && applyToAll) {
-      batchState.mode = mode;
+    let autoResult = null;
+    if (choice === "pdf_to_md" && ext === "hwp") {
+      let hwpBinary = null;
+      try {
+        hwpBinary = await file.arrayBuffer();
+      } catch (e) {
+      }
+      autoResult = await runHwpToPdfParserPocWithSoffice({
+        ext,
+        fileName: file.name,
+        binary: hwpBinary,
+        parsePdf: async (pdfBinary, pdfAbsolutePath) => await this.extractPdfTextWithParserChain(pdfBinary, pdfAbsolutePath)
+      });
+      if (autoResult.ok && autoResult.parsed) {
+        const safeBaseName = file.name.replace(/\.[^.]+$/, "") || "document";
+        const mirroredPdfPath = await this.persistBinaryAttachmentToIngest(
+          `${safeBaseName}.pdf`,
+          "pdf",
+          "pdf",
+          autoResult.pdfBinary
+        );
+        const parsed = autoResult.parsed;
+        const parsedNotes = Array.isArray(parsed.notes) ? parsed.notes : [];
+        this.reportHwpChoiceToParserStatus(file.name, choice, {
+          result: "converted",
+          statusMeta: `auto=${describeHwpAutoConvertStatus(autoResult.status)}`
+        });
+        return {
+          kind: "pdf",
+          label: this.normalizeAttachmentLabel(`${file.name} (hwp->pdf)`, `hwp-pdf-${Date.now()}`),
+          path: mirroredPdfPath || autoResult.pdfPath,
+          content: [
+            `HWP auto-convert: ${file.name}`,
+            `Converter: ${autoResult.sofficeBin}`,
+            `Parser: ${parsed.parser}`,
+            ...parsedNotes.map((note) => `- ${note}`),
+            "---",
+            this.clampAttachmentText(parsed.content || "", 2e4)
+          ].join("\n")
+        };
+      }
     }
-    this.syncParserHwpStatus(mode, batchState && batchState.mode ? batchState.mode : null);
-    return { mode, applyToAll, reused: false };
-  }
-  buildParserHwpPlaceholderAttachment(fileLabel, sourcePath, sourceLabel) {
-    const lines = [
-      `HWP attachment detected: ${fileLabel}`,
-      `Source: ${sourceLabel}`,
-      "Selected path: PDF 변환 후 MD까지",
-      "",
-      "현재 HWP/HWPX 직접 변환은 미지원입니다.",
-      "외부 도구로 HWP/HWPX -> PDF 변환 후 PDF 파일을 다시 첨부하면 본문 파싱을 진행할 수 있습니다.",
-      "이 문서는 parser 상태 기록용 안내 스텁입니다."
-    ];
-    if (sourcePath) {
-      lines.push(`source_path=${sourcePath}`);
-    }
+    const autoStatus = autoResult ? describeHwpAutoConvertStatus(autoResult.status, autoResult.message) : "not_attempted";
+    this.reportHwpChoiceToParserStatus(file.name, choice, {
+      result: "guided",
+      statusMeta: `auto=${autoStatus}`
+    });
+    const guideText = choice === "pdf_only" ? [
+      `HWP guide: ${file.name}`,
+      "선택: PDF까지만 변환(권장)",
+      "상태: HWP 자동변환은 실행하지 않았습니다.",
+      "다음 단계: 외부 도구에서 HWP→PDF 변환 후 PDF를 다시 업로드하세요."
+    ].join("\n") : [
+      `HWP guide: ${file.name}`,
+      "선택: PDF 변환 후 MD까지 진행",
+      `자동 변환 상태: ${autoStatus}`,
+      "다음 단계: 외부 도구에서 HWP→PDF 변환 후 PDF 업로드 시 parser ingest(.md)로 이어서 처리하세요."
+    ].join("\n");
     return {
       kind: "text",
-      label: this.normalizeAttachmentLabel(`${fileLabel} (hwp-parser.md)`, `hwp-${Date.now()}`),
-      path: sourcePath,
-      content: this.clampAttachmentText(lines.join("\n"))
+      label: this.normalizeAttachmentLabel(`${file.name} (hwp-guide)`, `hwp-guide-${Date.now()}`),
+      path: this.extractDesktopAbsolutePathFromFile(file),
+      content: guideText
     };
   }
   isLikelyTextFile(file) {
@@ -6562,8 +7563,13 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const result = await execAsync(command, { timeout: 45e3, maxBuffer: 16 * 1024 * 1024 });
     return ((_a = result.stdout) != null ? _a : "").trim();
   }
-  async extractPdfTextViaOcr(pdfAbsolutePath, maxPages) {
+  async extractPdfTextViaOcr(pdfAbsolutePath, maxPages, options) {
     var _a;
+    const requestedPsm = Number.parseInt(String((options == null ? void 0 : options.psm) != null ? options.psm : 6), 10);
+    const psm = Number.isFinite(requestedPsm) ? Math.max(3, Math.min(13, requestedPsm)) : 6;
+    const requestedOem = Number.parseInt(String((options == null ? void 0 : options.oem) != null ? options.oem : ""), 10);
+    const oem = Number.isFinite(requestedOem) ? Math.max(0, Math.min(3, requestedOem)) : null;
+    const preserveInterwordSpaces = Boolean(options == null ? void 0 : options.preserveInterwordSpaces);
     const tmpRoot = await nodeFs.promises.mkdtemp(
       nodePath.join(nodeOs.tmpdir(), "omni-forge-ocr-")
     );
@@ -6583,15 +7589,22 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       const pageImages = (await nodeFs.promises.readdir(tmpRoot)).filter((name) => /^page-\d+\.png$/i.test(name)).map((name) => nodePath.join(tmpRoot, name)).sort((a, b) => a.localeCompare(b));
       const chunks = [];
       for (const imagePath of pageImages) {
-        const ocrCommand = [
+        const ocrCommandParts = [
           "tesseract",
           this.shellQuoteArg(imagePath),
           "stdout",
           "-l",
           "kor+eng",
           "--psm",
-          "6"
-        ].join(" ");
+          String(psm)
+        ];
+        if (oem !== null) {
+          ocrCommandParts.push("--oem", String(oem));
+        }
+        if (preserveInterwordSpaces) {
+          ocrCommandParts.push("-c", "preserve_interword_spaces=1");
+        }
+        const ocrCommand = ocrCommandParts.join(" ");
         try {
           const output = await execAsync(ocrCommand, {
             timeout: 45e3,
@@ -6625,6 +7638,144 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const score = (readableCount - replacementCount * 4 - controlCount * 2) / compact.length;
     return Math.max(0, Math.min(1, score));
   }
+  shouldJoinKoreanOcrLines(prevLine, nextLine) {
+    if (!prevLine || !nextLine) {
+      return false;
+    }
+    if (/^[-*•]\s/.test(nextLine) || /^\d+[.)]\s/.test(nextLine)) {
+      return false;
+    }
+    if (/^#{1,6}\s/.test(nextLine) || /^`{3}/.test(prevLine) || /^`{3}/.test(nextLine)) {
+      return false;
+    }
+    if (/[|]$/.test(prevLine) || /^[|]/.test(nextLine)) {
+      return false;
+    }
+    if (/[.?!。！？:：]$/.test(prevLine)) {
+      return false;
+    }
+    if (!/[A-Za-z0-9가-힣\)\]]$/.test(prevLine)) {
+      return false;
+    }
+    if (!/^[A-Za-z0-9가-힣\(\[]/.test(nextLine)) {
+      return false;
+    }
+    const prevCompact = prevLine.replace(/\s+/g, "");
+    const nextCompact = nextLine.replace(/\s+/g, "");
+    if (prevCompact.length < 2 || nextCompact.length < 2) {
+      return false;
+    }
+    return true;
+  }
+  normalizeParserExtractedText(text, options) {
+    const forOcr = Boolean(options == null ? void 0 : options.forOcr);
+    const normalizeSpacing = options == null ? void 0 : options.normalizeSpacing;
+    let normalized = typeof text === "string" ? text : "";
+    if (!normalized) {
+      return "";
+    }
+    normalized = normalized.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    if (typeof normalized.normalize === "function") {
+      normalized = normalized.normalize("NFKC");
+    }
+    normalized = normalized.replace(/[\u200B-\u200D\uFEFF]/g, "");
+    normalized = normalized.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
+    if (!forOcr) {
+      const compact = normalized.trim();
+      if (normalizeSpacing === false) {
+        return compact;
+      }
+      return compact.replace(/([가-힣])\s+([.,!?;:])/g, "$1$2");
+    }
+    const lines = normalized.split("\n").map((line) => line.replace(/[ \t]+/g, " ").trimEnd());
+    const merged = [];
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        if (merged.length === 0 || merged[merged.length - 1] === "") {
+          continue;
+        }
+        merged.push("");
+        continue;
+      }
+      if (merged.length === 0 || merged[merged.length - 1] === "") {
+        merged.push(line);
+        continue;
+      }
+      const prev = merged[merged.length - 1];
+      if (this.shouldJoinKoreanOcrLines(prev, line)) {
+        const joinWithoutSpace = /[-‐‑‒–—]$/.test(prev) && /^[A-Za-z가-힣]/.test(line);
+        merged[merged.length - 1] = joinWithoutSpace ? `${prev.replace(/[-‐‑‒–—]$/, "")}${line}` : `${prev} ${line}`;
+      } else {
+        merged.push(line);
+      }
+    }
+    const compact = merged.join("\n").replace(/[ ]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    if (normalizeSpacing === false) {
+      return compact;
+    }
+    return compact.replace(/([가-힣])\s+([.,!?;:])/g, "$1$2");
+  }
+  assessAttachmentTextQuality(text) {
+    const normalized = this.normalizeParserExtractedText(text || "", {
+      forOcr: false,
+      normalizeSpacing: false
+    });
+    const compact = normalized.replace(/\s+/g, "");
+    if (!compact) {
+      return {
+        readabilityScore: 0,
+        lowConfidence: true,
+        likelyMojibake: false,
+        koreanHandwritingRisk: false,
+        readableRatio: 0,
+        replacementRatio: 0,
+        jamoRatio: 0,
+        shortLineRatio: 0,
+        charCount: 0
+      };
+    }
+    const readableCount = (compact.match(/[A-Za-z0-9가-힣]/g) || []).length;
+    const replacementCount = (compact.match(/�/g) || []).length;
+    const jamoCount = (compact.match(/[ㄱ-ㅎㅏ-ㅣᄀ-ᇿ]/g) || []).length;
+    const hangulCount = (compact.match(/[가-힣]/g) || []).length;
+    const symbolCount = (compact.match(/[^A-Za-z0-9가-힣ㄱ-ㅎㅏ-ㅣ.,!?;:()\[\]{}'"`~_\-+=/*%&@#$^<>]/g) || []).length;
+    const lines = normalized.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+    const shortLines = lines.filter((line) => line.replace(/\s+/g, "").length <= 2).length;
+    const readableRatio = readableCount / compact.length;
+    const replacementRatio = replacementCount / compact.length;
+    const jamoRatio = jamoCount / compact.length;
+    const symbolRatio = symbolCount / compact.length;
+    const shortLineRatio = lines.length > 0 ? shortLines / lines.length : 0;
+    const readabilityScore = this.scoreAttachmentTextReadability(normalized);
+    const likelyMojibake = this.isLikelyMojibakeText(normalized);
+    const lowConfidence = compact.length < 80 || readabilityScore < 0.4 || readableRatio < 0.36 || replacementRatio > 0.015 || shortLineRatio > 0.55 || symbolRatio > 0.35;
+    const koreanHandwritingRisk = hangulCount >= 24 && (jamoRatio > 0.08 || shortLineRatio > 0.46 || readabilityScore < 0.5);
+    return {
+      readabilityScore,
+      lowConfidence,
+      likelyMojibake,
+      koreanHandwritingRisk,
+      readableRatio,
+      replacementRatio,
+      jamoRatio,
+      shortLineRatio,
+      charCount: compact.length
+    };
+  }
+  isLikelyMojibakeText(text) {
+    const compact = (text || "").replace(/\s+/g, "");
+    if (!compact || compact.length < 120) {
+      return false;
+    }
+    const replacementCount = (compact.match(/�/g) || []).length;
+    const suspiciousCount = (compact.match(/[ƀ-ɏͰ-ϿҀ-ӿא-ת؀-ۿᄀ-ᇿ]/g) || []).length;
+    const readableCount = (compact.match(/[A-Za-z0-9가-힣]/g) || []).length;
+    const replacementRatio = replacementCount / compact.length;
+    const suspiciousRatio = suspiciousCount / compact.length;
+    const readableRatio = readableCount / compact.length;
+    return replacementRatio > 0.02 || suspiciousRatio > 0.22 || readableRatio < 0.38;
+  }
   resolveVaultAbsolutePath(vaultPath) {
     const base = this.getVaultBasePathForChatView();
     if (!base) {
@@ -6632,19 +7783,26 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     return nodePath.resolve(base, vaultPath);
   }
-  async extractPdfTextWithParserChain(binary, sourceAbsolutePath) {
+  async extractPdfTextWithParserChain(binary, sourceAbsolutePath, options) {
     const notes = [];
     let parser = "metadata-only";
     let extracted = "";
-    let readabilityScore = 0;
+    let quality = this.assessAttachmentTextQuality("");
     let workingPath = sourceAbsolutePath;
     let tempDir;
+    let strongOcrAttempted = false;
     const parserMode = this.plugin.settings.qaParserMode === "detailed" ? "detailed" : "fast";
     const preferDetailed = parserMode === "detailed";
-    const pdftotextEnoughLength = preferDetailed ? 220 : 120;
-    const pdfminerEnoughLength = preferDetailed ? 180 : 100;
+    const forceOcrPreferred = Boolean(options == null ? void 0 : options.forceOcr);
+    const modeProfile = preferDetailed ? "quality-first" : "speed-first";
+    const pdftotextEnoughLength = preferDetailed ? 220 : 140;
+    const pdfminerEnoughLength = preferDetailed ? 180 : 120;
     const ocrMaxPages = preferDetailed ? LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED : LOCAL_QA_PDF_OCR_MAX_PAGES_FAST;
-    notes.push(`parser mode=${parserMode}`);
+    notes.push(`parser mode=${parserMode} (${modeProfile})`);
+    notes.push(`ocr budget pages=${ocrMaxPages}`);
+    if (forceOcrPreferred) {
+      notes.push("manual override: force OCR re-parse");
+    }
     try {
       if (!workingPath) {
         tempDir = await nodeFs.promises.mkdtemp(
@@ -6655,12 +7813,21 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       if (await this.canUseShellCommand("pdftotext")) {
         try {
-          extracted = await this.extractPdfTextViaPdftotext(workingPath);
-          readabilityScore = this.scoreAttachmentTextReadability(extracted);
-          if (extracted.length > pdftotextEnoughLength && readabilityScore >= 0.42) {
+          extracted = this.normalizeParserExtractedText(
+            await this.extractPdfTextViaPdftotext(workingPath),
+            { forOcr: false, normalizeSpacing: true }
+          );
+          quality = this.assessAttachmentTextQuality(extracted);
+          if (quality.likelyMojibake) {
+            notes.push("pdftotext produced likely mojibake text. Forcing OCR preference.");
+          }
+          if (quality.lowConfidence) {
+            notes.push(`pdftotext low-confidence detected (score=${quality.readabilityScore.toFixed(2)}).`);
+          }
+          if (extracted.length > pdftotextEnoughLength && quality.readabilityScore >= 0.42 && !quality.likelyMojibake && !quality.lowConfidence) {
             parser = "pdftotext";
           } else {
-            notes.push(`pdftotext quality low/short (score=${readabilityScore.toFixed(2)}). Trying OCR/fallback.`);
+            notes.push(`pdftotext quality low/short (score=${quality.readabilityScore.toFixed(2)}). Trying OCR/fallback.`);
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "pdftotext failed";
@@ -6669,19 +7836,22 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       } else {
         notes.push("pdftotext unavailable: trying pdfminer/OCR/fallback.");
       }
-      const shouldTryPdfminer = extracted.length < pdftotextEnoughLength || readabilityScore < 0.45 || parser !== "pdftotext";
+      const shouldTryPdfminer = extracted.length < pdftotextEnoughLength || quality.readabilityScore < 0.45 || parser !== "pdftotext" || quality.lowConfidence;
       if (shouldTryPdfminer) {
         try {
-          const pdfminerText = await this.extractPdfTextViaPdfMiner(workingPath);
+          const pdfminerText = this.normalizeParserExtractedText(
+            await this.extractPdfTextViaPdfMiner(workingPath),
+            { forOcr: false, normalizeSpacing: true }
+          );
           if (pdfminerText.trim()) {
-            const pdfminerReadability = this.scoreAttachmentTextReadability(pdfminerText);
-            const shouldPreferPdfminer = parser !== "pdftotext" || pdfminerReadability > readabilityScore + 0.03 || pdfminerText.length > extracted.length + 80 || pdfminerText.length >= pdfminerEnoughLength && readabilityScore < 0.4;
+            const pdfminerQuality = this.assessAttachmentTextQuality(pdfminerText);
+            const shouldPreferPdfminer = parser !== "pdftotext" || pdfminerQuality.readabilityScore > quality.readabilityScore + 0.03 || pdfminerText.length > extracted.length + 80 || pdfminerText.length >= pdfminerEnoughLength && quality.readabilityScore < 0.4 || quality.lowConfidence && !pdfminerQuality.lowConfidence;
             if (shouldPreferPdfminer) {
               extracted = pdfminerText;
               parser = "pdfminer";
-              readabilityScore = pdfminerReadability;
+              quality = pdfminerQuality;
             } else {
-              notes.push(`pdfminer candidate kept secondary (score=${pdfminerReadability.toFixed(2)}).`);
+              notes.push(`pdfminer candidate kept secondary (score=${pdfminerQuality.readabilityScore.toFixed(2)}).`);
             }
           } else {
             notes.push("pdfminer unavailable or produced empty text.");
@@ -6691,23 +7861,53 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           notes.push(`pdfminer failed: ${message}`);
         }
       }
-      const shouldTryOcr = preferDetailed || extracted.length < pdftotextEnoughLength || readabilityScore < 0.42;
-      if (shouldTryOcr && await this.canUseShellCommand("pdftoppm") && await this.canUseShellCommand("tesseract")) {
+      const shouldTryOcr = forceOcrPreferred || preferDetailed || extracted.length < pdftotextEnoughLength || quality.readabilityScore < 0.42 || quality.likelyMojibake || quality.lowConfidence || quality.koreanHandwritingRisk;
+      const ocrToolsReady = await this.canUseShellCommand("pdftoppm") && await this.canUseShellCommand("tesseract");
+      if (shouldTryOcr && ocrToolsReady) {
         try {
-          const ocrText = await this.extractPdfTextViaOcr(workingPath, ocrMaxPages);
-          const ocrReadability = this.scoreAttachmentTextReadability(ocrText);
-          const shouldPreferOcr = ocrReadability > readabilityScore + 0.08 || ocrText.length > extracted.length + 120;
+          const ocrText = this.normalizeParserExtractedText(
+            await this.extractPdfTextViaOcr(workingPath, ocrMaxPages, { psm: 6 }),
+            { forOcr: true, normalizeSpacing: true }
+          );
+          const ocrQuality = this.assessAttachmentTextQuality(ocrText);
+          const shouldPreferOcr = forceOcrPreferred || quality.likelyMojibake || quality.lowConfidence || ocrQuality.readabilityScore > quality.readabilityScore + 0.08 || (ocrText.length > extracted.length + 120 && !ocrQuality.likelyMojibake) || quality.koreanHandwritingRisk && !ocrQuality.lowConfidence;
           if (shouldPreferOcr) {
             extracted = ocrText;
             parser = "ocr";
-            readabilityScore = ocrReadability;
+            quality = ocrQuality;
           } else if (ocrText.trim()) {
-            notes.push(`OCR kept as secondary candidate (score=${ocrReadability.toFixed(2)}).`);
+            notes.push(`OCR kept as secondary candidate (score=${ocrQuality.readabilityScore.toFixed(2)}).`);
+          }
+          const shouldTryStrongOcr = preferDetailed ? forceOcrPreferred || quality.koreanHandwritingRisk || quality.lowConfidence || quality.likelyMojibake : forceOcrPreferred || quality.likelyMojibake || (quality.koreanHandwritingRisk && quality.lowConfidence);
+          if (shouldTryStrongOcr) {
+            strongOcrAttempted = true;
+            const strongOcrPages = forceOcrPreferred ? Math.max(ocrMaxPages, LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED) : Math.min(24, Math.max(ocrMaxPages + 4, 8));
+            const ocrStrongText = this.normalizeParserExtractedText(
+              await this.extractPdfTextViaOcr(workingPath, strongOcrPages, {
+                psm: 11,
+                oem: 1,
+                preserveInterwordSpaces: true
+              }),
+              { forOcr: true, normalizeSpacing: true }
+            );
+            const ocrStrongQuality = this.assessAttachmentTextQuality(ocrStrongText);
+            const shouldPreferStrong = forceOcrPreferred || quality.lowConfidence && !ocrStrongQuality.lowConfidence || quality.koreanHandwritingRisk && !ocrStrongQuality.lowConfidence || ocrStrongQuality.readabilityScore > quality.readabilityScore + 0.04 || ocrStrongText.length > extracted.length + 80;
+            if (shouldPreferStrong && ocrStrongText.trim()) {
+              extracted = ocrStrongText;
+              parser = "ocr-strong";
+              quality = ocrStrongQuality;
+            } else if (ocrStrongText.trim()) {
+              notes.push(`OCR strong kept as secondary candidate (score=${ocrStrongQuality.readabilityScore.toFixed(2)}).`);
+            }
+          } else if (!preferDetailed && (quality.lowConfidence || quality.koreanHandwritingRisk)) {
+            notes.push("fast mode kept strong OCR conservative; use Detailed mode or manual OCR re-parse for higher quality.");
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "OCR failed";
           notes.push(`OCR failed: ${message}`);
         }
+      } else if (shouldTryOcr && !ocrToolsReady) {
+        notes.push("OCR tools missing: pdftoppm/tesseract unavailable.");
       }
     } finally {
       if (tempDir) {
@@ -6716,8 +7916,13 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
     }
     if (!extracted.trim()) {
-      extracted = this.extractPdfFallbackText(binary);
+      extracted = this.normalizeParserExtractedText(this.extractPdfFallbackText(binary), {
+        forOcr: false,
+        normalizeSpacing: true
+      });
       parser = "fallback";
+      quality = this.assessAttachmentTextQuality(extracted);
+      notes.push("fallback literal extraction applied.");
     }
     const clipped = this.clampAttachmentText(
       extracted.trim(),
@@ -6727,29 +7932,69 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       return {
         parser,
         notes,
+        diagnostics: {
+          parserMode,
+          modeProfile,
+          ocrMaxPages,
+          forceOcrPreferred,
+          reasonCode: "empty_extraction",
+          lowConfidence: true,
+          likelyMojibake: quality.likelyMojibake,
+          koreanHandwritingRisk: quality.koreanHandwritingRisk,
+          readabilityScore: quality.readabilityScore,
+          strongOcrAttempted
+        },
         content: [
           "PDF attachment received.",
-          "\uBCF8\uBB38\uC744 \uC548\uC815\uC801\uC73C\uB85C \uCD94\uCD9C\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4. \uD575\uC2EC \uD398\uC774\uC9C0\uB97C \uC774\uBBF8\uC9C0/\uD14D\uC2A4\uD2B8\uB85C \uCD94\uAC00 \uCCA8\uBD80\uD574 \uC8FC\uC138\uC694."
+          "\uD30C\uC11C \uC2E4\uD328 \uC0AC\uC720: \uD14D\uC2A4\uD2B8 \uCD94\uCD9C \uC2E0\uB8B0\uB3C4\uAC00 \uB0AE\uAC70\uB098 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4.",
+          "\uC7AC\uC2DC\uB3C4 \uAC00\uC774\uB4DC: 1) Parser mode\uB97C Detailed\uB85C \uBCC0\uACBD 2) OCR \uC7AC\uD30C\uC2F1 \uC2E4\uD589 3) 300dpi \uC774\uC0C1 \uC6D0\uBCF8/\uD575\uC2EC \uD398\uC774\uC9C0 \uC774\uBBF8\uC9C0 \uCCA8\uBD80"
         ].join("\n")
       };
+    }
+    if (quality.lowConfidence) {
+      notes.push(`final low-confidence text (score=${quality.readabilityScore.toFixed(2)}).`);
     }
     return {
       parser,
       notes,
+      diagnostics: {
+        parserMode,
+        modeProfile,
+        ocrMaxPages,
+        forceOcrPreferred,
+        reasonCode: quality.lowConfidence ? "low_confidence_text" : "ok",
+        lowConfidence: quality.lowConfidence,
+        likelyMojibake: quality.likelyMojibake,
+        koreanHandwritingRisk: quality.koreanHandwritingRisk,
+        readabilityScore: quality.readabilityScore,
+        strongOcrAttempted
+      },
       content: clipped
     };
   }
-  async extractImageTextViaOcr(imageAbsolutePath) {
+  async extractImageTextViaOcr(imageAbsolutePath, options) {
     var _a;
-    const command = [
+    const requestedPsm = Number.parseInt(String((options == null ? void 0 : options.psm) != null ? options.psm : 6), 10);
+    const psm = Number.isFinite(requestedPsm) ? Math.max(3, Math.min(13, requestedPsm)) : 6;
+    const requestedOem = Number.parseInt(String((options == null ? void 0 : options.oem) != null ? options.oem : ""), 10);
+    const oem = Number.isFinite(requestedOem) ? Math.max(0, Math.min(3, requestedOem)) : null;
+    const preserveInterwordSpaces = Boolean(options == null ? void 0 : options.preserveInterwordSpaces);
+    const commandParts = [
       "tesseract",
       this.shellQuoteArg(imageAbsolutePath),
       "stdout",
       "-l",
       "kor+eng",
       "--psm",
-      "6"
-    ].join(" ");
+      String(psm)
+    ];
+    if (oem !== null) {
+      commandParts.push("--oem", String(oem));
+    }
+    if (preserveInterwordSpaces) {
+      commandParts.push("-c", "preserve_interword_spaces=1");
+    }
+    const command = commandParts.join(" ");
     const result = await execAsync(command, { timeout: 45e3, maxBuffer: 10 * 1024 * 1024 });
     return ((_a = result.stdout) != null ? _a : "").trim();
   }
@@ -6757,11 +8002,14 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const notes = [];
     let parser = "metadata-only";
     let extracted = "";
+    let quality = this.assessAttachmentTextQuality("");
     let workingPath = sourceAbsolutePath;
     let tempDir;
+    let strongOcrAttempted = false;
     const parserMode = this.plugin.settings.qaParserMode === "detailed" ? "detailed" : "fast";
     const preferDetailed = parserMode === "detailed";
-    notes.push(`parser mode=${parserMode}`);
+    const modeProfile = preferDetailed ? "quality-first" : "speed-first";
+    notes.push(`parser mode=${parserMode} (${modeProfile})`);
     try {
       if (!workingPath) {
         tempDir = await nodeFs.promises.mkdtemp(
@@ -6773,11 +8021,38 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
       if (await this.canUseShellCommand("tesseract")) {
         try {
-          extracted = await this.extractImageTextViaOcr(workingPath);
-          if (extracted.length > 30) {
+          extracted = this.normalizeParserExtractedText(
+            await this.extractImageTextViaOcr(workingPath, { psm: 6 }),
+            { forOcr: true, normalizeSpacing: true }
+          );
+          quality = this.assessAttachmentTextQuality(extracted);
+          if (extracted.length > 30 && !quality.lowConfidence) {
             parser = "ocr";
           } else {
-            notes.push("OCR \uACB0\uACFC\uAC00 \uC9E7\uC544 \uC774\uBBF8\uC9C0 \uC124\uBA85\uB9CC \uC720\uC9C0\uD569\uB2C8\uB2E4.");
+            notes.push(`OCR 결과 저신뢰/짧음 (score=${quality.readabilityScore.toFixed(2)}).`);
+          }
+          const shouldTryStrongOcr = preferDetailed ? quality.lowConfidence || quality.koreanHandwritingRisk || quality.likelyMojibake : quality.likelyMojibake || (quality.koreanHandwritingRisk && quality.lowConfidence);
+          if (shouldTryStrongOcr) {
+            strongOcrAttempted = true;
+            const strongText = this.normalizeParserExtractedText(
+              await this.extractImageTextViaOcr(workingPath, {
+                psm: 11,
+                oem: 1,
+                preserveInterwordSpaces: true
+              }),
+              { forOcr: true, normalizeSpacing: true }
+            );
+            const strongQuality = this.assessAttachmentTextQuality(strongText);
+            const shouldPreferStrong = strongText.length > extracted.length + 30 || strongQuality.readabilityScore > quality.readabilityScore + 0.05 || quality.lowConfidence && !strongQuality.lowConfidence || quality.koreanHandwritingRisk && !strongQuality.lowConfidence;
+            if (shouldPreferStrong && strongText.trim()) {
+              extracted = strongText;
+              quality = strongQuality;
+              parser = "ocr-strong";
+            } else if (strongText.trim()) {
+              notes.push(`OCR strong kept as secondary candidate (score=${strongQuality.readabilityScore.toFixed(2)}).`);
+            }
+          } else if (!preferDetailed && quality.lowConfidence) {
+            notes.push("fast mode skipped strong OCR retry; switch to Detailed for handwriting/low-confidence image text.");
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "image OCR failed";
@@ -6799,56 +8074,21 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     return {
       parser,
       notes,
+      diagnostics: {
+        parserMode,
+        modeProfile,
+        reasonCode: clipped ? quality.lowConfidence ? "low_confidence_text" : "ok" : "empty_extraction",
+        lowConfidence: quality.lowConfidence,
+        likelyMojibake: quality.likelyMojibake,
+        koreanHandwritingRisk: quality.koreanHandwritingRisk,
+        readabilityScore: quality.readabilityScore,
+        strongOcrAttempted
+      },
       content: clipped
     };
   }
-  async readVaultFileAsAttachment(file, options = null) {
+  async readVaultFileAsAttachment(file) {
     const ext = file.extension.toLowerCase();
-    if (this.isHwpExt(ext)) {
-      const parserSource = options && typeof options === "object" ? options.parserIngestSource : "";
-      if (!parserSource) {
-        return {
-          kind: "text",
-          label: this.normalizeAttachmentLabel(file.name, file.path),
-          path: file.path,
-          content: this.clampAttachmentText([
-            `HWP attachment: ${file.name}`,
-            "현재 HWP/HWPX 직접 파싱/변환은 미지원입니다.",
-            "권장 경로: HWP/HWPX -> PDF 변환 후 PDF 첨부 또는 parser ingest 사용"
-          ].join("\n"))
-        };
-      }
-      const decision = await this.resolveParserHwpDecision(
-        file.name,
-        parserSource,
-        options && typeof options === "object" ? options.hwpBatchState : null
-      );
-      if (decision.mode === "cancel") {
-        this.pushMessage({
-          role: "system",
-          text: `HWP 처리 취소: ${file.name} (${parserSource})`,
-          timestamp: (/* @__PURE__ */ new Date()).toISOString()
-        });
-        new import_obsidian4.Notice(`HWP 취소: ${file.name}`);
-        return null;
-      }
-      if (decision.mode === "pdf_only") {
-        this.pushMessage({
-          role: "system",
-          text: `HWP 선택(A: PDF까지만): ${file.name} (${parserSource}) - 현재 직접 변환 미지원으로 파일을 건너뜁니다.`,
-          timestamp: (/* @__PURE__ */ new Date()).toISOString()
-        });
-        new import_obsidian4.Notice(`HWP A 선택: ${file.name} (건너뜀)`);
-        return null;
-      }
-      const placeholder = this.buildParserHwpPlaceholderAttachment(file.name, file.path, parserSource);
-      this.pushMessage({
-        role: "system",
-        text: `HWP 선택(B: PDF 후 MD): ${file.name} (${parserSource}) - 안내용 parser.md 스텁을 생성합니다.`,
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      });
-      return placeholder;
-    }
     if (this.isImageExt(ext)) {
       const adapter = this.app.vault.adapter;
       if (typeof adapter.readBinary !== "function") {
@@ -6969,54 +8209,37 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     return null;
   }
-  async readExternalFileAsAttachment(file, options = null) {
+  async readExternalFileAsAttachment(file, context = {}) {
     var _a;
     const absolutePath = this.extractDesktopAbsolutePathFromFile(file);
     const ext = (_a = file.name.toLowerCase().split(".").pop()) != null ? _a : "";
     if (this.isHwpExt(ext)) {
-      const parserSource = options && typeof options === "object" ? options.parserIngestSource : "";
-      if (!parserSource) {
-        return {
-          kind: "text",
-          label: this.normalizeAttachmentLabel(file.name, `hwp-${Date.now()}`),
-          path: absolutePath,
-          content: this.clampAttachmentText([
-            `HWP attachment: ${file.name}`,
-            "현재 HWP/HWPX 직접 파싱/변환은 미지원입니다.",
-            "권장 경로: HWP/HWPX -> PDF 변환 후 PDF 첨부 또는 parser ingest 사용"
-          ].join("\n"))
-        };
+      if (this.isHwpxExt(ext)) {
+        try {
+          const binary = await file.arrayBuffer();
+          const extracted = this.clampAttachmentText(await this.tryExtractHwpxText(binary, file.name), 24e3);
+          if (extracted) {
+            const mirroredPath2 = await this.persistBinaryAttachmentToIngest(file.name, "hwpx", "document", binary);
+            const parserSummary = [
+              `HWPX attachment: ${file.name}`,
+              "Parser: hwpx-xml",
+              "- route: direct HWPX(XML) extraction",
+              "- fallback: HWP/PDF guide when extraction fails",
+              "---",
+              extracted
+            ].join("\n");
+            return {
+              kind: "text",
+              label: this.normalizeAttachmentLabel(`${file.name} (hwpx.md)`, `hwpx-${Date.now()}`),
+              path: mirroredPath2 || absolutePath,
+              content: parserSummary
+            };
+          }
+        } catch (e) {
+        }
       }
-      const decision = await this.resolveParserHwpDecision(
-        file.name,
-        parserSource,
-        options && typeof options === "object" ? options.hwpBatchState : null
-      );
-      if (decision.mode === "cancel") {
-        this.pushMessage({
-          role: "system",
-          text: `HWP 처리 취소: ${file.name} (${parserSource})`,
-          timestamp: (/* @__PURE__ */ new Date()).toISOString()
-        });
-        new import_obsidian4.Notice(`HWP 취소: ${file.name}`);
-        return null;
-      }
-      if (decision.mode === "pdf_only") {
-        this.pushMessage({
-          role: "system",
-          text: `HWP 선택(A: PDF까지만): ${file.name} (${parserSource}) - 현재 직접 변환 미지원으로 파일을 건너뜁니다.`,
-          timestamp: (/* @__PURE__ */ new Date()).toISOString()
-        });
-        new import_obsidian4.Notice(`HWP A 선택: ${file.name} (건너뜀)`);
-        return null;
-      }
-      const placeholder = this.buildParserHwpPlaceholderAttachment(file.name, absolutePath, parserSource);
-      this.pushMessage({
-        role: "system",
-        text: `HWP 선택(B: PDF 후 MD): ${file.name} (${parserSource}) - 안내용 parser.md 스텁을 생성합니다.`,
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      });
-      return placeholder;
+      const remainingCount = Math.max(0, Number(context.remainingHwpCount || 0));
+      return await this.convertHwpWithUserChoice(file, remainingCount);
     }
     if (file.type.startsWith("image/") || this.isImageExt(ext)) {
       if (file.size > 4 * 1024 * 1024) {
@@ -7117,7 +8340,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     return void 0;
   }
-  async collectAttachmentsFromDrop(dataTransfer, options = null) {
+  async collectAttachmentsFromDrop(dataTransfer) {
     var _a;
     const collected = [];
     const seen = /* @__PURE__ */ new Set();
@@ -7133,12 +8356,22 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       collected.push(item);
     };
     const files = Array.from((_a = dataTransfer.files) != null ? _a : []);
+    const hwpTotal = files.filter((file) => {
+      var _a2;
+      return this.isHwpExt((_a2 = file.name.toLowerCase().split(".").pop()) != null ? _a2 : "");
+    }).length;
+    let hwpSeen = 0;
     for (const file of files) {
       if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
         break;
       }
       try {
-        pushItem(await this.readExternalFileAsAttachment(file, options));
+        const ext = file.name.toLowerCase().split(".").pop() || "";
+        const remainingHwpCount = this.isHwpExt(ext) ? Math.max(0, hwpTotal - hwpSeen - 1) : 0;
+        if (this.isHwpExt(ext)) {
+          hwpSeen += 1;
+        }
+        pushItem(await this.readExternalFileAsAttachment(file, { remainingHwpCount }));
       } catch (e) {
       }
     }
@@ -7159,7 +8392,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           continue;
         }
         try {
-          pushItem(await this.readVaultFileAsAttachment(file, options));
+          pushItem(await this.readVaultFileAsAttachment(file));
         } catch (e) {
         }
       }
@@ -7169,38 +8402,35 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   async collectAttachmentsFromClipboard(dataTransfer) {
     var _a, _b;
     const collected = [];
+    const filesFromItems = [];
     const items = Array.from((_a = dataTransfer.items) != null ? _a : []);
     for (const item of items) {
-      if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
-        break;
-      }
       if (item.kind !== "file") {
         continue;
       }
       const file = item.getAsFile();
-      if (!file) {
-        continue;
+      if (file) {
+        filesFromItems.push(file);
+      }
+    }
+    const primaryFiles = filesFromItems.length > 0 ? filesFromItems : Array.from((_b = dataTransfer.files) != null ? _b : []);
+    const hwpTotal = primaryFiles.filter((file) => this.isHwpExt(file.name.toLowerCase().split(".").pop() || "")).length;
+    let hwpSeen = 0;
+    for (const file of primaryFiles) {
+      if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
+        break;
       }
       try {
-        const parsed = await this.readExternalFileAsAttachment(file);
+        const ext = file.name.toLowerCase().split(".").pop() || "";
+        const remainingHwpCount = this.isHwpExt(ext) ? Math.max(0, hwpTotal - hwpSeen - 1) : 0;
+        if (this.isHwpExt(ext)) {
+          hwpSeen += 1;
+        }
+        const parsed = await this.readExternalFileAsAttachment(file, { remainingHwpCount });
         if (parsed) {
           collected.push(parsed);
         }
       } catch (e) {
-      }
-    }
-    if (collected.length === 0) {
-      for (const file of Array.from((_b = dataTransfer.files) != null ? _b : [])) {
-        if (collected.length >= LOCAL_QA_MAX_ATTACHMENTS) {
-          break;
-        }
-        try {
-          const parsed = await this.readExternalFileAsAttachment(file);
-          if (parsed) {
-            collected.push(parsed);
-          }
-        } catch (e) {
-        }
       }
     }
     return collected.slice(0, LOCAL_QA_MAX_ATTACHMENTS);
@@ -7377,17 +8607,22 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       var _a;
       try {
         const files = Array.from((_a = input.files) != null ? _a : []);
+        this.hwpChoiceApplyAllEnabled = false;
+        this.hwpChoiceApplyAll = null;
+        const hwpTotal = files.filter((file) => this.isHwpExt(file.name.toLowerCase().split(".").pop() || "")).length;
+        let hwpSeen = 0;
         const attachments = [];
-        const ingestOptions = {
-          parserIngestSource: "picker",
-          hwpBatchState: { mode: null }
-        };
         for (const file of files) {
           if (attachments.length >= LOCAL_QA_MAX_ATTACHMENTS) {
             break;
           }
           try {
-            const parsed = await this.readExternalFileAsAttachment(file, ingestOptions);
+            const ext = file.name.toLowerCase().split(".").pop() || "";
+            const remainingHwpCount = this.isHwpExt(ext) ? Math.max(0, hwpTotal - hwpSeen - 1) : 0;
+            if (this.isHwpExt(ext)) {
+              hwpSeen += 1;
+            }
+            const parsed = await this.readExternalFileAsAttachment(file, { remainingHwpCount });
             if (parsed) {
               attachments.push(parsed);
             }
@@ -7407,15 +8642,14 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   async handleParserDrop(event, dropZone) {
     event.preventDefault();
+    this.hwpChoiceApplyAllEnabled = false;
+    this.hwpChoiceApplyAll = null;
     dropZone.removeClass("omni-forge-chat-drop-target-active");
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer) {
       return;
     }
-    const attachments = await this.collectAttachmentsFromDrop(dataTransfer, {
-      parserIngestSource: "drop",
-      hwpBatchState: { mode: null }
-    });
+    const attachments = await this.collectAttachmentsFromDrop(dataTransfer);
     if (attachments.length === 0) {
       new import_obsidian4.Notice("드롭한 항목에서 파서 인게스트 가능한 파일을 찾지 못했습니다.");
       return;
@@ -7433,13 +8667,22 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       var _a;
       try {
         const files = Array.from((_a = input.files) != null ? _a : []);
+        this.hwpChoiceApplyAllEnabled = false;
+        this.hwpChoiceApplyAll = null;
+        const hwpTotal = files.filter((file) => this.isHwpExt(file.name.toLowerCase().split(".").pop() || "")).length;
+        let hwpSeen = 0;
         const attachments = [];
         for (const file of files) {
           if (attachments.length + this.pendingAttachments.length >= LOCAL_QA_MAX_ATTACHMENTS) {
             break;
           }
           try {
-            const parsed = await this.readExternalFileAsAttachment(file);
+            const ext = file.name.toLowerCase().split(".").pop() || "";
+            const remainingHwpCount = this.isHwpExt(ext) ? Math.max(0, hwpTotal - hwpSeen - 1) : 0;
+            if (this.isHwpExt(ext)) {
+              hwpSeen += 1;
+            }
+            const parsed = await this.readExternalFileAsAttachment(file, { remainingHwpCount });
             if (parsed) {
               attachments.push(parsed);
             }
@@ -7447,7 +8690,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           }
         }
         if (attachments.length === 0) {
-          new import_obsidian4.Notice("\uCCA8\uBD80\uD560 \uC218 \uC788\uB294 \uD30C\uC77C(\uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF/HWP)\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+          new import_obsidian4.Notice("\uCCA8\uBD80\uD560 \uC218 \uC788\uB294 \uD30C\uC77C(\uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF)\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
         } else {
           this.mergePendingAttachments(attachments);
           this.pushMessage({
@@ -7464,6 +8707,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   async handleChatDrop(event, dropZone) {
     event.preventDefault();
+    this.hwpChoiceApplyAllEnabled = false;
+    this.hwpChoiceApplyAll = null;
     dropZone.removeClass("omni-forge-chat-drop-active");
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer) {
@@ -7471,7 +8716,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     const attachments = await this.collectAttachmentsFromDrop(dataTransfer);
     if (attachments.length === 0) {
-      new import_obsidian4.Notice("\uB4DC\uB798\uADF8\uD55C \uD56D\uBAA9\uC5D0\uC11C \uC77D\uC744 \uC218 \uC788\uB294 \uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF/HWP\uB97C \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
+      new import_obsidian4.Notice("\uB4DC\uB798\uADF8\uD55C \uD56D\uBAA9\uC5D0\uC11C \uC77D\uC744 \uC218 \uC788\uB294 \uD14D\uC2A4\uD2B8/\uC774\uBBF8\uC9C0/PDF\uB97C \uCC3E\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.");
       return;
     }
     this.mergePendingAttachments(attachments);
@@ -7483,6 +8728,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
   }
   async handleChatPaste(event) {
     var _a, _b, _c;
+    this.hwpChoiceApplyAllEnabled = false;
+    this.hwpChoiceApplyAll = null;
     const dataTransfer = event.clipboardData;
     if (!dataTransfer) {
       return;
@@ -8141,18 +9388,49 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const presetLabel = this.plugin.getQaPresetProfileLabelForQa();
     const conversationMode = this.plugin.getQaConversationModeLabelForQa();
     const model = this.plugin.getQaModelLabelForQa(role);
+    const parserProfile = this.plugin.getParserModeProfileForQa();
+    const modelHealth = this.plugin.getQaLocalModelValidationForQa(role);
+    const modelStatusLabel = modelHealth.status === "ok" ? "OK" : modelHealth.status === "warn" ? "CHECK" : modelHealth.status === "blocked" ? "ISSUE" : "CLOUD";
     const syncMode = this.plugin.isQaThreadAutoSyncEnabledForQa() ? "auto / \uC790\uB3D9" : "manual / \uC218\uB3D9";
     const fullSummary = `Scope / \uBC94\uC704: files=${fileCount}, folders=${folderCount}, attachments=${attachmentCount}`;
-    const runtimeSummary = `convo=${conversationMode} | preset=${presetLabel} | QA=${model} | sync=${syncMode} | hwp=${this.parserHwpLastDecisionSummary} | batch=${this.parserHwpBatchPolicySummary}`;
+    const runtimeSummary = `convo=${conversationMode} | preset=${presetLabel} | parser=${parserProfile.mode}(${parserProfile.focus}) | QA=${model} | model=${modelStatusLabel} | sync=${syncMode}`;
     this.scopeEl.empty();
     this.scopeEl.setAttr("title", fullSummary);
     this.scopeEl.createDiv({
       cls: "omni-forge-chat-scope-counts",
       text: `\uD30C\uC77C(Files): ${fileCount} / \uD3F4\uB354(Folders): ${folderCount} / \uCCA8\uBD80 \uD30C\uC77C(Attach): ${attachmentCount}`
     });
+    const signalRow = this.scopeEl.createDiv({ cls: "omni-forge-chat-scope-signals" });
+    const parserPill = signalRow.createSpan({
+      cls: `omni-forge-status-pill omni-forge-status-pill-parser ${parserProfile.mode === "detailed" ? "is-detailed" : "is-fast"}`,
+      text: parserProfile.mode === "detailed" ? this.localizeChatLabel("Parser: Detailed", "Parser: 상세") : this.localizeChatLabel("Parser: Fast", "Parser: 빠름")
+    });
+    parserPill.setAttr(
+      "title",
+      this.localizeChatLabel(
+        parserProfile.summary,
+        parserProfile.mode === "detailed" ? `Detailed 모드: OCR 품질 우선(최대 ${LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED}p)` : `Fast 모드: 속도 우선(최대 ${LOCAL_QA_PDF_OCR_MAX_PAGES_FAST}p)`
+      )
+    );
+    const modelPill = signalRow.createSpan({
+      cls: `omni-forge-status-pill omni-forge-status-pill-model is-${modelHealth.status}`,
+      text: modelHealth.status === "ok" ? this.localizeChatLabel("Local model: OK", "로컬 모델: 정상") : modelHealth.status === "warn" ? this.localizeChatLabel("Local model: CHECK", "로컬 모델: 점검") : modelHealth.status === "blocked" ? this.localizeChatLabel("Local model: ISSUE", "로컬 모델: 이슈") : this.localizeChatLabel("Model: Cloud profile", "모델: 클라우드 프로필")
+    });
+    modelPill.setAttr("title", modelHealth.summary);
     if (this.runtimeSummaryEl) {
-      this.runtimeSummaryEl.setText(runtimeSummary);
-      this.runtimeSummaryEl.setAttr("title", runtimeSummary);
+      const runtimeDetails = [
+        runtimeSummary,
+        this.localizeChatLabel(
+          `Parser mode note: ${parserProfile.recommendation}`,
+          parserProfile.mode === "detailed" ? "파서 모드 메모: 정확도 우선(속도 저하 가능)" : "파서 모드 메모: 속도 우선(품질 저하 시 상세 모드 권장)"
+        ),
+        this.localizeChatLabel(
+          `Model check: ${modelHealth.summary}`,
+          `모델 점검: ${modelHealth.summary}`
+        )
+      ].join("\n");
+      this.runtimeSummaryEl.setText(runtimeDetails);
+      this.runtimeSummaryEl.setAttr("title", runtimeDetails);
     }
   }
   async refreshActiveFileStatus() {
@@ -8198,6 +9476,29 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const selectedFiles = this.plugin.getSelectedFilesForQa();
     const qaContextEnabled = this.plugin.isQaContextEnabledForQa();
     const attachmentsForTurn = (_b = preloadedTurn == null ? void 0 : preloadedTurn.attachments) != null ? _b : this.consumePendingAttachments();
+    if (this.plugin.consumeSelectedAskGuardForQa()) {
+      if (selectedFiles.length === 0) {
+        if (attachmentsForTurn.length > 0) {
+          this.mergePendingAttachments(attachmentsForTurn);
+        }
+        this.pushMessage({
+          role: "system",
+          text: "선택 기반 질문 모드입니다. 먼저 노트를 선택한 뒤 다시 질문해 주세요. (선택 강제 가드)",
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        new import_obsidian4.Notice("선택된 노트가 없어 실행을 중단했습니다. '노트 선택' 후 다시 시도하세요.", 6e3);
+        return;
+      }
+      if (!qaContextEnabled) {
+        await this.plugin.setQaContextEnabledForQa(true);
+        this.refreshQaContextButton();
+      }
+      this.pushMessage({
+        role: "system",
+        text: `선택 강제 모드로 실행합니다. 선택 노트 ${selectedFiles.length}개를 우선 근거로 사용합니다.`,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
     const hasPendingAttachments = attachmentsForTurn.length > 0;
     const openFileForTurn = this.resolveVisibleMarkdownFile();
     const openFilePathForTurn = (_c = preloadedTurn == null ? void 0 : preloadedTurn.openFilePath) != null ? _c : openFileForTurn instanceof import_obsidian4.TFile && openFileForTurn.extension === "md" ? openFileForTurn.path : void 0;
@@ -9903,12 +11204,46 @@ ${availability.note}`).addText(
     containerEl.createEl("h3", { text: "Parser pipeline / \uD30C\uC11C \uD30C\uC774\uD504\uB77C\uC778" });
     containerEl.createEl("p", {
       cls: "omni-forge-settings-guide-note",
-      text: "PDF/\uC774\uBBF8\uC9C0 \uD30C\uC11C\uB97C \uC911\uC2EC\uC73C\uB85C \uCCA8\uBD80 \uCEE8\uD14D\uC2A4\uD2B8 \uD488\uC9C8\uC744 \uB192\uC785\uB2C8\uB2E4. HWP/HWPX\uB294 \uAC10\uC9C0 \uC2DC A/B/C \uBD84\uAE30 \uC120\uD0DD \uBAA8\uB2EC\uC744 \uD45C\uC2DC\uD558\uBA70, \uC9C1\uC811 \uBCC0\uD658\uC740 \uBBF8\uC9C0\uC6D0\uC785\uB2C8\uB2E4."
+      text: "PDF/\uC774\uBBF8\uC9C0 \uD30C\uC11C\uB97C \uC911\uC2EC\uC73C\uB85C \uCCA8\uBD80 \uCEE8\uD14D\uC2A4\uD2B8 \uD488\uC9C8\uC744 \uB192\uC785\uB2C8\uB2E4. HWPX\uB294 XML 1\uCC28 \uCD94\uCD9C\uC744 \uC2DC\uB3C4\uD558\uACE0, HWP\uB294 soffice \uAC10\uC9C0 \uC2DC hwp->pdf \uC790\uB3D9\uBCC0\uD658(PoC)\uC744 \uC2DC\uB3C4\uD55C \uB4A4 \uC2E4\uD328 \uC2DC \uAC00\uC774\uB4DC\uB85C \uD3F4\uBC31\uD569\uB2C8\uB2E4."
     });
+    const parserQuick = new import_obsidian4.Setting(containerEl).setName(t("Parser inbox quick actions", "Parser inbox 빠른 동작")).setDesc(t("Open inbox, run scan, trigger OCR re-parse, and toggle watch.", "inbox 열기, 즉시 스캔, OCR 재파싱, watch 토글을 한 번에 실행"));
+    parserQuick.addButton((button) => button.setButtonText(t("Open inbox", "inbox 열기")).onClick(async () => {
+      await this.plugin.openParserInboxFolderForQa();
+    }));
+    parserQuick.addButton((button) => button.setButtonText(t("Scan now", "즉시 스캔")).onClick(async () => {
+      await this.plugin.scanParserInboxNowForQa();
+      this.display();
+    }));
+    parserQuick.addButton((button) => button.setButtonText(t("OCR re-parse", "OCR 재파싱")).onClick(async () => {
+      await this.plugin.scanParserInboxNowForQa({ forceOcr: true });
+      this.display();
+    }));
+    parserQuick.addButton((button) => button.setButtonText(t("Formats", "지원 포맷")).onClick(() => {
+      new import_obsidian4.Notice(`Parser formats: ${this.plugin.getParserSupportedFormatsForQa().join(", ")}`, 7e3);
+    }));
+    parserQuick.addButton((button) => button.setButtonText(this.plugin.settings.qaParserInboxWatchEnabled ? t("Watch ON", "watch ON") : t("Watch OFF", "watch OFF")).onClick(async () => {
+      const next = !this.plugin.settings.qaParserInboxWatchEnabled;
+      await this.plugin.setParserInboxWatchEnabledForQa(next);
+      this.display();
+    }));
+    const parserStatus = this.plugin.getParserInboxStatusForQa();
+    const parserLast = this.plugin.getParserInboxLastEventForQa();
+    const parserProfile = this.plugin.getParserModeProfileForQa();
+    new import_obsidian4.Setting(containerEl).setName(t("Parser status", "파서 상태")).setDesc(`모드 ${parserProfile.mode.toUpperCase()}(${parserProfile.focus}) | 진행률 ${parserStatus.processed || 0}/${parserStatus.total || 0} | 소요 ${this.plugin.formatParserEtaMsForQa(parserStatus.elapsedMs || 0)} | ETA ${this.plugin.formatParserEtaMsForQa(parserStatus.etaMs || 0)} | 큐 ${parserStatus.queueLength || 0} | 단계 ${parserStatus.stage || "idle"} | 최근 ${parserLast.fileName} | 결과 ${parserLast.result} (s:${parserStatus.success || 0}/k:${parserStatus.skip || 0}/e:${parserStatus.error || 0}) | 메시지 ${parserLast.message || "-"}`);
+    new import_obsidian4.Setting(containerEl).setName("HWP/HWPX workaround").setDesc("HWPX는 1차 텍스트 추출 지원. HWP는 soffice가 감지되면 자동변환(PoC)을 시도하고, 미탐지/실패 시 PDF 또는 DOCX 수동 변환 안내로 폴백합니다.").addButton((button) => button.setButtonText("우회 안내 보기").onClick(() => {
+      new import_obsidian4.Notice("HWPX는 XML 1차 추출을 시도합니다. HWP는 soffice 자동변환(PoC)을 먼저 시도하며 실패 시 PDF/DOCX 수동 변환 경로를 안내합니다.", 7e3);
+    }));
+    new import_obsidian4.Setting(containerEl).setName("Parser mode indicator").setDesc(
+      `${parserProfile.summary}
+${parserProfile.recommendation}`
+    );
     new import_obsidian4.Setting(containerEl).setName("Parser mode").setDesc("Fast\uB294 \uACBD\uB7C9 \uD30C\uC11C, Detailed\uB294 OCR \uD398\uC774\uC9C0 \uD655\uC7A5\uACFC \uAE34 \uD14D\uC2A4\uD2B8 \uCD94\uCD9C\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.").addDropdown(
       (dropdown) => dropdown.addOption("fast", "Fast / \uBE60\uB978 \uD30C\uC11C").addOption("detailed", "Detailed / \uC0C1\uC138 \uD30C\uC11C").setValue(this.plugin.settings.qaParserMode).onChange(async (value) => {
         this.plugin.settings.qaParserMode = value === "detailed" ? "detailed" : "fast";
         await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+        const nextProfile = this.plugin.getParserModeProfileForQa();
+        new import_obsidian4.Notice(`Parser mode -> ${nextProfile.badge} (${nextProfile.focus})`, 4500);
         this.display();
       })
     );
@@ -9919,7 +11254,6 @@ ${availability.note}`).addText(
         this.display();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("HWP ingest status").setDesc(this.plugin.getParserHwpIngestStatusSummaryForQa());
     const parserList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
     parserList.createEl("li", {
       text: t("PDF: pdftotext(text extraction) + pdftoppm/tesseract(OCR) + fallback", "PDF: pdftotext(\uD14D\uC2A4\uD2B8 \uCD94\uCD9C) + pdftoppm/tesseract(OCR) + fallback")
@@ -9928,7 +11262,7 @@ ${availability.note}`).addText(
       text: t("Image: tesseract OCR + original image context", "Image: tesseract OCR + \uC6D0\uBCF8 \uC774\uBBF8\uC9C0 \uCEE8\uD14D\uC2A4\uD2B8")
     });
     parserList.createEl("li", {
-      text: t("HWP/HWPX: choose A/B/C branch on detect. Direct conversion is not supported yet (external PDF conversion recommended).", "HWP/HWPX: 감지 시 A/B/C 분기 선택. 직접 변환은 아직 미지원(외부 PDF 변환본 첨부 권장)")
+      text: t("HWP: try soffice PoC (hwp->pdf->parser chain) when available; fallback to manual PDF/DOCX conversion guide. HWPX: first-pass XML extraction.", "HWP: soffice 가능 시 hwp->pdf->parser chain(PoC)을 시도하고, 실패 시 PDF/DOCX 수동 변환 안내로 폴백합니다. HWPX: XML 1차 추출을 우선 시도합니다.")
     });
     const tips = containerEl.createEl("details", { cls: "omni-forge-chat-collapsible omni-forge-settings-parser-tips" });
     tips.open = false;
@@ -10154,6 +11488,164 @@ ${availability.note}`).addText(
         await this.plugin.refreshOpenQaWorkspaceViews();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("OAuth bridge mode (API-key optional)").setDesc(
+      "Route cloud analysis/chat to local OpenAI-compatible /v1 bridge. API key checks are bypassed in this mode."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.oauthBridgeEnabled).onChange(async (value) => {
+        this.plugin.settings.oauthBridgeEnabled = value;
+        if (value && this.plugin.getQaChatModelFamilyForQa() === "cloud") {
+          const bridgeHostUrl = this.plugin.settings.oauthBridgeBaseUrl.trim() || this.plugin.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl;
+          this.plugin.appendQaAllowedOutboundHostFromUrl(bridgeHostUrl);
+        }
+        await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("OAuth bridge base URL (/v1)").addText(
+      (text) => text.setPlaceholder("http://127.0.0.1:8787/v1").setValue(this.plugin.settings.oauthBridgeBaseUrl).onChange(async (value) => {
+        this.plugin.settings.oauthBridgeBaseUrl = value.trim();
+        if (this.plugin.settings.oauthBridgeEnabled && this.plugin.getQaChatModelFamilyForQa() === "cloud") {
+          const bridgeHostUrl = this.plugin.settings.oauthBridgeBaseUrl.trim() || this.plugin.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl;
+          this.plugin.appendQaAllowedOutboundHostFromUrl(bridgeHostUrl);
+        }
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("OAuth bridge model override (optional)").addText(
+      (text) => text.setPlaceholder("Leave empty to reuse provider model").setValue(this.plugin.settings.oauthBridgeModel).onChange(async (value) => {
+        this.plugin.settings.oauthBridgeModel = value.trim();
+        await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("OAuth enabled / OAuth 사용").setDesc("Use OAuth Authorization Code flow for cloud requests. / 클라우드 요청에 OAuth 인증코드 방식을 사용합니다.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.oauthEnabled === true).onChange(async (value) => {
+        this.plugin.settings.oauthEnabled = value === true;
+        await this.plugin.saveSettings();
+      })
+    );
+    let oauthAuthUrlText = null;
+    let oauthTokenUrlText = null;
+    let oauthScopesText = null;
+    new import_obsidian4.Setting(containerEl).setName("OAuth provider preset").setDesc("google | auth0 | custom (auto-fill helper)").addDropdown(
+      (dropdown) => dropdown.addOption("google", "google").addOption("auth0", "auth0").addOption("custom", "custom").setValue(
+        this.plugin.normalizeOAuthProviderPresetForQa(this.plugin.settings.oauthProviderPreset)
+      ).onChange(async (value) => {
+        this.plugin.applyOAuthProviderPresetForQa(value);
+        if (oauthAuthUrlText) {
+          oauthAuthUrlText.setValue(this.plugin.settings.oauthAuthUrl);
+        }
+        if (oauthTokenUrlText) {
+          oauthTokenUrlText.setValue(this.plugin.settings.oauthTokenUrl);
+        }
+        if (oauthScopesText) {
+          oauthScopesText.setValue(this.plugin.settings.oauthScopes);
+        }
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Auth0 domain (preset helper)").setDesc("예: your-tenant.us.auth0.com (Auth0 preset에서 URL 자동완성)").addText(
+      (text) => text.setPlaceholder("your-tenant.us.auth0.com").setValue(this.plugin.settings.oauthAuth0Domain).onChange(async (value) => {
+        const domain = this.plugin.sanitizeOAuthDomainForQa(value);
+        this.plugin.settings.oauthAuth0Domain = domain;
+        if (this.plugin.normalizeOAuthProviderPresetForQa(this.plugin.settings.oauthProviderPreset) === "auth0") {
+          const auth0Urls = this.plugin.resolveAuth0PresetUrlsForQa(domain);
+          if (auth0Urls) {
+            this.plugin.settings.oauthAuthUrl = auth0Urls.authUrl;
+            this.plugin.settings.oauthTokenUrl = auth0Urls.tokenUrl;
+            if (oauthAuthUrlText) {
+              oauthAuthUrlText.setValue(this.plugin.settings.oauthAuthUrl);
+            }
+            if (oauthTokenUrlText) {
+              oauthTokenUrlText.setValue(this.plugin.settings.oauthTokenUrl);
+            }
+          }
+        }
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("OAuth provider hint (advanced) / OAuth 공급자 힌트(고급)").setDesc("Optional token payload hint (default: generic). / 토큰 페이로드 힌트(기본: generic)").addText(
+      (text) => text.setPlaceholder("generic").setValue(this.plugin.settings.oauthProvider).onChange(async (value) => {
+        this.plugin.settings.oauthProvider = value.trim() || "generic";
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("OAuth authorization URL / OAuth 인증 URL").addText((text) => {
+      oauthAuthUrlText = text;
+      return text.setPlaceholder("https://provider.example.com/oauth/authorize").setValue(this.plugin.settings.oauthAuthUrl).onChange(async (value) => {
+        this.plugin.settings.oauthAuthUrl = value.trim();
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(containerEl).setName("OAuth token URL / OAuth 토큰 URL").addText((text) => {
+      oauthTokenUrlText = text;
+      return text.setPlaceholder("https://provider.example.com/oauth/token").setValue(this.plugin.settings.oauthTokenUrl).onChange(async (value) => {
+        this.plugin.settings.oauthTokenUrl = value.trim();
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(containerEl).setName("OAuth client ID / OAuth 클라이언트 ID").addText(
+      (text) => text.setPlaceholder("client-id").setValue(this.plugin.settings.oauthClientId).onChange(async (value) => {
+        this.plugin.settings.oauthClientId = value.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("OAuth scopes / OAuth 스코프").setDesc("Comma or space separated scopes. / 쉼표 또는 공백으로 구분").addText((text) => {
+      oauthScopesText = text;
+      return text.setPlaceholder("openid profile email").setValue(this.plugin.settings.oauthScopes).onChange(async (value) => {
+        this.plugin.settings.oauthScopes = value.trim();
+        await this.plugin.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(containerEl).setName("OAuth redirect URI / OAuth 리디렉션 URI").addText(
+      (text) => text.setPlaceholder("http://127.0.0.1:8765/callback").setValue(this.plugin.settings.oauthRedirectUri).onChange(async (value) => {
+        this.plugin.settings.oauthRedirectUri = this.plugin.normalizeOAuthRedirectUriForQa(value);
+        await this.plugin.saveSettings();
+        text.setValue(this.plugin.settings.oauthRedirectUri);
+      })
+    );
+    const oauthRedirectGuide = containerEl.createDiv({ cls: "omni-forge-settings-guide-note" });
+    oauthRedirectGuide.createSpan({ text: "Redirect URI example: " });
+    oauthRedirectGuide.createEl("code", { text: "http://127.0.0.1:8765/callback" });
+    oauthRedirectGuide.createEl("div", { text: "Provider 콘솔에 위 URI를 Redirect URI 허용(whitelist)으로 등록해야 로그인됩니다." });
+    oauthRedirectGuide.createEl("div", { text: "입력 순서(초보자 권장): Auth URL → Token URL → Client ID → Redirect URI → Start OAuth Login" });
+    oauthRedirectGuide.createEl("div", { text: "Obsidian-plugin-first: 외부 스크립트보다 Omni-Forge 설정창에서 먼저 구성/검증하세요." });
+    new import_obsidian4.Setting(containerEl).setName("OAuth use PKCE / OAuth PKCE 사용").setDesc("Enable S256 code challenge. / S256 코드 챌린지 사용").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.oauthUsePkce !== false).onChange(async (value) => {
+        this.plugin.settings.oauthUsePkce = value === true;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("OAuth login validation").setDesc(this.plugin.getOAuthLoginValidationForQa().message);
+    new import_obsidian4.Setting(containerEl).setName("OAuth session actions / OAuth 세션 동작").setDesc(this.plugin.getOAuthStatusSummaryForQa()).addButton(
+      (button) => button.setButtonText("Start OAuth Login / OAuth 로그인 시작").onClick(async () => {
+        const validation = this.plugin.getOAuthLoginValidationForQa();
+        if (!validation.ready) {
+          new import_obsidian4.Notice(validation.message, 8e3);
+          this.display();
+          return;
+        }
+        new import_obsidian4.Notice("\uBE0C\uB77C\uC6B0\uC800\uB97C \uC5EC\uB294 \uC911... / Opening browser...", 3500);
+        try {
+          await this.plugin.startOAuthLoginForQa();
+          new import_obsidian4.Notice("OAuth login completed. / OAuth 로그인 완료");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          new import_obsidian4.Notice(`OAuth login failed: ${message}`, 8e3);
+        }
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Logout / 로그아웃").onClick(async () => {
+        await this.plugin.clearOAuthTokensForQa();
+        new import_obsidian4.Notice("OAuth tokens cleared. / OAuth 토큰 삭제 완료");
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Check OAuth Status / OAuth 상태 확인").onClick(async () => {
+        new import_obsidian4.Notice(this.plugin.getOAuthStatusSummaryForQa(), 8e3);
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("OpenAI API key").addText(
       (text) => text.setPlaceholder("sk-...").setValue(this.plugin.settings.openAIApiKey).onChange(async (value) => {
         this.plugin.settings.openAIApiKey = value.trim();
@@ -10282,6 +11774,36 @@ ${availability.note}`).addText(
       (toggle) => toggle.setValue(this.plugin.settings.forceAllToAllLinkedEnabled).onChange(async (value) => {
         this.plugin.settings.forceAllToAllLinkedEnabled = value;
         await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Analyze linked scope mode").setDesc(
+      "selected_only: selected notes only. selected_plus_related: include related notes under guardrails. vault_sampled: sampled vault pool with safe fallback."
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("selected_only", "selected_only").addOption("selected_plus_related", "selected_plus_related").addOption("vault_sampled", "vault_sampled").setValue(
+        this.plugin.normalizeAnalyzeLinkedScopeModeSetting(this.plugin.settings.analyzeLinkedScopeMode)
+      ).onChange(async (value) => {
+        this.plugin.settings.analyzeLinkedScopeMode = this.plugin.normalizeAnalyzeLinkedScopeModeSetting(value);
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Related scope max candidates").setDesc(
+      `Guardrail cap for selected_plus_related/vault_sampled (${16}-${LINKED_SCOPE_MAX_CANDIDATES_HARD}).`
+    ).addText(
+      (text) => text.setPlaceholder(String(DEFAULT_SETTINGS.relatedScopeMaxCandidates)).setValue(String(this.plugin.settings.relatedScopeMaxCandidates)).onChange(async (value) => {
+        const parsed = parsePositiveInt(value, this.plugin.settings.relatedScopeMaxCandidates);
+        this.plugin.settings.relatedScopeMaxCandidates = this.plugin.normalizeRelatedScopeMaxCandidatesSetting(parsed);
+        await this.plugin.saveSettings();
+        text.setValue(String(this.plugin.settings.relatedScopeMaxCandidates));
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Related scope time budget (ms)").setDesc(
+      `Guardrail time budget for related candidate expansion (${50}-${LINKED_SCOPE_TIME_BUDGET_MS_HARD}ms).`
+    ).addText(
+      (text) => text.setPlaceholder(String(DEFAULT_SETTINGS.relatedScopeTimeBudgetMs)).setValue(String(this.plugin.settings.relatedScopeTimeBudgetMs)).onChange(async (value) => {
+        const parsed = parsePositiveInt(value, this.plugin.settings.relatedScopeTimeBudgetMs);
+        this.plugin.settings.relatedScopeTimeBudgetMs = this.plugin.normalizeRelatedScopeTimeBudgetMsSetting(parsed);
+        await this.plugin.saveSettings();
+        text.setValue(String(this.plugin.settings.relatedScopeTimeBudgetMs));
       })
     );
     new import_obsidian4.Setting(containerEl).setName("Analyze index").addToggle(
@@ -10422,6 +11944,25 @@ ${availability.note}`).addText(
         await this.plugin.setQaModelOverrideForQa(value.trim());
       })
     );
+    const qaLocalHealth = this.plugin.getQaLocalModelValidationForQa(this.plugin.getQaRolePresetForQa());
+    const localModelReadiness = new import_obsidian4.Setting(containerEl).setName("Local model readiness / \uB85C\uCEEC \uBAA8\uB378 \uC810\uAC80").setDesc(
+      `${qaLocalHealth.summary}
+Detected local models: ${qaLocalHealth.detectedCount}`
+    ).addButton(
+      (button) => button.setButtonText("Apply recommendation / \uAD8C\uC7A5\uAC12 \uC801\uC6A9").onClick(async () => {
+        const summary = await this.plugin.applyRecommendedQaModelForRole(this.plugin.getQaRolePresetForQa());
+        new import_obsidian4.Notice(summary, 6500);
+        this.display();
+      })
+    ).addButton(
+      (button) => button.setButtonText("Refresh detect / \uAC10\uC9C0 \uC0C8\uB85C\uACE0\uCE68").onClick(async () => {
+        await this.plugin.refreshOllamaDetection({ notify: true, autoApply: true });
+        this.display();
+      })
+    );
+    if (qaLocalHealth.status === "warn" || qaLocalHealth.status === "blocked") {
+      localModelReadiness.settingEl.addClass("omni-forge-setting-unavailable-model");
+    }
     new import_obsidian4.Setting(containerEl).setName("Prefer Ollama /api/chat (with fallback)").setDesc("Use role-based chat first, then fallback to /api/generate when unavailable.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.qaPreferChatApi).onChange(async (value) => {
         this.plugin.settings.qaPreferChatApi = value;
@@ -10661,10 +12202,42 @@ ${availability.note}`).addText(
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("PDF attachments in chat").setDesc("\uAE30\uBCF8 ON\uC785\uB2C8\uB2E4. \uC0C1\uC138 \uD30C\uC11C \uC124\uC815\uC740 Parser \uD0ED\uC5D0\uC11C \uAD00\uB9AC\uD569\uB2C8\uB2E4.");
-    new import_obsidian4.Setting(containerEl).setName("Parser mode").setDesc("Fast\uB294 \uC18D\uB3C4 \uC6B0\uC120, Detailed\uB294 OCR/\uCD94\uCD9C \uD488\uC9C8 \uC6B0\uC120\uC785\uB2C8\uB2E4.").addDropdown(
-      (dropdown) => dropdown.addOption("fast", "Fast").addOption("detailed", "Detailed").setValue(this.plugin.settings.qaParserMode).onChange(async (value) => {
+    new import_obsidian4.Setting(containerEl).setName("PDF attachments in chat").setDesc("\uAE30\uBCF8 ON\uC785\uB2C8\uB2E4. \uD30C\uC11C \uAD00\uB828 \uC0C1\uC138 \uC124\uC815\uC740 Chat \uD0ED\uC5D0\uC11C \uAD00\uB9AC\uD569\uB2C8\uB2E4.");
+    new import_obsidian4.Setting(containerEl).setName("Parser mode").setDesc("Fast는 경량 파서, Detailed는 OCR 페이지 확장과 긴 텍스트 추출을 사용합니다.").addDropdown(
+      (dropdown) => dropdown.addOption("fast", "Fast / 빠른 파서").addOption("detailed", "Detailed / 상세 파서").setValue(this.plugin.settings.qaParserMode).onChange(async (value) => {
         this.plugin.settings.qaParserMode = value === "detailed" ? "detailed" : "fast";
+        await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Parser inbox default collapsed").setDesc("If enabled, parser inbox control section is collapsed by default in chat view.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaParserInboxCollapsedDefault).onChange(async (value) => {
+        this.plugin.settings.qaParserInboxCollapsedDefault = value;
+        await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Selected-notes ask: require selection").setDesc("When command 'Ask local AI from selected notes' is used, block send if selection is empty.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaRequireSelectionForSelectedAsk).onChange(async (value) => {
+        this.plugin.settings.qaRequireSelectionForSelectedAsk = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Parser inbox watch").setDesc("Watch inbox folder for PDF/DOCX/XLSX/HWP/HWPX uploads and auto-convert to parser output. Multiple files are processed in sequential/safe order. HWPX supports first-pass text extraction; HWP tries soffice PoC (hwp->pdf) and falls back to guide when unavailable/failed.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaParserInboxWatchEnabled).onChange(async (value) => {
+        this.plugin.settings.qaParserInboxWatchEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Parser inbox folder").setDesc("Vault-relative folder watched by parser inbox pipeline.").addText(
+      (text) => text.setPlaceholder("inbox").setValue(this.plugin.settings.qaParserInboxFolder).onChange(async (value) => {
+        this.plugin.settings.qaParserInboxFolder = (0, import_obsidian4.normalizePath)(value.trim() || "inbox");
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Parser ingest output format").setDesc("Output format for inbox conversion result.").addDropdown(
+      (dropdown) => dropdown.addOption("md", "md").addOption("xml", "xml").setValue(this.plugin.settings.qaParserIngestOutputFormat).onChange(async (value) => {
+        this.plugin.settings.qaParserIngestOutputFormat = value === "xml" ? "xml" : "md";
         await this.plugin.saveSettings();
       })
     );
@@ -10833,6 +12406,35 @@ ${availability.note}`).addText(
     new import_obsidian4.Setting(containerEl).setName("Include subfolders for selected folders").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.includeSubfoldersInFolderSelection).onChange(async (value) => {
         this.plugin.settings.includeSubfoldersInFolderSelection = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    containerEl.createEl("h3", { text: "Folder reclass move apply" });
+    new import_obsidian4.Setting(containerEl).setName("Auto-create target folders").setDesc(
+      "When move apply runs, create missing suggested folders automatically."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.autoCreateTargetFolders === true).onChange(async (value) => {
+        this.plugin.settings.autoCreateTargetFolders = value === true;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Folder reclass apply mode").setDesc(
+      "metadata_only: no move. move_only: move files only. metadata_and_move: allow both."
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("metadata_only", "metadata_only").addOption("move_only", "move_only").addOption("metadata_and_move", "metadata_and_move").setValue(
+        normalizeFolderReclassApplyMode(this.plugin.settings.applyMode)
+      ).onChange(async (value) => {
+        this.plugin.settings.applyMode = normalizeFolderReclassApplyMode(value);
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName("Move conflict policy").setDesc(
+      "suffix: append (n) to resolve conflicts. skip: keep existing and skip move."
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("suffix", "suffix").addOption("skip", "skip").setValue(
+        normalizeFolderReclassMoveConflictPolicy(this.plugin.settings.moveConflictPolicy)
+      ).onChange(async (value) => {
+        this.plugin.settings.moveConflictPolicy = normalizeFolderReclassMoveConflictPolicy(value);
         await this.plugin.saveSettings();
       })
     );
@@ -11047,7 +12649,6 @@ _KnowledgeWeaverSettingTab.TAB_OPTIONS = [
   { key: "chat", en: "Chat", ko: "\uCC44\uD305" },
   { key: "orchestration", en: "Orchestration", ko: "\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158" },
   { key: "skills", en: "Skills", ko: "\uC2A4\uD0AC\uC2A4" },
-  { key: "parser", en: "Parser", ko: "\uD30C\uC11C" },
   { key: "guide", en: "Description", ko: "\uC124\uBA85" }
 ];
 _KnowledgeWeaverSettingTab.QUICK_TAB_VISIBLE_NAME_PREFIXES = [
@@ -11118,6 +12719,8 @@ _KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES = [
 _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
   "Chat model profile",
   "Model inventory refresh",
+  "Q&A model",
+  "Local model readiness",
   "Ollama detected model picker",
   "Ollama detection summary",
   "Flash profile",
@@ -11140,6 +12743,10 @@ _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
   "Auto-sync chat thread",
   "PDF attachments in chat",
   "Parser mode",
+  "Parser inbox default collapsed",
+  "Parser inbox watch",
+  "Parser inbox folder",
+  "Parser ingest output format",
   "Enable agent tool mode (experimental)",
   "Require approval before tool execution",
   "Allow shell tool (danger)",
@@ -11735,18 +13342,41 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.analysisCache = null;
     this.analysisCacheDirty = false;
     this.pendingQaActionPlan = null;
+    this.qaSelectedAskIntent = false;
     this.lastQaRoutingLog = null;
+    this.oauthAutoLoginCooldownUntil = 0;
+    this.oauthAutoLoginMissingConfigNotified = false;
     this.pendingNewNoteWatchPrompts = /* @__PURE__ */ new Set();
+    this.parserInboxInFlightPaths = /* @__PURE__ */ new Set();
+    this.parserInboxQueue = Promise.resolve();
     this.autoTagInFlightPaths = /* @__PURE__ */ new Set();
     this.autoTagLastRunByPath = /* @__PURE__ */ new Map();
     this.parserToolStatus = {
       pdftotext: false,
       pdftoppm: false,
-      tesseract: false
+      tesseract: false,
+      soffice: false
     };
     this.parserToolSummary = "Parser tool check has not run yet.";
-    this.parserHwpLastDecisionSummary = "미선택";
-    this.parserHwpBatchPolicySummary = "OFF(파일별 선택)";
+    this.parserInboxLastEvent = {
+      fileName: "(none)",
+      result: "idle",
+      message: "Parser inbox idle"
+    };
+    this.parserInboxMetrics = {
+      stage: "idle",
+      queueLength: 0,
+      processed: 0,
+      total: 0,
+      success: 0,
+      skip: 0,
+      error: 0,
+      startedAt: 0,
+      elapsedMs: 0,
+      etaMs: 0,
+      lastFile: "(none)",
+      lastResult: "idle"
+    };
   }
   async onload() {
     await this.loadSettings();
@@ -11758,18 +13388,19 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     );
     await this.cleanupLegacyCacheArtifacts();
     void this.refreshParserToolReadinessForQa(false);
-    this.addRibbonIcon("message-square", "Open Omni Forge Local Chat", () => {
+    this.addRibbonIcon("message-square", "Open Omni Forge", () => {
       void this.openLocalQaWorkspaceView();
-    });
-    this.addRibbonIcon("list-checks", "Open Omni Forge Analyzed Track", () => {
-      void this.openAnalyzedTrack();
     });
     this.registerEvent(
       this.app.vault.on("create", (entry) => {
-        if (!(entry instanceof import_obsidian4.TFile) || entry.extension !== "md") {
+        if (!(entry instanceof import_obsidian4.TFile)) {
           return;
         }
-        void this.handleWatchedNewFile(entry);
+        if (entry.extension === "md") {
+          void this.handleWatchedNewFile(entry);
+          return;
+        }
+        void this.handleParserInboxFileCreate(entry);
       })
     );
     this.registerEvent(
@@ -11796,8 +13427,110 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       callback: async () => this.runAnalysis()
     });
     this.addCommand({
+      id: "apply-linked-edges-graph-view",
+      name: "Apply linked edges to selected notes (Graph View)",
+      callback: async () => this.applyLinkedEdgesForGraphView()
+    });
+    this.addCommand({
+      id: "workflow-select-target-notes",
+      name: "Workflow 1/3: Select target notes/folders",
+      callback: async () => this.openSelectionModal()
+    });
+    this.addCommand({
+      id: "workflow-analyze-target-notes",
+      name: "Workflow 2/3: Analyze selected notes (suggestions by default)",
+      callback: async () => this.runAnalysis()
+    });
+    this.addCommand({
+      id: "workflow-apply-linked-edges-graph-view",
+      name: "Workflow 3/3: Apply linked edges to selected notes (Graph View)",
+      callback: async () => this.applyLinkedEdgesForGraphView()
+    });
+    this.addCommand({
+      id: "workflow-ko-select-target-notes",
+      name: "워크플로우 1/3: 선택(Select target notes/folders)",
+      callback: async () => this.openSelectionModal()
+    });
+    this.addCommand({
+      id: "workflow-ko-analyze-target-notes",
+      name: "워크플로우 2/3: 분석/적용(Analyze selected notes)",
+      callback: async () => this.runAnalysis()
+    });
+    this.addCommand({
+      id: "workflow-ko-apply-linked-edges-graph-view",
+      name: "워크플로우 3/3: 그래프 확인용 linked 반영(Apply linked edges to selected notes)",
+      callback: async () => this.applyLinkedEdgesForGraphView()
+    });
+    this.addCommand({
+      id: "graph-linked-flow-1-select",
+      name: "Graph Linked 1/3: Select target notes/folders",
+      callback: async () => this.openSelectionModal()
+    });
+    this.addCommand({
+      id: "graph-linked-flow-2-analyze",
+      name: "Graph Linked 2/3: Analyze selected notes (suggestions by default)",
+      callback: async () => this.runAnalysis()
+    });
+    this.addCommand({
+      id: "graph-linked-flow-3-apply",
+      name: "Graph Linked 3/3: Apply linked edges to selected notes",
+      callback: async () => this.applyLinkedEdgesForGraphView()
+    });
+    this.addCommand({
+      id: "graph-linked-flow-ko-1-select",
+      name: "그래프 linked 1/3: 선택(Select target notes/folders)",
+      callback: async () => this.openSelectionModal()
+    });
+    this.addCommand({
+      id: "graph-linked-flow-ko-2-analyze",
+      name: "그래프 linked 2/3: 분석(Analyze selected notes)",
+      callback: async () => this.runAnalysis()
+    });
+    this.addCommand({
+      id: "graph-linked-flow-ko-3-apply",
+      name: "그래프 linked 3/3: 반영(Apply linked edges to selected notes)",
+      callback: async () => this.applyLinkedEdgesForGraphView()
+    });
+    this.addCommand({
+      id: "explain-orchestrator-parser-modes",
+      name: "Workflow/Graph Linked: Explain orchestration/parser modes (quick help)",
+      callback: async () => {
+        new import_obsidian4.Notice("Mode guide: Conversation mode controls agent routing(Ask/Plan/Agent/Orchestration). Parser mode controls attachment extraction(Fast vs Detailed OCR). Recommended default: Ask + Fast. For multi-step planning: Orchestration + Detailed. Check parser mode badges in chat header/status panel for current mode.", 9e3);
+      }
+    });
+    this.addCommand({
+      id: "parser-inbox-open-folder",
+      name: "Parser inbox: Open folder",
+      callback: async () => {
+        await this.openParserInboxFolderForQa();
+      }
+    });
+    this.addCommand({
+      id: "parser-inbox-scan-now",
+      name: "Parser inbox: Scan now",
+      callback: async () => {
+        await this.scanParserInboxNowForQa();
+      }
+    });
+    this.addCommand({
+      id: "parser-inbox-show-supported-formats",
+      name: "Parser inbox: Show supported formats",
+      callback: async () => {
+        this.notice(`Parser formats: ${this.getParserSupportedFormatsForQa().join(", ")}`, 7e3);
+      }
+    });
+    this.addCommand({
+      id: "parser-inbox-toggle-watch",
+      name: "Parser inbox: Toggle watch on/off",
+      callback: async () => {
+        const next = !this.settings.qaParserInboxWatchEnabled;
+        await this.setParserInboxWatchEnabledForQa(next);
+        this.notice(`Parser inbox watch: ${next ? "ON" : "OFF"}`, 5e3);
+      }
+    });
+    this.addCommand({
       id: "folder-reclass-preview",
-      name: "Folder reclassification (preview only)",
+      name: "Folder reclassification (preview + apply moves)",
       callback: () => {
         const ctx = { app: this.app };
         const selectedFiles = [];
@@ -12017,7 +13750,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.addCommand({
       id: "ask-local-ai-from-selected-notes",
       name: "Ask local AI from selected notes",
-      callback: async () => this.openLocalQaWorkspaceView()
+      callback: async () => {
+        this.markSelectedAskIntentForQa();
+        await this.openLocalQaWorkspaceView();
+      }
     });
     this.addSettingTab(new KnowledgeWeaverSettingTab(this.app, this));
   }
@@ -12054,6 +13790,43 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     const available = (_d = (_c = options.find((option) => option.status !== "unavailable")) == null ? void 0 : _c.model) == null ? void 0 : _d.trim();
     return available || null;
+  }
+  getQaModelRecommendationForRole(roleHint) {
+    const role = ROLE_MODEL_SETTING_CONFIGS.some((config) => config.role === roleHint) ? roleHint : this.resolveQaPrimaryRole();
+    const fromRoleOptions = this.resolveDetectedRoleFallbackModel(role);
+    if (fromRoleOptions) {
+      return fromRoleOptions;
+    }
+    const qaModel = this.settings.qaOllamaModel.trim();
+    if (qaModel && isOllamaModelAllowedForQaRole(role, qaModel)) {
+      return qaModel;
+    }
+    const baseModel = this.settings.ollamaModel.trim();
+    if (baseModel && isOllamaModelAllowedForQaRole(role, baseModel)) {
+      return baseModel;
+    }
+    return "";
+  }
+  async applyRecommendedQaModelForRole(roleHint) {
+    const role = ROLE_MODEL_SETTING_CONFIGS.some((config) => config.role === roleHint) ? roleHint : this.resolveQaPrimaryRole();
+    if (this.getQaChatModelFamilyForQa() === "cloud") {
+      return "Cloud profile is active. Local role-model recommendation is skipped.";
+    }
+    const recommended = this.getQaModelRecommendationForRole(role);
+    if (!recommended) {
+      return `No recommended local model was found for role '${role}'. Refresh local detection first.`;
+    }
+    const roleKey = this.getRoleModelSettingKey(role);
+    if (roleKey) {
+      this.writeRoleModelSetting(roleKey, recommended);
+    }
+    this.settings.qaOllamaModel = recommended;
+    if (!this.settings.ollamaModel.trim()) {
+      this.settings.ollamaModel = recommended;
+    }
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+    return `Applied local recommendation for role '${role}': ${recommended}`;
   }
   getRoleModelSettingKey(role) {
     var _a;
@@ -12136,6 +13909,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return this.embeddingDetectionOptions;
   }
   async openLocalQaWorkspaceView(openNewPane = false) {
+    const isCloudFamily = this.getQaChatModelFamilyForQa() === "cloud";
+    if (isCloudFamily && this.settings.oauthEnabled === true) {
+      void this.tryAutoOAuthLoginForQa("openLocalQaWorkspaceView");
+    }
     const existingLeaves = this.app.workspace.getLeavesOfType(LOCAL_QA_VIEW_TYPE);
     if (openNewPane) {
       if (existingLeaves.length >= LOCAL_QA_MAX_PANES) {
@@ -12304,6 +14081,433 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     } catch (e) {
     }
   }
+  normalizeOAuthProviderPresetForQa(rawValue) {
+    const value = typeof rawValue === "string" ? rawValue.trim().toLowerCase() : "";
+    if (value === "google" || value === "auth0" || value === "custom") {
+      return value;
+    }
+    return "custom";
+  }
+  sanitizeOAuthDomainForQa(rawValue) {
+    const value = typeof rawValue === "string" ? rawValue.trim() : "";
+    if (!value) {
+      return "";
+    }
+    const withoutScheme = value.replace(/^https?:\/\//i, "");
+    const hostOnly = withoutScheme.split("/")[0] || "";
+    return hostOnly.trim().replace(/\/+$/g, "");
+  }
+  resolveAuth0PresetUrlsForQa(rawDomain) {
+    const domain = this.sanitizeOAuthDomainForQa(rawDomain);
+    if (!domain) {
+      return null;
+    }
+    return {
+      authUrl: `https://${domain}/authorize`,
+      tokenUrl: `https://${domain}/oauth/token`
+    };
+  }
+  applyOAuthProviderPresetForQa(rawPreset) {
+    const preset = this.normalizeOAuthProviderPresetForQa(rawPreset);
+    this.settings.oauthProviderPreset = preset;
+    if (preset === "google") {
+      this.settings.oauthProvider = "google";
+      this.settings.oauthAuthUrl = "https://accounts.google.com/o/oauth2/v2/auth";
+      this.settings.oauthTokenUrl = "https://oauth2.googleapis.com/token";
+      this.settings.oauthScopes = "openid profile email";
+      return;
+    }
+    if (preset === "auth0") {
+      this.settings.oauthProvider = "auth0";
+      const auth0Urls = this.resolveAuth0PresetUrlsForQa(this.settings.oauthAuth0Domain);
+      if (auth0Urls) {
+        this.settings.oauthAuthUrl = auth0Urls.authUrl;
+        this.settings.oauthTokenUrl = auth0Urls.tokenUrl;
+      }
+      return;
+    }
+    this.settings.oauthProvider = "generic";
+  }
+  getOAuthAutoLoginCooldownMsForQa() {
+    return 3e5;
+  }
+  isOAuthAutoLoginCoolingDownForQa(now = Date.now()) {
+    return Number.isFinite(this.oauthAutoLoginCooldownUntil) && this.oauthAutoLoginCooldownUntil > now;
+  }
+  async tryAutoOAuthLoginForQa(reason = "runtime") {
+    if (this.settings.oauthEnabled !== true) {
+      return false;
+    }
+    if (this.isOAuthTokenFreshForQa()) {
+      return false;
+    }
+    const now = Date.now();
+    if (this.isOAuthAutoLoginCoolingDownForQa(now)) {
+      return false;
+    }
+    const validation = this.getOAuthLoginValidationForQa();
+    if (!validation.ready) {
+      if (!this.oauthAutoLoginMissingConfigNotified) {
+        new import_obsidian4.Notice(`${validation.message} (auto-login skipped)`, 8e3);
+        this.oauthAutoLoginMissingConfigNotified = true;
+      }
+      this.oauthAutoLoginCooldownUntil = now + this.getOAuthAutoLoginCooldownMsForQa();
+      return false;
+    }
+    this.oauthAutoLoginMissingConfigNotified = false;
+    try {
+      new import_obsidian4.Notice("OAuth 자동 로그인 시도중... / Opening browser...", 3500);
+      await this.startOAuthLoginForQa();
+      this.oauthAutoLoginCooldownUntil = 0;
+      new import_obsidian4.Notice("OAuth 자동 로그인 완료 / OAuth auto-login completed", 4e3);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      this.oauthAutoLoginCooldownUntil = now + this.getOAuthAutoLoginCooldownMsForQa();
+      new import_obsidian4.Notice(`OAuth 자동 로그인 실패(5분 후 재시도): ${message}`, 8e3);
+      return false;
+    }
+  }
+  getOAuthLoginValidationForQa() {
+    const required = [
+      { key: "oauthAuthUrl", label: "auth URL" },
+      { key: "oauthTokenUrl", label: "token URL" },
+      { key: "oauthClientId", label: "client ID" },
+      { key: "oauthRedirectUri", label: "redirect URI" }
+    ];
+    const missing = required.filter((item) => {
+      const value = this.settings[item.key];
+      return typeof value !== "string" || !value.trim();
+    }).map((item) => item.label);
+    if (missing.length === 0) {
+      return {
+        ready: true,
+        missing,
+        message: "OAuth 로그인 준비 완료 / OAuth login is ready."
+      };
+    }
+    const missingText = missing.join(", ");
+    return {
+      ready: false,
+      missing,
+      message: `OAuth 로그인 전 필수값 누락: ${missingText} / Missing required fields: ${missingText}`
+    };
+  }
+  normalizeOAuthRedirectUriForQa(rawValue) {
+    const fallback = DEFAULT_SETTINGS.oauthRedirectUri;
+    const value = typeof rawValue === "string" && rawValue.trim() ? rawValue.trim() : fallback;
+    try {
+      const parsed = new URL(value);
+      const host = parsed.hostname.toLowerCase();
+      if (host !== "127.0.0.1" && host !== "localhost") {
+        return fallback;
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return fallback;
+      }
+      parsed.protocol = "http:";
+      parsed.hostname = "127.0.0.1";
+      parsed.port = "8765";
+      if (!parsed.pathname || parsed.pathname === "/") {
+        parsed.pathname = "/callback";
+      }
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    } catch (e) {
+      return fallback;
+    }
+  }
+  parseOAuthScopesForQa() {
+    const raw = typeof this.settings.oauthScopes === "string" ? this.settings.oauthScopes : "";
+    return raw.split(/[\s,\n]+/).map((item) => item.trim()).filter((item) => item.length > 0).join(" ");
+  }
+  getOAuthTokenExpiryMsForQa() {
+    const raw = Number(this.settings.oauthTokenExpiry);
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return 0;
+    }
+    return Math.floor(raw);
+  }
+  isOAuthTokenFreshForQa(bufferMs = 6e4) {
+    const token = typeof this.settings.oauthAccessToken === "string" ? this.settings.oauthAccessToken.trim() : "";
+    if (!token) {
+      return false;
+    }
+    const expiryMs = this.getOAuthTokenExpiryMsForQa();
+    if (!expiryMs) {
+      return true;
+    }
+    return Date.now() + Math.max(0, Math.floor(bufferMs)) < expiryMs;
+  }
+  getOAuthStatusSummaryForQa() {
+    const enabled = this.settings.oauthEnabled === true ? "enabled" : "disabled";
+    const accessTokenPresent = typeof this.settings.oauthAccessToken === "string" && this.settings.oauthAccessToken.trim().length > 0;
+    const refreshTokenPresent = typeof this.settings.oauthRefreshToken === "string" && this.settings.oauthRefreshToken.trim().length > 0;
+    const expiryMs = this.getOAuthTokenExpiryMsForQa();
+    const expired = expiryMs > 0 && Date.now() >= expiryMs;
+    const expiryText = expiryMs > 0 ? new Date(expiryMs).toISOString() : "none";
+    return `OAuth ${enabled}; accessToken=${accessTokenPresent ? "present" : "missing"}; refreshToken=${refreshTokenPresent ? "present" : "missing"}; expiry=${expiryText}${expired ? " (expired)" : ""}`;
+  }
+  async clearOAuthTokensForQa() {
+    this.settings.oauthAccessToken = "";
+    this.settings.oauthRefreshToken = "";
+    this.settings.oauthTokenExpiry = 0;
+    await this.saveSettings();
+  }
+  async exchangeOAuthCodeForTokenForQa(code, redirectUri, codeVerifier) {
+    const tokenUrl = this.settings.oauthTokenUrl.trim();
+    const clientId = this.settings.oauthClientId.trim();
+    if (!tokenUrl) {
+      throw new Error("OAuth token URL is empty.");
+    }
+    if (!clientId) {
+      throw new Error("OAuth client ID is empty.");
+    }
+    const body = new URLSearchParams();
+    body.set("grant_type", "authorization_code");
+    body.set("code", code);
+    body.set("redirect_uri", redirectUri);
+    body.set("client_id", clientId);
+    if (this.settings.oauthUsePkce !== false && codeVerifier) {
+      body.set("code_verifier", codeVerifier);
+    }
+    const scopes = this.parseOAuthScopesForQa();
+    if (scopes) {
+      body.set("scope", scopes);
+    }
+    // TODO: Some providers require extra params (client_secret, audience, resource). Add per-provider fields once endpoint requirements are confirmed.
+    const providerHint = typeof this.settings.oauthProvider === "string" ? this.settings.oauthProvider.trim().toLowerCase() : "";
+    if (providerHint && providerHint !== "generic") {
+      body.set("provider", providerHint);
+    }
+    const response = await (0, import_obsidian4.requestUrl)({
+      url: tokenUrl,
+      method: "POST",
+      headers: {
+        Accept: "application/json"
+      },
+      contentType: "application/x-www-form-urlencoded",
+      body: body.toString(),
+      throw: false
+    });
+    const payload = parseOAuthTokenPayload(response);
+    if (response.status >= 300) {
+      const detail = typeof payload.error_description === "string" ? payload.error_description : typeof payload.error === "string" ? payload.error : typeof response.text === "string" ? response.text.trim() : "";
+      throw new Error(`OAuth token exchange failed: ${response.status}${detail ? ` (${detail})` : ""}`);
+    }
+    const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
+    if (!accessToken) {
+      throw new Error("OAuth token response is missing access_token.");
+    }
+    this.settings.oauthAccessToken = accessToken;
+    if (typeof payload.refresh_token === "string" && payload.refresh_token.trim()) {
+      this.settings.oauthRefreshToken = payload.refresh_token.trim();
+    }
+    this.settings.oauthTokenExpiry = resolveOAuthTokenExpiryMs(payload);
+    return accessToken;
+  }
+  async refreshOAuthAccessTokenForQa() {
+    const tokenUrl = this.settings.oauthTokenUrl.trim();
+    const clientId = this.settings.oauthClientId.trim();
+    const refreshToken = this.settings.oauthRefreshToken.trim();
+    if (!tokenUrl) {
+      throw new Error("OAuth token URL is empty.");
+    }
+    if (!clientId) {
+      throw new Error("OAuth client ID is empty.");
+    }
+    if (!refreshToken) {
+      throw new Error("OAuth refresh token is missing.");
+    }
+    const body = new URLSearchParams();
+    body.set("grant_type", "refresh_token");
+    body.set("refresh_token", refreshToken);
+    body.set("client_id", clientId);
+    const scopes = this.parseOAuthScopesForQa();
+    if (scopes) {
+      body.set("scope", scopes);
+    }
+    // TODO: Some providers require extra params (client_secret, audience, resource). Add per-provider fields once endpoint requirements are confirmed.
+    const providerHint = typeof this.settings.oauthProvider === "string" ? this.settings.oauthProvider.trim().toLowerCase() : "";
+    if (providerHint && providerHint !== "generic") {
+      body.set("provider", providerHint);
+    }
+    const response = await (0, import_obsidian4.requestUrl)({
+      url: tokenUrl,
+      method: "POST",
+      headers: {
+        Accept: "application/json"
+      },
+      contentType: "application/x-www-form-urlencoded",
+      body: body.toString(),
+      throw: false
+    });
+    const payload = parseOAuthTokenPayload(response);
+    if (response.status >= 300) {
+      const detail = typeof payload.error_description === "string" ? payload.error_description : typeof payload.error === "string" ? payload.error : typeof response.text === "string" ? response.text.trim() : "";
+      throw new Error(`OAuth token refresh failed: ${response.status}${detail ? ` (${detail})` : ""}`);
+    }
+    const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
+    if (!accessToken) {
+      throw new Error("OAuth refresh response is missing access_token.");
+    }
+    this.settings.oauthAccessToken = accessToken;
+    if (typeof payload.refresh_token === "string" && payload.refresh_token.trim()) {
+      this.settings.oauthRefreshToken = payload.refresh_token.trim();
+    }
+    this.settings.oauthTokenExpiry = resolveOAuthTokenExpiryMs(payload);
+    await this.saveSettings();
+    return accessToken;
+  }
+  async ensureOAuthAccessTokenForQa() {
+    if (this.settings.oauthEnabled !== true) {
+      return "";
+    }
+    if (this.isOAuthTokenFreshForQa()) {
+      return this.settings.oauthAccessToken.trim();
+    }
+    if (this.settings.oauthRefreshToken.trim()) {
+      return await this.refreshOAuthAccessTokenForQa();
+    }
+    if (this.settings.oauthAccessToken.trim() && this.getOAuthTokenExpiryMsForQa() === 0) {
+      return this.settings.oauthAccessToken.trim();
+    }
+    throw new Error("OAuth access token is missing or expired. Run Start OAuth Login.");
+  }
+  async getOAuthAuthHeadersForQa() {
+    if (this.settings.oauthEnabled !== true) {
+      return {};
+    }
+    const token = await this.ensureOAuthAccessTokenForQa();
+    if (!token) {
+      return {};
+    }
+    return { Authorization: `Bearer ${token}` };
+  }
+  waitForOAuthCallbackForQa(redirectUri, expectedState, timeoutMs = 18e4) {
+    let parsed;
+    try {
+      parsed = new URL(redirectUri);
+    } catch (e) {
+      return Promise.reject(new Error("OAuth redirect URI is invalid."));
+    }
+    const host = parsed.hostname;
+    const port = parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
+    const callbackPath = parsed.pathname || "/callback";
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer = null;
+      const server = nodeHttp.createServer((req, res) => {
+        const requestUrl = new URL(req.url || "/", `${parsed.protocol}//${host}:${port}`);
+        if (requestUrl.pathname !== callbackPath) {
+          res.statusCode = 404;
+          res.end("Not found.");
+          return;
+        }
+        const state = requestUrl.searchParams.get("state") || "";
+        const code = requestUrl.searchParams.get("code") || "";
+        const oauthError = requestUrl.searchParams.get("error") || "";
+        const oauthErrorDescription = requestUrl.searchParams.get("error_description") || "";
+        if (!expectedState || state !== expectedState) {
+          res.statusCode = 400;
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.end("<html><body><h3>OAuth failed</h3><p>State mismatch.</p></body></html>");
+          finalize(new Error("OAuth callback state mismatch."));
+          return;
+        }
+        if (oauthError) {
+          res.statusCode = 400;
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.end("<html><body><h3>OAuth failed</h3><p>Authorization error returned by provider.</p></body></html>");
+          finalize(new Error(`OAuth authorization failed: ${oauthErrorDescription || oauthError}`));
+          return;
+        }
+        if (!code) {
+          res.statusCode = 400;
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.end("<html><body><h3>OAuth failed</h3><p>Authorization code is missing.</p></body></html>");
+          finalize(new Error("OAuth callback did not include a code."));
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end("<html><body><h3>OAuth login complete</h3><p>You can close this tab and return to Obsidian.</p></body></html>");
+        finalize(null, { code });
+      });
+      const finalize = (error, payload) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        try {
+          server.close();
+        } catch (e) {
+        }
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(payload);
+      };
+      server.on("error", (error) => {
+        const message = error instanceof Error ? error.message : "unknown error";
+        finalize(new Error(`OAuth callback listener failed: ${message}`));
+      });
+      timer = setTimeout(() => {
+        finalize(new Error("OAuth callback timed out after waiting 180 seconds."));
+      }, Math.max(1e4, timeoutMs));
+      server.listen(port, host);
+    });
+  }
+  async startOAuthLoginForQa() {
+    const authUrl = this.settings.oauthAuthUrl.trim();
+    const tokenUrl = this.settings.oauthTokenUrl.trim();
+    const clientId = this.settings.oauthClientId.trim();
+    if (!authUrl) {
+      throw new Error("OAuth auth URL is empty.");
+    }
+    if (!tokenUrl) {
+      throw new Error("OAuth token URL is empty.");
+    }
+    if (!clientId) {
+      throw new Error("OAuth client ID is empty.");
+    }
+    this.settings.oauthEnabled = true;
+    const redirectUri = this.normalizeOAuthRedirectUriForQa(this.settings.oauthRedirectUri);
+    this.settings.oauthRedirectUri = redirectUri;
+    const state = toBase64Url(nodeCrypto.randomBytes(24));
+    let codeVerifier = "";
+    let codeChallenge = "";
+    if (this.settings.oauthUsePkce !== false) {
+      codeVerifier = toBase64Url(nodeCrypto.randomBytes(64));
+      codeChallenge = toBase64Url(nodeCrypto.createHash("sha256").update(codeVerifier).digest());
+    }
+    const authorizeUrl = new URL(authUrl);
+    authorizeUrl.searchParams.set("response_type", "code");
+    authorizeUrl.searchParams.set("client_id", clientId);
+    authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+    authorizeUrl.searchParams.set("state", state);
+    const scopes = this.parseOAuthScopesForQa();
+    if (scopes) {
+      authorizeUrl.searchParams.set("scope", scopes);
+    }
+    if (codeChallenge) {
+      authorizeUrl.searchParams.set("code_challenge_method", "S256");
+      authorizeUrl.searchParams.set("code_challenge", codeChallenge);
+    }
+    const opened = await this.openLinkWithDesktopShell(authorizeUrl.toString());
+    if (!opened) {
+      throw new Error("Failed to open the OAuth authorization URL.");
+    }
+    const callback = await this.waitForOAuthCallbackForQa(redirectUri, state);
+    await this.exchangeOAuthCodeForTokenForQa(callback.code, redirectUri, codeVerifier);
+    await this.saveSettings();
+  }
   async applyQaChatModelProfileForQa(profile, familyHint) {
     const family = familyHint === "cloud" ? "cloud" : this.getQaChatModelFamilyForQa();
     if (family === "local") {
@@ -12414,19 +14618,168 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getQaParserModeForQa() {
     return this.settings.qaParserMode === "detailed" ? "detailed" : "fast";
   }
+  getParserModeProfileForQa() {
+    const mode = this.getQaParserModeForQa();
+    if (mode === "detailed") {
+      return {
+        mode,
+        badge: "DETAILED",
+        focus: "quality-first",
+        summary: `Detailed mode prioritizes OCR quality (up to ${LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED} PDF pages, stronger OCR fallback, longer extraction budget).`,
+        recommendation: "Use for handwriting, garbled text, or source-critical work where extraction quality matters more than speed."
+      };
+    }
+    return {
+      mode,
+      badge: "FAST",
+      focus: "speed-first",
+      summary: `Fast mode prioritizes quick parsing (up to ${LOCAL_QA_PDF_OCR_MAX_PAGES_FAST} PDF pages, lightweight OCR chain, shorter extraction budget).`,
+      recommendation: "Use for daily chat and quick scans. If quality is low, run OCR re-parse or switch to Detailed."
+    };
+  }
   getParserToolReadinessSummaryForQa() {
     return this.parserToolSummary;
   }
   getParserToolReadinessLinesForQa() {
-    const tools = ["pdftotext", "pdftoppm", "tesseract"];
+    const tools = ["pdftotext", "pdftoppm", "tesseract", "soffice"];
     return tools.map((tool) => `${tool}: ${this.parserToolStatus[tool] ? "ready" : "missing"}`);
   }
-  setParserHwpIngestStatusForQa(lastDecision, batchPolicy) {
-    this.parserHwpLastDecisionSummary = lastDecision && lastDecision.trim() ? lastDecision.trim() : "미선택";
-    this.parserHwpBatchPolicySummary = batchPolicy && batchPolicy.trim() ? batchPolicy.trim() : "OFF(파일별 선택)";
+  getParserSupportedFormatsForQa() {
+    return ["PDF", "XLSX", "IMAGE(png/jpg/jpeg/webp)", "HWP(HWP->PDF auto PoC + fallback guide)", "HWPX(XML 1차 추출 + fallback guide)"];
   }
-  getParserHwpIngestStatusSummaryForQa() {
-    return `HWP 선택 결과: ${this.parserHwpLastDecisionSummary} | 일괄 정책: ${this.parserHwpBatchPolicySummary}`;
+  getParserInboxFolderPathForQa() {
+    return (0, import_obsidian4.normalizePath)((this.settings.qaParserInboxFolder || "inbox").trim() || "inbox");
+  }
+  getParserInboxLastEventForQa() {
+    return { ...this.parserInboxLastEvent };
+  }
+  getParserInboxStatusForQa() {
+    return { ...this.parserInboxMetrics };
+  }
+  formatParserEtaMsForQa(ms) {
+    if (!Number.isFinite(ms) || ms <= 0) {
+      return "-";
+    }
+    const sec = Math.max(1, Math.round(ms / 1e3));
+    if (sec < 60) {
+      return `${sec}s`;
+    }
+    const min = Math.floor(sec / 60);
+    const rem = sec % 60;
+    return `${min}m ${rem}s`;
+  }
+  async setParserInboxWatchEnabledForQa(enabled) {
+    this.settings.qaParserInboxWatchEnabled = enabled;
+    await this.saveSettings();
+    await this.refreshOpenQaWorkspaceViews();
+  }
+  async openParserInboxFolderForQa() {
+    const inbox = this.getParserInboxFolderPathForQa();
+    await this.ensureFolderExists(inbox);
+    const created = this.app.vault.getAbstractFileByPath(inbox);
+    if (created) {
+      const leaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
+      const view = leaf == null ? void 0 : leaf.view;
+      if (view && typeof view.revealInFolder === "function") {
+        try {
+          view.revealInFolder(created);
+        } catch (e) {
+        }
+      }
+    }
+    this.notice(`Parser inbox folder ready: ${inbox}`, 4e3);
+    return inbox;
+  }
+  async scanParserInboxNowForQa(options) {
+    const inbox = this.getParserInboxFolderPathForQa();
+    await this.ensureFolderExists(inbox);
+    const folder = this.app.vault.getAbstractFileByPath(inbox);
+    if (!(folder instanceof import_obsidian4.TFolder)) {
+      this.notice(`Parser inbox folder not found: ${inbox}`, 6e3);
+      return { scanned: 0, matched: 0 };
+    }
+    const files = this.app.vault.getFiles().filter((file) => this.isPathInsideFolder(file.path, inbox));
+    const targets = files.filter((file) => this.isParserInboxTargetFile(file));
+    const forceOcr = Boolean(options == null ? void 0 : options.forceOcr);
+    const parserMode = this.getQaParserModeForQa();
+    this.emitParserDiagnostic({
+      stage: "scan-start",
+      result: "info",
+      reasonCode: "scan",
+      parserMode,
+      forceOcr,
+      targetCount: targets.length,
+      toolStatus: {
+        pdftotext: this.parserToolStatus.pdftotext === true,
+        pdftoppm: this.parserToolStatus.pdftoppm === true,
+        tesseract: this.parserToolStatus.tesseract === true,
+        soffice: this.parserToolStatus.soffice === true
+      }
+    });
+    this.updateParserInboxMetrics({
+      stage: "scanning",
+      queueLength: targets.length,
+      total: targets.length,
+      processed: 0,
+      success: 0,
+      skip: 0,
+      error: 0,
+      startedAt: Date.now(),
+      lastFile: "(none)",
+      lastResult: "idle"
+    });
+    let matched = 0;
+    for (const file of targets) {
+      matched += 1;
+      await this.handleParserInboxFileCreate(file, { force: true, forceOcr });
+    }
+    this.updateParserInboxMetrics({
+      stage: "done",
+      queueLength: 0
+    });
+    this.emitParserDiagnostic({
+      stage: "scan-done",
+      result: "info",
+      reasonCode: "scan_complete",
+      parserMode,
+      forceOcr,
+      matched,
+      success: this.parserInboxMetrics.success || 0,
+      skip: this.parserInboxMetrics.skip || 0,
+      error: this.parserInboxMetrics.error || 0
+    });
+    this.notice(`Parser inbox scan done: matched ${matched} file(s) in ${inbox} (mode=${parserMode})`, 6e3);
+    return { scanned: files.length, matched };
+  }
+  setParserInboxLastEvent(event) {
+    const fallback = {
+      fileName: "(none)",
+      result: "idle",
+      message: "Parser inbox idle"
+    };
+    this.parserInboxLastEvent = {
+      fileName: typeof (event == null ? void 0 : event.fileName) === "string" && event.fileName.trim() ? event.fileName : fallback.fileName,
+      result: typeof (event == null ? void 0 : event.result) === "string" && event.result.trim() ? event.result : fallback.result,
+      message: typeof (event == null ? void 0 : event.message) === "string" && event.message.trim() ? event.message : fallback.message
+    };
+    void this.refreshOpenQaWorkspaceViews();
+  }
+  updateParserInboxMetrics(patch) {
+    const prev = this.parserInboxMetrics || {};
+    const next = { ...prev, ...patch };
+    const elapsedMs = next.startedAt > 0 ? Math.max(0, Date.now() - next.startedAt) : 0;
+    next.elapsedMs = elapsedMs;
+    const processed = Math.max(0, next.processed || 0);
+    const total = Math.max(processed, next.total || 0);
+    next.total = total;
+    if (total > processed && processed > 0) {
+      const avg = elapsedMs / processed;
+      next.etaMs = Math.max(0, Math.round(avg * (total - processed)));
+    } else {
+      next.etaMs = 0;
+    }
+    this.parserInboxMetrics = next;
+    void this.refreshOpenQaWorkspaceViews();
   }
   async isShellCommandAvailable(command) {
     const safe = command.trim();
@@ -12444,13 +14797,19 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const pdftotext = await this.isShellCommandAvailable("pdftotext");
     const pdftoppm = await this.isShellCommandAvailable("pdftoppm");
     const tesseract = await this.isShellCommandAvailable("tesseract");
-    this.parserToolStatus = { pdftotext, pdftoppm, tesseract };
+    const sofficeBin = await resolveSofficeExecutableForHwpPoC();
+    const soffice = Boolean(sofficeBin);
+    this.parserToolStatus = { pdftotext, pdftoppm, tesseract, soffice };
     const coreReady = pdftotext && pdftoppm && tesseract;
+    const parserProfile = this.getParserModeProfileForQa();
     this.parserToolSummary = [
       `PDF text: ${pdftotext ? "ready" : "missing"}`,
       `PDF OCR render: ${pdftoppm ? "ready" : "missing"}`,
       `OCR engine: ${tesseract ? "ready" : "missing"}`,
-      coreReady ? "Detailed parser chain available." : "Fallback parser mode will be used for missing tools."
+      `HWP converter(soffice): ${soffice ? "ready" : "missing"}`,
+      `Parser mode: ${parserProfile.badge} (${parserProfile.focus})`,
+      coreReady ? "Detailed parser chain available." : "Fallback parser mode will be used for missing tools.",
+      soffice ? "HWP auto-convert PoC route is available." : "HWP auto-convert PoC route will fallback to guide."
     ].join(" | ");
     if (notify) {
       this.notice(this.parserToolSummary, 7e3);
@@ -12474,6 +14833,73 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       return `${entry.short}=${model}${status}`;
     }).join(", ");
   }
+  getQaLocalModelValidationForQa(roleHint) {
+    const role = ROLE_MODEL_SETTING_CONFIGS.some((config) => config.role === roleHint) ? roleHint : this.resolveQaPrimaryRole();
+    const family = this.getQaChatModelFamilyForQa();
+    const selected = this.resolveQaModelForRole(role).trim();
+    const detected = this.getDetectedOllamaModelNames();
+    const recommended = this.getQaModelRecommendationForRole(role);
+    if (family === "cloud") {
+      return {
+        status: "cloud",
+        role,
+        selected,
+        recommended,
+        detectedCount: detected.length,
+        summary: `Cloud profile active. Local model check is informational only (role=${role}).`
+      };
+    }
+    if (detected.length === 0) {
+      return {
+        status: "blocked",
+        role,
+        selected,
+        recommended,
+        detectedCount: 0,
+        summary: "No local model detected. Install at least one local chat/instruct model and refresh detection."
+      };
+    }
+    if (!selected) {
+      return {
+        status: "warn",
+        role,
+        selected,
+        recommended,
+        detectedCount: detected.length,
+        summary: `Q&A model is empty for role '${role}'. Recommended: ${recommended || "(none)"}.`
+      };
+    }
+    const suitable = isOllamaModelAllowedForQaRole(role, selected);
+    if (!suitable) {
+      return {
+        status: "blocked",
+        role,
+        selected,
+        recommended,
+        detectedCount: detected.length,
+        summary: `Selected model '${selected}' is not suitable for role '${role}'. Recommended: ${recommended || "(none)"}.`
+      };
+    }
+    const detectedCurrent = this.hasDetectedOllamaModel(selected);
+    if (!detectedCurrent) {
+      return {
+        status: "warn",
+        role,
+        selected,
+        recommended,
+        detectedCount: detected.length,
+        summary: `Selected model '${selected}' is not in detected local inventory. Recommended: ${recommended || "(none)"}.`
+      };
+    }
+    return {
+      status: "ok",
+      role,
+      selected,
+      recommended,
+      detectedCount: detected.length,
+      summary: `Selected model '${selected}' is detected and role-compatible.`
+    };
+  }
   getQaAgentModeSummaryForQa() {
     if (!this.settings.qaAgentToolModeEnabled) {
       return "off";
@@ -12490,6 +14916,14 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   isQaContextEnabledForQa() {
     return this.settings.qaContextInChat;
+  }
+  markSelectedAskIntentForQa() {
+    this.qaSelectedAskIntent = true;
+  }
+  consumeSelectedAskGuardForQa() {
+    const active = this.qaSelectedAskIntent === true;
+    this.qaSelectedAskIntent = false;
+    return active && this.settings.qaRequireSelectionForSelectedAsk !== false;
   }
   async setQaContextEnabledForQa(enabled) {
     this.settings.qaContextInChat = enabled;
@@ -13547,7 +15981,78 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const rawData = await this.loadData();
+    const rawSettings = rawData && typeof rawData === "object" ? rawData : {};
+    const hasRawKey = (key) => Object.prototype.hasOwnProperty.call(rawSettings, key);
+    const readLegacySetting = (keys) => {
+      for (const key of keys) {
+        if (hasRawKey(key)) {
+          return rawSettings[key];
+        }
+      }
+      return void 0;
+    };
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, rawSettings);
+    if (!hasRawKey("analyzeLinkedScopeMode")) {
+      const legacyAnalyzeLinkedScopeMode = readLegacySetting([
+        "analyzeLinkedScope",
+        "linkedScopeMode",
+        "linkedAnalyzeScopeMode"
+      ]);
+      if (legacyAnalyzeLinkedScopeMode !== void 0) {
+        this.settings.analyzeLinkedScopeMode = legacyAnalyzeLinkedScopeMode;
+      }
+    }
+    if (!hasRawKey("relatedScopeMaxCandidates")) {
+      const legacyRelatedScopeMaxCandidates = readLegacySetting([
+        "linkedScopeMaxCandidates",
+        "analyzeLinkedMaxCandidates",
+        "linkedRelatedMaxCandidates"
+      ]);
+      if (legacyRelatedScopeMaxCandidates !== void 0) {
+        this.settings.relatedScopeMaxCandidates = legacyRelatedScopeMaxCandidates;
+      }
+    }
+    if (!hasRawKey("relatedScopeTimeBudgetMs")) {
+      const legacyRelatedScopeTimeBudgetMs = readLegacySetting([
+        "linkedScopeTimeBudgetMs",
+        "analyzeLinkedTimeBudgetMs",
+        "linkedRelatedTimeBudgetMs"
+      ]);
+      if (legacyRelatedScopeTimeBudgetMs !== void 0) {
+        this.settings.relatedScopeTimeBudgetMs = legacyRelatedScopeTimeBudgetMs;
+      }
+    }
+    if (!hasRawKey("autoCreateTargetFolders")) {
+      const legacyAutoCreateTargetFolders = readLegacySetting([
+        "folderReclassAutoCreateTargetFolders",
+        "folderMoveAutoCreateTargetFolders",
+        "autoCreateFoldersOnMove"
+      ]);
+      if (legacyAutoCreateTargetFolders !== void 0) {
+        this.settings.autoCreateTargetFolders = legacyAutoCreateTargetFolders;
+      }
+    }
+    if (!hasRawKey("applyMode")) {
+      const legacyApplyMode = readLegacySetting([
+        "folderReclassApplyMode",
+        "folderMoveApplyMode",
+        "folderMoveMode"
+      ]);
+      if (legacyApplyMode !== void 0) {
+        this.settings.applyMode = legacyApplyMode;
+      }
+    }
+    if (!hasRawKey("moveConflictPolicy")) {
+      const legacyMoveConflictPolicy = readLegacySetting([
+        "folderReclassMoveConflictPolicy",
+        "folderMoveConflictPolicy",
+        "folderConflictPolicy"
+      ]);
+      if (legacyMoveConflictPolicy !== void 0) {
+        this.settings.moveConflictPolicy = legacyMoveConflictPolicy;
+      }
+    }
     if (this.settings.settingsViewMode !== "simple" && this.settings.settingsViewMode !== "full") {
       this.settings.settingsViewMode = DEFAULT_SETTINGS.settingsViewMode;
     }
@@ -13566,6 +16071,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (this.settings.settingsActiveTab === "advanced") {
       this.settings.settingsActiveTab = "guide";
+    }
+    if (this.settings.settingsActiveTab === "parser") {
+      this.settings.settingsActiveTab = "chat";
     }
     if (!Array.isArray(this.settings.targetFilePaths)) {
       this.settings.targetFilePaths = [];
@@ -13608,6 +16116,38 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.forceAllToAllLinkedEnabled !== "boolean") {
       this.settings.forceAllToAllLinkedEnabled = DEFAULT_SETTINGS.forceAllToAllLinkedEnabled;
+    }
+    if (this.settings.analyzeLinkedScopeMode !== "selected_only" && this.settings.analyzeLinkedScopeMode !== "selected_plus_related" && this.settings.analyzeLinkedScopeMode !== "vault_sampled") {
+      this.settings.analyzeLinkedScopeMode = DEFAULT_SETTINGS.analyzeLinkedScopeMode;
+    }
+    if (!Number.isFinite(this.settings.relatedScopeMaxCandidates)) {
+      this.settings.relatedScopeMaxCandidates = DEFAULT_SETTINGS.relatedScopeMaxCandidates;
+    }
+    this.settings.relatedScopeMaxCandidates = Math.max(
+      16,
+      Math.min(
+        LINKED_SCOPE_MAX_CANDIDATES_HARD,
+        Math.floor(this.settings.relatedScopeMaxCandidates)
+      )
+    );
+    if (!Number.isFinite(this.settings.relatedScopeTimeBudgetMs)) {
+      this.settings.relatedScopeTimeBudgetMs = DEFAULT_SETTINGS.relatedScopeTimeBudgetMs;
+    }
+    this.settings.relatedScopeTimeBudgetMs = Math.max(
+      50,
+      Math.min(
+        LINKED_SCOPE_TIME_BUDGET_MS_HARD,
+        Math.floor(this.settings.relatedScopeTimeBudgetMs)
+      )
+    );
+    if (typeof this.settings.autoCreateTargetFolders !== "boolean") {
+      this.settings.autoCreateTargetFolders = DEFAULT_SETTINGS.autoCreateTargetFolders;
+    }
+    if (this.settings.applyMode !== "metadata_only" && this.settings.applyMode !== "move_only" && this.settings.applyMode !== "metadata_and_move") {
+      this.settings.applyMode = DEFAULT_SETTINGS.applyMode;
+    }
+    if (this.settings.moveConflictPolicy !== "suffix" && this.settings.moveConflictPolicy !== "skip") {
+      this.settings.moveConflictPolicy = DEFAULT_SETTINGS.moveConflictPolicy;
     }
     if (!Number.isFinite(this.settings.qaTopK)) {
       this.settings.qaTopK = DEFAULT_SETTINGS.qaTopK;
@@ -13655,6 +16195,56 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaAllowNonLocalEndpoint !== "boolean") {
       this.settings.qaAllowNonLocalEndpoint = DEFAULT_SETTINGS.qaAllowNonLocalEndpoint;
     }
+    if (typeof this.settings.oauthBridgeEnabled !== "boolean") {
+      this.settings.oauthBridgeEnabled = DEFAULT_SETTINGS.oauthBridgeEnabled;
+    }
+    if (typeof this.settings.oauthBridgeBaseUrl !== "string") {
+      this.settings.oauthBridgeBaseUrl = DEFAULT_SETTINGS.oauthBridgeBaseUrl;
+    }
+    if (typeof this.settings.oauthBridgeModel !== "string") {
+      this.settings.oauthBridgeModel = DEFAULT_SETTINGS.oauthBridgeModel;
+    }
+    if (typeof this.settings.oauthEnabled !== "boolean") {
+      this.settings.oauthEnabled = DEFAULT_SETTINGS.oauthEnabled;
+    }
+    if (typeof this.settings.oauthProviderPreset !== "string") {
+      const providerHint = typeof this.settings.oauthProvider === "string" ? this.settings.oauthProvider.trim().toLowerCase() : "";
+      this.settings.oauthProviderPreset = providerHint === "google" || providerHint === "auth0" ? providerHint : DEFAULT_SETTINGS.oauthProviderPreset;
+    }
+    this.settings.oauthProviderPreset = this.normalizeOAuthProviderPresetForQa(this.settings.oauthProviderPreset);
+    if (typeof this.settings.oauthProvider !== "string") {
+      this.settings.oauthProvider = DEFAULT_SETTINGS.oauthProvider;
+    }
+    if (typeof this.settings.oauthAuth0Domain !== "string") {
+      this.settings.oauthAuth0Domain = DEFAULT_SETTINGS.oauthAuth0Domain;
+    }
+    this.settings.oauthAuth0Domain = this.sanitizeOAuthDomainForQa(this.settings.oauthAuth0Domain);
+    if (typeof this.settings.oauthAuthUrl !== "string") {
+      this.settings.oauthAuthUrl = DEFAULT_SETTINGS.oauthAuthUrl;
+    }
+    if (typeof this.settings.oauthTokenUrl !== "string") {
+      this.settings.oauthTokenUrl = DEFAULT_SETTINGS.oauthTokenUrl;
+    }
+    if (typeof this.settings.oauthClientId !== "string") {
+      this.settings.oauthClientId = DEFAULT_SETTINGS.oauthClientId;
+    }
+    if (typeof this.settings.oauthScopes !== "string") {
+      this.settings.oauthScopes = DEFAULT_SETTINGS.oauthScopes;
+    }
+    if (typeof this.settings.oauthUsePkce !== "boolean") {
+      this.settings.oauthUsePkce = DEFAULT_SETTINGS.oauthUsePkce;
+    }
+    if (typeof this.settings.oauthAccessToken !== "string") {
+      this.settings.oauthAccessToken = DEFAULT_SETTINGS.oauthAccessToken;
+    }
+    if (typeof this.settings.oauthRefreshToken !== "string") {
+      this.settings.oauthRefreshToken = DEFAULT_SETTINGS.oauthRefreshToken;
+    }
+    if (!Number.isFinite(Number(this.settings.oauthTokenExpiry))) {
+      this.settings.oauthTokenExpiry = DEFAULT_SETTINGS.oauthTokenExpiry;
+    }
+    this.settings.oauthTokenExpiry = Math.max(0, Math.floor(Number(this.settings.oauthTokenExpiry) || 0));
+    this.settings.oauthRedirectUri = this.normalizeOAuthRedirectUriForQa(this.settings.oauthRedirectUri);
     if (this.settings.qaChatModelFamily === "cloud" && !this.settings.qaAllowNonLocalEndpoint) {
       this.settings.qaAllowNonLocalEndpoint = true;
     }
@@ -13667,6 +16257,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         this.settings.qaOllamaBaseUrl = cloudBase;
       }
       this.appendQaAllowedOutboundHostFromUrl(this.settings.qaOllamaBaseUrl || cloudBase);
+      if (this.settings.oauthBridgeEnabled) {
+        const oauthBase = this.settings.oauthBridgeBaseUrl.trim() || this.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl;
+        this.appendQaAllowedOutboundHostFromUrl(oauthBase);
+      }
     } else if (this.settings.qaOllamaModel.trim()) {
       this.syncQaCloudFamilyFromModelHint(this.settings.qaOllamaModel.trim());
     }
@@ -13860,8 +16454,23 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (typeof this.settings.qaContextInChat !== "boolean") {
       this.settings.qaContextInChat = DEFAULT_SETTINGS.qaContextInChat;
     }
+    if (typeof this.settings.qaRequireSelectionForSelectedAsk !== "boolean") {
+      this.settings.qaRequireSelectionForSelectedAsk = DEFAULT_SETTINGS.qaRequireSelectionForSelectedAsk;
+    }
+    if (typeof this.settings.qaParserInboxWatchEnabled !== "boolean") {
+      this.settings.qaParserInboxWatchEnabled = DEFAULT_SETTINGS.qaParserInboxWatchEnabled;
+    }
+    if (typeof this.settings.qaParserInboxFolder !== "string") {
+      this.settings.qaParserInboxFolder = DEFAULT_SETTINGS.qaParserInboxFolder;
+    }
+    if (this.settings.qaParserIngestOutputFormat !== "xml" && this.settings.qaParserIngestOutputFormat !== "md") {
+      this.settings.qaParserIngestOutputFormat = DEFAULT_SETTINGS.qaParserIngestOutputFormat;
+    }
     if (this.settings.qaParserMode !== "fast" && this.settings.qaParserMode !== "detailed") {
       this.settings.qaParserMode = DEFAULT_SETTINGS.qaParserMode;
+    }
+    if (typeof this.settings.qaParserInboxCollapsedDefault !== "boolean") {
+      this.settings.qaParserInboxCollapsedDefault = DEFAULT_SETTINGS.qaParserInboxCollapsedDefault;
     }
     this.settings.qaPdfAttachmentEnabled = true;
     if (typeof this.settings.qaAttachmentIngestRootPath !== "string") {
@@ -14051,6 +16660,14 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   }
   getProviderCacheSignature() {
     const modelLabel = getProviderModelLabel(this.settings);
+    if (this.settings.oauthBridgeEnabled === true && isCloudProviderForOAuthBridge(this.settings.provider)) {
+      const bridgeBase = resolveOAuthBridgeBaseUrl(this.settings);
+      return `${this.settings.provider}::oauth-bridge::${bridgeBase}::${modelLabel}`;
+    }
+    if (this.settings.oauthEnabled === true && isCloudProviderForOAuthBridge(this.settings.provider)) {
+      const oauthBase = toOpenAICompatibleBase(this.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+      return `${this.settings.provider}::oauth::${oauthBase}::${modelLabel}`;
+    }
     switch (this.settings.provider) {
       case "ollama":
         return `ollama::${this.settings.ollamaBaseUrl.trim()}::${modelLabel}`;
@@ -14105,7 +16722,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       semanticLinkingEnabled: this.settings.semanticLinkingEnabled,
       semanticTopK: this.settings.semanticTopK,
       semanticMinSimilarity: this.settings.semanticMinSimilarity,
-      semanticMaxChars: this.settings.semanticMaxChars
+      semanticMaxChars: this.settings.semanticMaxChars,
+      analyzeLinkedScopeMode: this.settings.analyzeLinkedScopeMode,
+      relatedScopeMaxCandidates: this.settings.relatedScopeMaxCandidates,
+      relatedScopeTimeBudgetMs: this.settings.relatedScopeTimeBudgetMs
     });
     return this.hashString(payload);
   }
@@ -14602,6 +17222,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return null;
   }
   resolveQaBaseUrl() {
+    if (this.settings.qaChatModelFamily === "cloud" && this.settings.oauthBridgeEnabled === true) {
+      const oauthBase = this.settings.oauthBridgeBaseUrl.trim() || this.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl;
+      if (oauthBase) {
+        return oauthBase;
+      }
+    }
     const qa = this.settings.qaOllamaBaseUrl.trim();
     const fallback = this.settings.ollamaBaseUrl.trim();
     return qa || fallback;
@@ -14703,11 +17329,11 @@ ${selectedText}`);
     if (/(링크|연결|graph|autolink|linking)/i.test(normalized)) {
       return "AUTOLINK_GRAPH";
     }
-    if (/(요약|정리|summary|summarize)/i.test(normalized)) {
-      return "QA_CHAT";
-    }
     if (/(만들어|게임|프로젝트|build|create|project|prototype)/i.test(normalized)) {
       return "GENERATE_PROJECT";
+    }
+    if (/(요약|정리|summary|summarize)/i.test(normalized)) {
+      return "QA_CHAT";
     }
     if (/(export|내보내기|출력|ppt|pdf\s*출력)/i.test(normalized)) {
       return "EXPORT";
@@ -14779,6 +17405,9 @@ ${selectedText}`);
   }
   detectLocalQaIntent(question) {
     const normalized = question.toLowerCase();
+    if (this.matchesGameBuildIntent(question)) {
+      return "game_build";
+    }
     if (/(출처|근거|source|sources|reference|references|링크만|links?\s+only|only\s+links|cite)/i.test(normalized)) {
       return "sources_only";
     }
@@ -14953,7 +17582,21 @@ ${segment}` : segment;
     );
     return ((_a = matches == null ? void 0 : matches.length) != null ? _a : 0) > 0;
   }
+  hasGameOutputTemplate(answer) {
+    const normalized = answer.replace(/\s+/g, " ").toLowerCase();
+    const requiredSlots = [
+      /(게임명|game\s*name)/i,
+      /(목표|학습\s*목표|objective)/i,
+      /(규칙|진행\s*규칙|rules?)/i,
+      /(승리\s*조건|종료\s*조건|win\s*condition)/i,
+      /(예시\s*라운드|샘플\s*라운드|example\s*round)/i
+    ];
+    return requiredSlots.every((pattern) => pattern.test(normalized));
+  }
   needsQaStructureRepair(intent, answer) {
+    if (intent === "game_build") {
+      return !this.hasGameOutputTemplate(answer);
+    }
     if (intent === "comparison") {
       return !this.hasMarkdownTable(answer);
     }
@@ -15016,7 +17659,21 @@ ${segment}` : segment;
   }
   getQaContractLines(intent, preferDetailed, mode = this.settings.qaConversationMode, question = "") {
     const normalizedMode = mode === "plan" || mode === "agent" || mode === "orchestration" ? mode : "ask";
-    const gameBuildRequested = this.matchesGameBuildIntent(question);
+    const gameBuildRequested = this.matchesGameBuildIntent(question) || intent === "game_build";
+    if (gameBuildRequested) {
+      return [
+        "Output contract (Game build):",
+        "- Keep final output as a game artifact, not QA audit/report format.",
+        "- Use this exact section order with markdown headings:",
+        "  1) 게임명",
+        "  2) 목표",
+        "  3) 규칙",
+        "  4) 승리조건",
+        "  5) 예시 라운드",
+        "- If selected-note evidence is irrelevant or insufficient, still provide a playable draft and mark assumptions as '가정'.",
+        "- Add minimal runnable loop/pseudocode when implementation is requested."
+      ];
+    }
     if (intent === "sources_only") {
       return [
         "Output contract:",
@@ -16397,13 +19054,21 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       onEvent,
       abortSignal
     } = params;
-    const base = toOpenAICompatibleBase(qaBaseUrl);
+    const oauthBridgeEnabled = this.settings.oauthBridgeEnabled === true;
+    const oauthEnabled = this.settings.oauthEnabled === true;
+    if (oauthEnabled) {
+      await this.tryAutoOAuthLoginForQa("requestCloudQaCompletion");
+    }
+    const oauthBridgeBase = this.settings.oauthBridgeBaseUrl.trim();
+    const requestBase = oauthBridgeEnabled ? oauthBridgeBase || qaBaseUrl : qaBaseUrl;
+    const base = toOpenAICompatibleBase(requestBase);
     const headers = {
       "Content-Type": "application/json"
     };
     const profile = this.getQaChatModelProfileForQa();
     const configuredProfileModel = (profile === "claude" ? this.settings.anthropicModel : profile === "gemini" ? this.settings.geminiModel : this.settings.openAIModel).trim();
-    const effectiveModel = configuredProfileModel || qaModel;
+    const oauthBridgeModel = this.settings.oauthBridgeModel.trim();
+    const effectiveModel = oauthBridgeModel || configuredProfileModel || qaModel;
     if (!effectiveModel) {
       throw new Error("Cloud model is empty.");
     }
@@ -16415,28 +19080,20 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       baseHost = "";
     }
     const isOpenAiPublicHost = baseHost === "api.openai.com" || baseHost.endsWith(".openai.com");
-    if (!apiKey && isOpenAiPublicHost) {
+    if (!oauthBridgeEnabled && !oauthEnabled && !apiKey && isOpenAiPublicHost) {
       if (profile === "codex") {
-        this.emitQaEvent(
-          onEvent,
-          "warning",
-          "OpenAI API key is empty for codex profile. Falling back to local codex CLI session."
+        throw new Error(
+          "OpenAI codex cloud requires API key in Omni-Forge. OAuth-only mode cannot call api.openai.com directly in this plugin; use local mode or configure a local OpenAI-compatible bridge."
         );
-        return this.requestCodexCliCompletion({
-          qaModel: effectiveModel,
-          systemPrompt,
-          userPrompt,
-          history,
-          onToken,
-          onEvent,
-          abortSignal
-        });
       }
       throw new Error(
         "Cloud request blocked: API key is empty for OpenAI host. Set API key or use a local OpenAI-compatible bridge URL."
       );
     }
-    if (apiKey) {
+    if (oauthEnabled) {
+      const oauthHeaders = await this.getOAuthAuthHeadersForQa();
+      Object.assign(headers, oauthHeaders);
+    } else if (apiKey) {
       headers.Authorization = `Bearer ${apiKey}`;
       headers["x-api-key"] = apiKey;
     }
@@ -16450,7 +19107,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     this.emitQaEvent(
       onEvent,
       "generation",
-      `Cloud profile=${profile || "codex"}, model=${effectiveModel}`
+      `Cloud profile=${profile || "codex"}, model=${effectiveModel}${oauthBridgeEnabled ? ", oauthBridge=on" : ""}${oauthEnabled ? ", oauth=on" : ""}`
     );
     const messages = this.buildCloudQaMessages(systemPrompt, userPrompt, history);
     try {
@@ -17013,6 +19670,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       return answer;
     }
     const roleSystemPrompt = this.getQaRoleSystemPrompt("orchestrator");
+    const gameBuildRequested = this.matchesGameBuildIntent(question);
     this.emitQaEvent(onEvent, "generation", `Running orchestrator pass (${passModel})`);
     const systemPrompt = [
       "You are an orchestration editor for local-note answers.",
@@ -17020,6 +19678,7 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       "Keep language aligned with user's preference.",
       "Return markdown only.",
       "When evidence is missing, explicitly mark as '\uC815\uBCF4 \uBD80\uC871'.",
+      gameBuildRequested ? "For game-creation requests, preserve game artifact structure (게임명/목표/규칙/승리조건/예시 라운드) and do NOT convert to audit/report summary." : "",
       "Use this structure when suitable:",
       "- Objective and scope",
       "- Core findings",
@@ -17128,6 +19787,7 @@ ${roleSystemPrompt}` : ""
       return answer;
     }
     const roleSystemPrompt = this.getQaRoleSystemPrompt("safeguard");
+    const gameBuildRequested = this.matchesGameBuildIntent(question);
     this.emitQaEvent(onEvent, "generation", `Running safeguard verification (${passModel})`);
     const systemPrompt = [
       "You are a safeguard verifier for local-note answers.",
@@ -17136,6 +19796,7 @@ ${roleSystemPrompt}` : ""
       "Keep useful structure but prefer factual correctness and safety.",
       "If evidence is missing, keep statement conservative and explicit.",
       "Preserve source-path citations whenever possible.",
+      gameBuildRequested ? "For game-creation requests, keep final answer in game artifact format (게임명/목표/규칙/승리조건/예시 라운드); do not rewrite as risk/audit report." : "",
       "Return final markdown answer only.",
       roleSystemPrompt ? `Role system prompt (safeguard):
 ${roleSystemPrompt}` : ""
@@ -18815,6 +21476,37 @@ ${stderr}` : ""
       throw new DOMException("The operation was aborted.", "AbortError");
     }
     if (!this.settings.qaAgentToolModeEnabled) {
+      if ((taskType || "QA_CHAT") === "EDIT_NOTE" && openSelection) {
+        const raw = answer.trim();
+        if (raw.includes(CODER_PROMPT_CONTRACT_SELECTION_HEADER) && raw.includes("@@")) {
+          const syntheticPlan = {
+            id: `plan-${Date.now()}`,
+            actions: [
+              {
+                type: "apply_selection_diff",
+                patch: {
+                  format: "unified",
+                  content: raw,
+                  targetPath: openSelection.filePath,
+                  expectedSelectionHash: openSelection.selectionHash,
+                  expectedSelectionText: openSelection.selectedText
+                }
+              }
+            ],
+            taskType: "EDIT_NOTE",
+            openSelection,
+            createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+            sourceModel: qaModel
+          };
+          this.pendingQaActionPlan = syntheticPlan;
+          return [
+            "EDIT_NOTE 패치 초안을 감지했습니다.",
+            "Agent tool mode가 꺼져 있어 자동 실행은 하지 않습니다.",
+            "명시 승인 시 실제 패치 적용 경로로 연결됩니다.",
+            this.buildQaActionApprovalText(syntheticPlan)
+          ].join("\n\n");
+        }
+      }
       return answer;
     }
     const parsed = this.parseQaAgentActionPlanFromAnswer({
@@ -19089,8 +21781,19 @@ ${stderr}` : ""
     }
     let qaModel = this.resolveQaModelForRole(primaryRole);
     const detectedModels = this.getDetectedOllamaModelNames();
+    if (!isCloudFamily && !qaModel) {
+      const roleRecommendation = this.getQaModelRecommendationForRole(primaryRole);
+      if (roleRecommendation) {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          `Selected ${primaryRole} model is empty; auto-selecting recommended local model: ${roleRecommendation}`
+        );
+        qaModel = roleRecommendation;
+      }
+    }
     if (!isCloudFamily && qaModel && detectedModels.length > 0 && !this.hasDetectedOllamaModel(qaModel)) {
-      const roleFallback = this.resolveDetectedRoleFallbackModel(primaryRole);
+      const roleFallback = this.getQaModelRecommendationForRole(primaryRole);
       if (roleFallback) {
         this.emitQaEvent(
           onEvent,
@@ -19130,7 +21833,17 @@ ${stderr}` : ""
       throw new Error("Q&A model is empty.");
     }
     if (!isCloudFamily && !isOllamaModelAllowedForQaRole(primaryRole, qaModel)) {
-      throw new Error(`Q&A model is not suitable: ${qaModel}`);
+      const roleFallback = this.getQaModelRecommendationForRole(primaryRole);
+      if (roleFallback && roleFallback !== qaModel && isOllamaModelAllowedForQaRole(primaryRole, roleFallback)) {
+        this.emitQaEvent(
+          onEvent,
+          "warning",
+          `Q&A model is not suitable (${qaModel}); switching to recommended compatible model: ${roleFallback}`
+        );
+        qaModel = roleFallback;
+      } else {
+        throw new Error(`Q&A model is not suitable: ${qaModel}`);
+      }
     }
     const routingLog = this.buildTaskRoutingForQa(safeQuestion, routingContext, qaModel);
     this.lastQaRoutingLog = {
@@ -19755,12 +22468,169 @@ ${stderr}` : ""
     }
     return rawScore;
   }
-  getCandidateLinkPathsForFile(filePath, selectedFiles, semanticNeighbors) {
+  normalizeAnalyzeLinkedScopeModeSetting(value) {
+    if (value === "selected_only" || value === "selected_plus_related" || value === "vault_sampled") {
+      return value;
+    }
+    return DEFAULT_SETTINGS.analyzeLinkedScopeMode;
+  }
+  normalizeRelatedScopeMaxCandidatesSetting(value) {
+    const fallback = DEFAULT_SETTINGS.relatedScopeMaxCandidates;
+    if (!Number.isFinite(value)) {
+      return fallback;
+    }
+    return Math.max(16, Math.min(LINKED_SCOPE_MAX_CANDIDATES_HARD, Math.floor(value)));
+  }
+  normalizeRelatedScopeTimeBudgetMsSetting(value) {
+    const fallback = DEFAULT_SETTINGS.relatedScopeTimeBudgetMs;
+    if (!Number.isFinite(value)) {
+      return fallback;
+    }
+    return Math.max(50, Math.min(LINKED_SCOPE_TIME_BUDGET_MS_HARD, Math.floor(value)));
+  }
+  prepareLinkedScopeContext(selectedFiles, filesToAnalyze) {
+    const requestedMode = this.normalizeAnalyzeLinkedScopeModeSetting(this.settings.analyzeLinkedScopeMode);
+    const maxCandidates = this.normalizeRelatedScopeMaxCandidatesSetting(this.settings.relatedScopeMaxCandidates);
+    const timeBudgetMs = this.normalizeRelatedScopeTimeBudgetMsSetting(this.settings.relatedScopeTimeBudgetMs);
+    const selectedPathSet = new Set(
+      selectedFiles.map((file) => file.path).filter((path) => typeof path === "string" && path.length > 0)
+    );
+    const context = {
+      requestedMode,
+      mode: requestedMode,
+      maxCandidates,
+      timeBudgetMs,
+      selectedPathSet,
+      relatedPool: [],
+      vaultSamplePool: [],
+      timedOut: false,
+      fallbackReason: ""
+    };
+    if (requestedMode === "selected_only" || selectedPathSet.size === 0) {
+      return context;
+    }
+    const startedAt = Date.now();
+    const withinBudget = () => Date.now() - startedAt <= timeBudgetMs;
+    const isEligiblePath = (path) => {
+      if (typeof path !== "string") {
+        return false;
+      }
+      const normalized = (0, import_obsidian4.normalizePath)(path.trim());
+      if (!normalized || selectedPathSet.has(normalized) || this.isPathExcluded(normalized)) {
+        return false;
+      }
+      const entry = this.app.vault.getAbstractFileByPath(normalized);
+      return entry instanceof import_obsidian4.TFile && entry.extension === "md";
+    };
+    const rankAgainstAnchors = (path, anchors) => {
+      let best = 0;
+      for (const anchor of anchors) {
+        const forward = this.scoreCandidatePath(anchor, path);
+        const backward = this.scoreCandidatePath(path, anchor);
+        const combined = Math.max(forward, backward);
+        if (combined > best) {
+          best = combined;
+        }
+        if (best >= 8) {
+          break;
+        }
+      }
+      return best;
+    };
+    const anchorPaths = (Array.isArray(filesToAnalyze) ? filesToAnalyze : selectedFiles).map((file) => file.path).filter((path) => typeof path === "string" && path.length > 0).slice(0, 16);
+    const scoredPool = /* @__PURE__ */ new Map();
+    const upsertScoredPool = (path, score) => {
+      if (!isEligiblePath(path)) {
+        return;
+      }
+      const normalized = (0, import_obsidian4.normalizePath)(path.trim());
+      const safeScore = Number.isFinite(score) ? score : 0;
+      const prev = scoredPool.get(normalized);
+      if (!Number.isFinite(prev) || safeScore > prev) {
+        scoredPool.set(normalized, safeScore);
+      }
+    };
+    if (requestedMode === "selected_plus_related") {
+      const resolvedLinks = this.app.metadataCache && this.app.metadataCache.resolvedLinks && typeof this.app.metadataCache.resolvedLinks === "object" ? this.app.metadataCache.resolvedLinks : {};
+      for (const sourcePath of selectedPathSet) {
+        if (!withinBudget()) {
+          context.timedOut = true;
+          break;
+        }
+        const outbound = resolvedLinks[sourcePath];
+        if (!outbound || typeof outbound !== "object") {
+          continue;
+        }
+        for (const [destPath, weightRaw] of Object.entries(outbound)) {
+          if (!withinBudget()) {
+            context.timedOut = true;
+            break;
+          }
+          const weight = Number.isFinite(weightRaw) ? Number(weightRaw) : 0;
+          upsertScoredPool(destPath, 10 + Math.max(0, Math.min(weight, 5)));
+        }
+      }
+    }
+    if (!context.timedOut && scoredPool.size < maxCandidates) {
+      const allFiles = this.getAllMarkdownFiles();
+      for (const file of allFiles) {
+        if (!withinBudget()) {
+          context.timedOut = true;
+          break;
+        }
+        const path = file.path;
+        if (!isEligiblePath(path)) {
+          continue;
+        }
+        const score = rankAgainstAnchors(path, anchorPaths);
+        if (requestedMode === "vault_sampled" || score > 0) {
+          upsertScoredPool(path, score);
+        }
+      }
+    }
+    const rankedPool = [...scoredPool.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, maxCandidates).map(([path]) => path);
+    if (requestedMode === "selected_plus_related") {
+      context.relatedPool = rankedPool;
+      if (context.relatedPool.length === 0) {
+        context.mode = "selected_only";
+        context.fallbackReason = context.timedOut ? "selected_plus_related timed out; fallback to selected_only." : "selected_plus_related produced no valid candidates; fallback to selected_only.";
+      }
+      return context;
+    }
+    context.vaultSamplePool = rankedPool;
+    if (context.vaultSamplePool.length === 0) {
+      context.mode = "selected_only";
+      context.fallbackReason = context.timedOut ? "vault_sampled timed out; fallback to selected_only." : "vault_sampled produced no valid candidates; fallback to selected_only.";
+    }
+    return context;
+  }
+  buildScopedCandidateLinkPaths(filePath, rankedFallback, linkedScopeContext) {
+    if (!linkedScopeContext || linkedScopeContext.mode === "selected_only") {
+      return rankedFallback;
+    }
+    const pool = linkedScopeContext.mode === "vault_sampled" ? linkedScopeContext.vaultSamplePool : linkedScopeContext.relatedPool;
+    if (!Array.isArray(pool) || pool.length === 0) {
+      return rankedFallback;
+    }
+    const scopedRanked = pool.filter((path) => path !== filePath).sort((a, b) => {
+      const scoreDiff = this.scoreCandidatePath(filePath, b) - this.scoreCandidatePath(filePath, a);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+      return a.localeCompare(b);
+    });
+    if (linkedScopeContext.mode === "vault_sampled") {
+      return mergeUniqueStrings(scopedRanked, rankedFallback);
+    }
+    return mergeUniqueStrings(rankedFallback, scopedRanked);
+  }
+  getCandidateLinkPathsForFile(filePath, selectedFiles, semanticNeighbors, linkedScopeContext) {
     var _a;
     const fallback = selectedFiles.filter((candidate) => candidate.path !== filePath).map((candidate) => candidate.path);
     const candidateLimit = Math.max(
       this.settings.maxLinked * 6,
       this.settings.semanticTopK,
+      this.normalizeRelatedScopeMaxCandidatesSetting(this.settings.relatedScopeMaxCandidates),
       ANALYSIS_HARD_MAX_CANDIDATES
     );
     const rankedFallback = [...fallback].sort((a, b) => {
@@ -19770,14 +22640,19 @@ ${stderr}` : ""
       }
       return a.localeCompare(b);
     });
+    const scopedCandidates = this.buildScopedCandidateLinkPaths(
+      filePath,
+      rankedFallback,
+      linkedScopeContext
+    );
     if (!semanticNeighbors || !this.settings.semanticLinkingEnabled) {
-      return rankedFallback.slice(0, candidateLimit);
+      return scopedCandidates.slice(0, candidateLimit);
     }
     const semantic = ((_a = semanticNeighbors.get(filePath)) != null ? _a : []).map((item) => item.path);
     if (semantic.length === 0) {
-      return rankedFallback.slice(0, candidateLimit);
+      return scopedCandidates.slice(0, candidateLimit);
     }
-    return mergeUniqueStrings(semantic, rankedFallback).slice(0, candidateLimit);
+    return mergeUniqueStrings(semantic, scopedCandidates).slice(0, candidateLimit);
   }
   normalizeFolderPrefix(path) {
     const normalized = (0, import_obsidian4.normalizePath)(path.trim());
@@ -19898,6 +22773,467 @@ ${stderr}` : ""
       this.pendingNewNoteWatchPrompts.delete(file.path);
     }
   }
+  isParserInboxTargetFile(file) {
+    if (!(file instanceof import_obsidian4.TFile)) {
+      return false;
+    }
+    const ext = file.extension.toLowerCase();
+    if (!["pdf", "docx", "xlsx", "hwp", "hwpx", "png", "jpg", "jpeg", "webp"].includes(ext)) {
+      return false;
+    }
+    const inboxRoot = (0, import_obsidian4.normalizePath)((this.settings.qaParserInboxFolder || "inbox").trim() || "inbox");
+    if (!inboxRoot) {
+      return false;
+    }
+    return this.isPathInsideFolder(file.path, inboxRoot);
+  }
+  escapeXml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&apos;");
+  }
+  async extractXlsxTextWithPython(xlsxAbsolutePath) {
+    const command = [
+      "python3 - <<'PY'",
+      "import zipfile,sys,re,xml.etree.ElementTree as ET",
+      `p=r'''${this.shellQuoteArg(xlsxAbsolutePath).replace(/^'|'$/g, "")}'''`,
+      "ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'",
+      "out=[]",
+      "with zipfile.ZipFile(p,'r') as z:",
+      "  shared=[]",
+      "  if 'xl/sharedStrings.xml' in z.namelist():",
+      "    root=ET.fromstring(z.read('xl/sharedStrings.xml'))",
+      "    for si in root.findall(f'{ns}si'):",
+      "      txt=''.join(t.text or '' for t in si.iter(f'{ns}t'))",
+      "      shared.append(txt)",
+      "  sheets=sorted([n for n in z.namelist() if re.match(r'xl/worksheets/sheet\\d+\\.xml$', n)])",
+      "  for sheet in sheets:",
+      "    root=ET.fromstring(z.read(sheet))",
+      "    out.append(f'## {sheet.split('/')[-1]}')",
+      "    for row in root.findall(f'.//{ns}row'):",
+      "      cells=[]",
+      "      for c in row.findall(f'{ns}c'):",
+      "        t=c.get('t','')",
+      "        v=(c.find(f'{ns}v').text if c.find(f'{ns}v') is not None else '')",
+      "        if t=='s' and v.isdigit() and int(v)<len(shared):",
+      "          cells.append(shared[int(v)])",
+      "        else:",
+      "          cells.append(v)",
+      "      if any((x or '').strip() for x in cells):",
+      "        out.append('\t'.join(cells))",
+      "print('\\n'.join(out)[:18000])",
+      "PY"
+    ].join("\n");
+    const result = await execAsync(command, { timeout: 6e4, maxBuffer: 1024 * 1024 * 8 });
+    return String(result.stdout || "").trim();
+  }
+  async extractDocxTextWithPython(docxAbsolutePath) {
+    const command = [
+      "python3 - <<'PY'",
+      "import zipfile,re,xml.etree.ElementTree as ET",
+      `p=r'''${this.shellQuoteArg(docxAbsolutePath).replace(/^'|'$/g, "")}'''`,
+      "ns='{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'",
+      "targets=['word/document.xml']",
+      "with zipfile.ZipFile(p,'r') as z:",
+      "  targets += sorted([n for n in z.namelist() if re.match(r'word/(header|footer)\\d+\\.xml$', n)])",
+      "  out=[]",
+      "  for part in targets:",
+      "    if part not in z.namelist():",
+      "      continue",
+      "    root=ET.fromstring(z.read(part))",
+      "    lines=[]",
+      "    for para in root.iter(f'{ns}p'):",
+      "      txt=''.join((t.text or '') for t in para.iter(f'{ns}t')).strip()",
+      "      if txt:",
+      "        lines.append(txt)",
+      "    if lines:",
+      "      out.append(f'## {part.split('/')[-1]}')",
+      "      out.extend(lines)",
+      "print('\\n'.join(out)[:18000])",
+      "PY"
+    ].join("\n");
+    const result = await execAsync(command, { timeout: 6e4, maxBuffer: 1024 * 1024 * 8 });
+    return String(result.stdout || "").trim();
+  }
+  buildParserDiagnosticFileId(filePath, ext) {
+    const safePath = typeof filePath === "string" ? filePath : "";
+    const safeExt = typeof ext === "string" && ext.trim() ? ext.trim().toLowerCase() : "unknown";
+    return `${safeExt}:${this.hashString(safePath).slice(0, 10)}`;
+  }
+  emitParserDiagnostic(event, level = "info") {
+    if (!event || typeof console === "undefined") {
+      return;
+    }
+    const payload = {
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      event: "parser_inbox",
+      ...event
+    };
+    const line = `[Omni-Forge][parser][diag] ${JSON.stringify(payload)}`;
+    if (level === "error" && typeof console.warn === "function") {
+      console.warn(line);
+      return;
+    }
+    if (typeof console.info === "function") {
+      console.info(line);
+    }
+  }
+  classifyParserAbortReason(message, ext) {
+    const normalized = typeof message === "string" ? message.toLowerCase() : "";
+    if (normalized.includes("hwp 처리 취소") || normalized.includes("user_cancel")) {
+      return "user_cancel";
+    }
+    if (normalized.includes("unsupported parser input")) {
+      return "unsupported_input";
+    }
+    if (normalized.includes("readbinary api unavailable")) {
+      return "vault_readbinary_unavailable";
+    }
+    if (normalized.includes("pdftotext failed")) {
+      return "pdftotext_failed";
+    }
+    if (normalized.includes("pdfminer failed")) {
+      return "pdfminer_failed";
+    }
+    if (normalized.includes("ocr failed") || normalized.includes("tesseract")) {
+      return "ocr_failed";
+    }
+    if (normalized.includes("empty_extraction")) {
+      return "empty_extraction";
+    }
+    if (normalized.includes("지원하지 않습니다") || normalized.includes("미지원")) {
+      if (ext === "hwp" || ext === "hwpx") {
+        return "hwp_conversion_not_supported";
+      }
+      return "unsupported_input";
+    }
+    if (ext === "hwp" || ext === "hwpx") {
+      return "hwp_conversion_not_supported";
+    }
+    return "conversion_failed";
+  }
+  getParserRetryGuidance(reasonCode, ext) {
+    switch (reasonCode) {
+      case "user_cancel":
+        return "사용자 취소로 중단되었습니다. 필요 시 같은 파일을 다시 스캔하세요.";
+      case "hwp_conversion_not_supported":
+        return "HWP는 soffice 자동변환(PoC) 미탐지/실패 시 PDF 또는 DOCX 수동 변환 후 다시 업로드하세요. HWPX는 XML 1차 추출 실패 시 동일 경로를 권장합니다.";
+      case "unsupported_input":
+        return "지원 포맷만 사용하세요: PDF, DOCX, XLSX, PNG/JPG/JPEG/WEBP, HWP/HWPX(가이드).";
+      case "vault_readbinary_unavailable":
+        return "Obsidian/vault adapter 환경에서 바이너리 읽기가 불가합니다. 앱 업데이트 후 재시도하세요.";
+      case "ocr_failed":
+        return "Parser mode=Detailed로 전환하고 `pdftoppm`, `tesseract` 설치 상태를 점검한 뒤 OCR 재파싱을 실행하세요.";
+      case "pdftotext_failed":
+      case "pdfminer_failed":
+        return "외부 파서 명령이 실패했습니다. Parser tool readiness를 갱신하고 OCR 재파싱으로 우회해보세요.";
+      case "empty_extraction":
+        return "스캔 품질이 낮을 수 있습니다. 300dpi 이상 원본 또는 핵심 페이지 이미지를 다시 첨부하세요.";
+      default:
+        if (ext === "hwp" || ext === "hwpx") {
+          return "HWP/HWPX는 soffice 자동변환(PoC) 실패 시 PDF/DOCX 변환 후 재업로드를 권장합니다.";
+        }
+        return "재시도 후 반복되면 Parser tool readiness와 parser diagnostics 로그(stage/reason)를 확인하세요.";
+    }
+  }
+  buildParserInboxOutputDocument(payload) {
+    const normalizedContent = this.normalizeParserExtractedText(payload.content || "", {
+      forOcr: false,
+      normalizeSpacing: true
+    });
+    const format = this.settings.qaParserIngestOutputFormat === "xml" ? "xml" : "md";
+    const parserMode = payload.parserMode === "detailed" ? "detailed" : "fast";
+    const reasonCode = typeof payload.reasonCode === "string" && payload.reasonCode.trim() ? payload.reasonCode.trim() : "ok";
+    const lowConfidence = Boolean(payload.lowConfidence);
+    const parserQuality = lowConfidence ? "low_confidence" : "ok";
+    const parserNotes = Array.isArray(payload.parserNotes) ? payload.parserNotes.filter((line) => typeof line === "string" && line.trim().length > 0).slice(0, 6) : [];
+    if (format === "xml") {
+      const text = this.escapeXml(normalizedContent);
+      const notesXml = parserNotes.length > 0 ? `\n  <notes>\n${parserNotes.map((line) => `    <note>${this.escapeXml(line)}</note>`).join("\n")}\n  </notes>` : "";
+      return `<?xml version="1.0" encoding="UTF-8"?>\n<parser_ingest source_path="${this.escapeXml(payload.sourcePath)}" source_kind="${this.escapeXml(payload.kind)}" parser="${this.escapeXml(payload.parser)}" parser_mode="${this.escapeXml(parserMode)}" parser_quality="${this.escapeXml(parserQuality)}" parser_reason="${this.escapeXml(reasonCode)}" created_at="${new Date().toISOString()}">\n  <content>${text}</content>${notesXml}\n</parser_ingest>\n`;
+    }
+    const lines = [
+      "---",
+      "parser_ingest: true",
+      `source_kind: ${payload.kind}`,
+      `source_path: \"${payload.sourcePath.replace(/\"/g, '\\\"')}\"`,
+      `parser: ${payload.parser}`,
+      `parser_mode: ${parserMode}`,
+      `parser_quality: ${parserQuality}`,
+      `parser_reason: ${reasonCode}`,
+      `created_at: ${new Date().toISOString()}`,
+      "---",
+      "",
+      `# Inbox Parsed: ${payload.sourcePath}`,
+      ""
+    ];
+    if (parserNotes.length > 0) {
+      lines.push(
+        "## Parser diagnostics",
+        ...parserNotes.map((line) => `- ${line}`),
+        ""
+      );
+    }
+    lines.push(normalizedContent);
+    return lines.join("\n");
+  }
+  async handleParserInboxFileCreate(file, options) {
+    const force = Boolean(options == null ? void 0 : options.force);
+    const forceOcr = Boolean(options == null ? void 0 : options.forceOcr);
+    if (!force && !this.settings.qaParserInboxWatchEnabled) {
+      return;
+    }
+    if (!this.isParserInboxTargetFile(file)) {
+      return;
+    }
+    this.setParserInboxLastEvent({
+      fileName: file.name,
+      result: "queued",
+      message: "Parser inbox queued"
+    });
+    const currentQueue = Math.max(0, (this.parserInboxMetrics.queueLength || 0) + 1);
+    this.updateParserInboxMetrics({
+      stage: this.parserInboxMetrics.stage === "scanning" ? "scanning" : "queueing",
+      queueLength: currentQueue,
+      total: Math.max(this.parserInboxMetrics.total || 0, (this.parserInboxMetrics.processed || 0) + currentQueue),
+      startedAt: this.parserInboxMetrics.startedAt || Date.now(),
+      lastFile: file.name,
+      lastResult: "queued"
+    });
+    if (this.parserInboxInFlightPaths.has(file.path)) {
+      return;
+    }
+    this.parserInboxInFlightPaths.add(file.path);
+    const run = async () => {
+      let parseStage = "queued";
+      let parseReasonCode = "ok";
+      let ext = file.extension.toLowerCase();
+      let parser = "";
+      let parserDiagnostics = null;
+      let parserNotes = [];
+      const parserMode = this.getQaParserModeForQa();
+      const fileId = this.buildParserDiagnosticFileId(file.path, ext);
+      try {
+        this.updateParserInboxMetrics({
+          stage: "converting",
+          lastFile: file.name,
+          lastResult: "processing"
+        });
+        parseStage = "detect-input";
+        ext = file.extension.toLowerCase();
+        const baseNoExt = file.path.replace(/\.[^.]+$/, "");
+        const outputExt = this.settings.qaParserIngestOutputFormat === "xml" ? "xml" : "md";
+        const outPath = `${baseNoExt}.parser.${outputExt}`;
+        let content = "";
+        if (ext === "pdf") {
+          parseStage = "pdf-read-binary";
+          const adapter = this.app.vault.adapter;
+          if (typeof adapter.readBinary !== "function") {
+            throw new Error("readBinary API unavailable for PDF parser.");
+          }
+          const binary = await adapter.readBinary(file.path);
+          const absolutePath = this.resolveVaultAbsolutePath(file.path);
+          parseStage = "pdf-parse-chain";
+          const parsed = await this.extractPdfTextWithParserChain(binary, absolutePath, { forceOcr });
+          content = parsed.content;
+          parser = `pdf:${parsed.parser}`;
+          parserDiagnostics = parsed.diagnostics || null;
+          parserNotes = Array.isArray(parsed.notes) ? parsed.notes : [];
+          parseReasonCode = (parserDiagnostics == null ? void 0 : parserDiagnostics.reasonCode) || "ok";
+        } else if (ext === "docx") {
+          parseStage = "docx-parse";
+          const absolutePath = this.resolveVaultAbsolutePath(file.path);
+          content = await this.extractDocxTextWithPython(absolutePath);
+          parser = "docx:python-zip-xml";
+        } else if (ext === "xlsx") {
+          parseStage = "xlsx-parse";
+          const absolutePath = this.resolveVaultAbsolutePath(file.path);
+          content = await this.extractXlsxTextWithPython(absolutePath);
+          parser = "xlsx:python-zip-xml";
+        } else if (ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp") {
+          parseStage = "image-read-binary";
+          const adapter = this.app.vault.adapter;
+          if (typeof adapter.readBinary !== "function") {
+            throw new Error("readBinary API unavailable for image parser.");
+          }
+          const binary = await adapter.readBinary(file.path);
+          const absolutePath = this.resolveVaultAbsolutePath(file.path);
+          parseStage = "image-parse-chain";
+          const parsed = await this.extractImageTextWithParserChain(binary, absolutePath, ext);
+          content = parsed.content;
+          parser = `image:${parsed.parser}`;
+          parserDiagnostics = parsed.diagnostics || null;
+          parserNotes = Array.isArray(parsed.notes) ? parsed.notes : [];
+          parseReasonCode = (parserDiagnostics == null ? void 0 : parserDiagnostics.reasonCode) || "ok";
+        } else if (ext === "hwp" || ext === "hwpx") {
+          parseStage = "hwp-guided-choice";
+          const choice = await this.promptHwpIngestChoice(file.name, 0);
+          const choiceLabel = choice === "pdf_only" ? "PDF만" : choice === "pdf_to_md" ? "PDF→MD" : "취소";
+          if (choice === "cancel") {
+            const cancelMessage = `HWP/HWPX 선택 결과: ${choiceLabel} | skip | auto=not_attempted`;
+            this.setParserInboxLastEvent({
+              fileName: file.name,
+              result: "skip",
+              message: cancelMessage
+            });
+            if (typeof console !== "undefined" && typeof console.info === "function") {
+              console.info(`[Omni-Forge][parser][hwp-choice] ${file.path} -> ${choiceLabel} (skip | auto=not_attempted)`);
+            }
+            throw new Error("HWP 처리 취소");
+          }
+          let hwpResult = "guided";
+          let statusMeta = "auto=not_attempted";
+          let autoResult = null;
+          if (choice === "pdf_to_md" && ext === "hwp") {
+            parseStage = "hwp-soffice-poc";
+            const adapter = this.app.vault.adapter;
+            let binary = null;
+            if (typeof adapter.readBinary === "function") {
+              binary = await adapter.readBinary(file.path);
+            }
+            autoResult = await runHwpToPdfParserPocWithSoffice({
+              ext,
+              fileName: file.name,
+              binary,
+              parsePdf: typeof this.extractPdfTextWithParserChain === "function" ? async (pdfBinary, pdfAbsolutePath) => await this.extractPdfTextWithParserChain(pdfBinary, pdfAbsolutePath, { forceOcr }) : null
+            });
+            statusMeta = `auto=${describeHwpAutoConvertStatus(autoResult.status, autoResult.message)}`;
+            if (autoResult.ok && autoResult.parsed) {
+              const parsed = autoResult.parsed;
+              parser = `hwp:soffice->pdf:${parsed.parser}`;
+              content = parsed.content;
+              parserDiagnostics = parsed.diagnostics || null;
+              parserNotes = [
+                `hwp auto-convert: ${describeHwpAutoConvertStatus(autoResult.status)}`,
+                ...(Array.isArray(parsed.notes) ? parsed.notes : [])
+              ];
+              parseReasonCode = (parserDiagnostics == null ? void 0 : parserDiagnostics.reasonCode) || "hwp_soffice_autoconvert";
+              hwpResult = "converted";
+            }
+          }
+          if (!parser) {
+            parser = choice === "pdf_only" ? "hwp:guided-pdf-only" : "hwp:guided-pdf-to-md";
+            const autoLine = choice === "pdf_to_md" && ext === "hwp" ? `자동 변환 상태: ${statusMeta.replace(/^auto=/, "")}` : "자동 변환 상태: not_attempted";
+            content = choice === "pdf_only" ? [
+            `HWP guide: ${file.name}`,
+            "선택: PDF까지만 변환(권장)",
+            "상태: HWP 자동변환은 실행하지 않았습니다.",
+            "다음 단계: 외부 도구에서 HWP→PDF 변환 후 PDF를 다시 업로드하세요."
+          ].join("\n") : [
+            `HWP guide: ${file.name}`,
+            "선택: PDF 변환 후 MD까지 진행(사용자 수동 변환 필요)",
+            autoLine,
+            "다음 단계: 외부 도구에서 HWP→PDF 변환 후 PDF 업로드 시 parser ingest(.md/.xml)로 이어서 처리하세요."
+          ].join("\n");
+            parseReasonCode = autoResult && autoResult.status && autoResult.status !== "ok" ? `hwp_${autoResult.status}` : "hwp_conversion_not_supported";
+          }
+          const hwpMessage = `HWP/HWPX 선택 결과: ${choiceLabel} | ${hwpResult} | ${statusMeta}${hwpResult === "guided" ? " | fallback guide" : ""}`;
+          this.setParserInboxLastEvent({
+            fileName: file.name,
+            result: hwpResult,
+            message: hwpMessage
+          });
+          if (typeof console !== "undefined" && typeof console.info === "function") {
+            console.info(`[Omni-Forge][parser][hwp-choice] ${file.path} -> ${choiceLabel} (${hwpResult} | ${statusMeta})`);
+          }
+        } else {
+          parseStage = "unsupported-input";
+          throw new Error(`Unsupported parser input extension: .${ext}`);
+        }
+        this.updateParserInboxMetrics({
+          stage: "writing",
+          lastFile: file.name,
+          lastResult: "writing"
+        });
+        parseStage = "write-output";
+        const document = this.buildParserInboxOutputDocument({
+          kind: ext,
+          sourcePath: file.path,
+          parser,
+          parserMode,
+          reasonCode: parseReasonCode,
+          lowConfidence: Boolean(parserDiagnostics == null ? void 0 : parserDiagnostics.lowConfidence),
+          parserNotes,
+          content: this.clampAttachmentText(content || "", 2e4)
+        });
+        await this.writeVaultTextFile(outPath, document);
+        this.setParserInboxLastEvent({
+          fileName: file.name,
+          result: "success",
+          message: `converted -> ${outPath} (${parser}) | mode=${parserMode}`
+        });
+        this.updateParserInboxMetrics({
+          stage: (this.parserInboxMetrics.queueLength || 1) - 1 > 0 ? "queueing" : "done",
+          processed: (this.parserInboxMetrics.processed || 0) + 1,
+          success: (this.parserInboxMetrics.success || 0) + 1,
+          queueLength: Math.max(0, (this.parserInboxMetrics.queueLength || 1) - 1),
+          lastFile: file.name,
+          lastResult: "success"
+        });
+        this.emitParserDiagnostic({
+          fileId,
+          ext,
+          stage: parseStage,
+          result: "success",
+          reasonCode: parseReasonCode,
+          parser,
+          parserMode,
+          forceOcr,
+          noteCount: parserNotes.length,
+          lowConfidence: Boolean(parserDiagnostics == null ? void 0 : parserDiagnostics.lowConfidence),
+          strongOcrAttempted: Boolean(parserDiagnostics == null ? void 0 : parserDiagnostics.strongOcrAttempted),
+          toolStatus: {
+            pdftotext: this.parserToolStatus.pdftotext === true,
+            pdftoppm: this.parserToolStatus.pdftoppm === true,
+            tesseract: this.parserToolStatus.tesseract === true,
+            soffice: this.parserToolStatus.soffice === true
+          }
+        });
+        this.notice(`Parser inbox converted: ${file.path} -> ${outPath}`, 6e3);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Parser inbox conversion failed";
+        const reasonCode = this.classifyParserAbortReason(message, ext);
+        const guidance = this.getParserRetryGuidance(reasonCode, ext);
+        const isSkip = reasonCode === "user_cancel" || reasonCode === "unsupported_input" || reasonCode === "hwp_conversion_not_supported";
+        const summary = `[${parseStage}/${reasonCode}] ${message}${guidance ? ` | ${guidance}` : ""}`;
+        this.setParserInboxLastEvent({
+          fileName: file.name,
+          result: isSkip ? "skip" : "error",
+          message: summary
+        });
+        this.updateParserInboxMetrics({
+          stage: isSkip ? "skip" : (this.parserInboxMetrics.queueLength || 1) - 1 > 0 ? "queueing" : "done",
+          processed: (this.parserInboxMetrics.processed || 0) + 1,
+          skip: (this.parserInboxMetrics.skip || 0) + (isSkip ? 1 : 0),
+          error: (this.parserInboxMetrics.error || 0) + (isSkip ? 0 : 1),
+          queueLength: Math.max(0, (this.parserInboxMetrics.queueLength || 1) - 1),
+          lastFile: file.name,
+          lastResult: isSkip ? "skip" : "error"
+        });
+        this.emitParserDiagnostic({
+          fileId,
+          ext,
+          stage: parseStage,
+          result: isSkip ? "skip" : "error",
+          reasonCode,
+          parserMode,
+          forceOcr,
+          toolStatus: {
+            pdftotext: this.parserToolStatus.pdftotext === true,
+            pdftoppm: this.parserToolStatus.pdftoppm === true,
+            tesseract: this.parserToolStatus.tesseract === true,
+            soffice: this.parserToolStatus.soffice === true
+          }
+        }, isSkip ? "info" : "error");
+        this.notice(`Parser inbox ${isSkip ? "skipped" : "failed"} (${file.path}): ${summary}`, 8e3);
+      } finally {
+        this.parserInboxInFlightPaths.delete(file.path);
+        if ((this.parserInboxMetrics.queueLength || 0) === 0 && (this.parserInboxMetrics.total || 0) > 0 && (this.parserInboxMetrics.processed || 0) >= (this.parserInboxMetrics.total || 0)) {
+          this.updateParserInboxMetrics({ stage: "done", etaMs: 0 });
+        }
+      }
+    };
+    this.parserInboxQueue = this.parserInboxQueue.then(run, run);
+    await this.parserInboxQueue;
+  }
   buildAutoTagCandidatePaths(file) {
     const selected = this.getSelectedFiles().filter((candidate) => candidate.path !== file.path).map((candidate) => candidate.path);
     if (selected.length > 0) {
@@ -20007,7 +23343,7 @@ ${stderr}` : ""
         outcome = await analyzeWithFallback(this.settings, {
           ...signatureInput,
           sourceText: await this.app.vault.cachedRead(file)
-        });
+        }, this.settings.oauthEnabled === true ? async () => await this.getOAuthAuthHeadersForQa() : void 0);
         this.storeAnalysisOutcome(
           analysisCache,
           cacheKey,
@@ -20526,6 +23862,28 @@ ${stderr}` : ""
     const progressModal = new RunProgressModal(this.app, "Analyzing selected notes");
     progressModal.open();
     const selectedPathSet = new Set(selectedFiles.map((file) => file.path));
+    const linkedScopeContext = this.settings.analyzeLinked && !forceAllToAllLinked ? this.prepareLinkedScopeContext(selectedFiles, filesToAnalyze) : {
+      requestedMode: "selected_only",
+      mode: "selected_only",
+      relatedPool: [],
+      vaultSamplePool: [],
+      timedOut: false,
+      fallbackReason: ""
+    };
+    if (this.settings.analyzeLinked && !forceAllToAllLinked && linkedScopeContext.requestedMode !== "selected_only") {
+      if (linkedScopeContext.mode !== linkedScopeContext.requestedMode && linkedScopeContext.fallbackReason) {
+        this.notice(
+          `Linked scope fallback: ${linkedScopeContext.fallbackReason}`,
+          5e3
+        );
+      } else {
+        const poolSize = linkedScopeContext.mode === "vault_sampled" ? linkedScopeContext.vaultSamplePool.length : linkedScopeContext.relatedPool.length;
+        this.notice(
+          `Linked scope mode=${linkedScopeContext.mode}, candidates=${poolSize}${linkedScopeContext.timedOut ? " (time budget reached)" : ""}.`,
+          5e3
+        );
+      }
+    }
     const suggestions = [];
     const errors = [];
     const events = [];
@@ -20554,7 +23912,8 @@ ${stderr}` : ""
         const candidateLinkPaths = this.getCandidateLinkPathsForFile(
           file.path,
           selectedFiles,
-          semanticNeighbors
+          semanticNeighbors,
+          linkedScopeContext
         );
         const analyzeLinkedByModel = this.settings.analyzeLinked && !forceAllToAllLinked;
         const candidateLinkPathsForRequest = analyzeLinkedByModel ? candidateLinkPaths : [];
@@ -20605,7 +23964,11 @@ ${stderr}` : ""
             ...signatureInput,
             sourceText: requestSourceText
           };
-          outcome = await analyzeWithFallback(this.settings, request);
+          outcome = await analyzeWithFallback(
+            this.settings,
+            request,
+            this.settings.oauthEnabled === true ? async () => await this.getOAuthAuthHeadersForQa() : void 0
+          );
           this.storeAnalysisOutcome(
             analysisCache,
             cacheKey,
@@ -20658,11 +24021,14 @@ ${stderr}` : ""
         }
         if (this.settings.analyzeLinked) {
           const linkedSource = forceAllToAllLinked ? selectedFiles.filter((candidate) => candidate.path !== file.path).map((candidate) => candidate.path) : ((_e = outcome.proposal.linked) != null ? _e : []).slice(0, this.settings.maxLinked);
+          const linkedAllowedPathSet = forceAllToAllLinked ? selectedPathSet : new Set(
+            mergeUniqueStrings([...selectedPathSet], candidateLinkPathsForRequest)
+          );
           const proposedLinked = normalizeLinked(
             this.app,
             file.path,
             linkedSource,
-            selectedPathSet
+            linkedAllowedPathSet
           );
           proposed.linked = mergeUniqueStrings(existingValidated.linked, proposedLinked);
           if (shouldBuildLinkedDiffPreview && typeof sourceText === "string") {
@@ -20860,6 +24226,13 @@ ${stderr}` : ""
             }
           }
         );
+        if (this.settings.analyzeLinked) {
+          const beforeContent = await this.app.vault.cachedRead(suggestion.file);
+          const nextContent = this.upsertManagedGraphLinkBlock(beforeContent, suggestion.proposed.linked);
+          if (nextContent !== beforeContent) {
+            await this.app.vault.modify(suggestion.file, nextContent);
+          }
+        }
         events.push({ filePath: suggestion.file.path, status: "ok", message: "applied" });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown apply error";
@@ -20886,6 +24259,113 @@ ${stderr}` : ""
       );
     }
     return { cancelled, errors };
+  }
+  buildManagedGraphLinkBlock(linkTokens) {
+    const startMarker = "<!-- OMNI_FORGE_LINKED_START -->";
+    const endMarker = "<!-- OMNI_FORGE_LINKED_END -->";
+    const lines = [
+      startMarker,
+      "## Omni Forge Linked",
+      ...linkTokens.map((token) => `- ${token}`),
+      endMarker
+    ];
+    return `${lines.join("\n")}\n`;
+  }
+  upsertManagedGraphLinkBlock(content, linkTokens) {
+    const source = typeof content === "string" ? content : "";
+    const startMarker = "<!-- OMNI_FORGE_LINKED_START -->";
+    const endMarker = "<!-- OMNI_FORGE_LINKED_END -->";
+    const nextBlock = this.buildManagedGraphLinkBlock(linkTokens);
+    const startIdx = source.indexOf(startMarker);
+    const endIdx = source.indexOf(endMarker);
+    if (startIdx >= 0 && endIdx > startIdx) {
+      const afterEnd = endIdx + endMarker.length;
+      const suffix = source.slice(afterEnd).replace(/^\r?\n/, "");
+      const prefix = source.slice(0, startIdx).replace(/\s*$/, "\n\n");
+      return `${prefix}${nextBlock}${suffix}`;
+    }
+    const trimmed = source.replace(/\s*$/, "");
+    if (!trimmed) {
+      return nextBlock;
+    }
+    return `${trimmed}\n\n${nextBlock}`;
+  }
+  async applyLinkedEdgesForGraphView() {
+    const selectedFiles = this.getSelectedFiles();
+    if (selectedFiles.length < 2) {
+      this.notice("Select at least 2 target notes first.");
+      await this.openSelectionModal();
+      return;
+    }
+    const approved = typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm("Apply linked edges to selected notes now? (Graph View reflected after write)") : true;
+    if (!approved) {
+      this.notice("Apply cancelled. (NO-OP)");
+      return;
+    }
+    let updated = 0;
+    const errors = [];
+    for (const file of selectedFiles) {
+      try {
+        const targets = selectedFiles.filter((candidate) => candidate.path !== file.path);
+        const linkTokens = targets.map((candidate) => {
+          const linkText = this.app.metadataCache.fileToLinktext(candidate, file.path, true);
+          return `[[${linkText}]]`;
+        });
+        const currentContent = await this.app.vault.cachedRead(file);
+        const nextContent = this.upsertManagedGraphLinkBlock(currentContent, linkTokens);
+        if (nextContent !== currentContent) {
+          await this.app.vault.modify(file, nextContent);
+          updated += 1;
+        }
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+          frontmatter.linked = [...linkTokens];
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown graph-link apply error";
+        errors.push(`${file.path}: ${message}`);
+      }
+    }
+    if (errors.length > 0) {
+      this.notice(`Graph link apply completed with errors (${updated}/${selectedFiles.length}).`, 6e3);
+      if (typeof console !== "undefined" && typeof console.error === "function") {
+        console.error("[Omni-Forge] applyLinkedEdgesForGraphView errors", errors);
+      }
+      return;
+    }
+    const graphFocused = await this.openOrFocusGraphViewForLinkedUx();
+    this.notice(
+      graphFocused ? `Graph link apply complete: ${updated}/${selectedFiles.length} note(s) updated. Graph View focused.` : `Graph link apply complete: ${updated}/${selectedFiles.length} note(s) updated. (Graph View focus unavailable)`,
+      5e3
+    );
+  }
+  async openOrFocusGraphViewForLinkedUx() {
+    const existing = this.app.workspace.getLeavesOfType("graph");
+    if (existing.length > 0) {
+      await this.app.workspace.setActiveLeaf(existing[0], true, true);
+      return true;
+    }
+    const commands = ["graph:open", "workspace:open-graph-view"];
+    for (const id of commands) {
+      const command = this.app.commands.findCommand(id);
+      if (!command) {
+        continue;
+      }
+      try {
+        const ok = await this.app.commands.executeCommandById(id);
+        if (ok !== false) {
+          const leaves = this.app.workspace.getLeavesOfType("graph");
+          if (leaves.length > 0) {
+            await this.app.workspace.setActiveLeaf(leaves[0], true, true);
+          }
+          return true;
+        }
+      } catch (error) {
+        if (typeof console !== "undefined" && typeof console.warn === "function") {
+          console.warn("[Omni-Forge] failed to open graph view", id, error);
+        }
+      }
+    }
+    return false;
   }
   async createBackupForFiles(files) {
     const uniquePaths = [...new Set(files.map((file) => file.path))].sort(
