@@ -11,6 +11,10 @@
 4. `Start OAuth Login` 실행
 5. `OAuth session actions`에서 토큰 상태 확인
 
+Google Console 빠른 링크:
+- Credentials: `https://console.cloud.google.com/apis/credentials`
+- Consent screen: `https://console.cloud.google.com/apis/credentials/consent`
+
 ## 체크포인트
 - `OAuth setup checklist`에서 아래 6개 항목을 확인:
   - preset
@@ -34,6 +38,7 @@
 - 증상: `Missing required fields: client ID`
 - 조치:
   - Google Cloud Console > Credentials > OAuth 2.0 Client ID 생성
+  - 바로 열기: `https://console.cloud.google.com/apis/credentials`
   - `OAuth client ID` 필드에 입력 후 재시도
 
 ### 2) Redirect URI mismatch

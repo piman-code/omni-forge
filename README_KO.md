@@ -204,6 +204,9 @@ Omni Forge는 반대로 동작합니다.
   - `qaChatModelFamily=cloud`
   - `qaChatModelProfile=codex`
   - Google OAuth preset URLs + `oauthEnabled=true`
+- Google Console 링크:
+  - Credentials: `https://console.cloud.google.com/apis/credentials`
+  - Consent screen: `https://console.cloud.google.com/apis/credentials/consent`
 - Required fields are validated with actionable guidance:
   - auth URL
   - token URL
@@ -219,13 +222,20 @@ Omni Forge는 반대로 동작합니다.
 - Parser output format is configurable:
   - `md`: chat-ready markdown
   - `xml`: structured metadata + content
+- 필수 설치 링크:
+  - LibreOffice(soffice): `https://www.libreoffice.org/download/download-libreoffice/`
+  - Poppler(Windows pdftotext/pdftoppm): `https://github.com/oschwartz10612/poppler-windows/releases`
+  - Tesseract OCR(Windows): `https://github.com/UB-Mannheim/tesseract/wiki`
+  - Korean OCR data (`kor.traineddata`): `https://github.com/tesseract-ocr/tessdata_fast/blob/main/kor.traineddata`
 
 ### Common failure guidance
 - `Missing required fields: client ID`
   - Fill `OAuth client ID` in Cloud provider config.
+  - Open: `https://console.cloud.google.com/apis/credentials`
 - `redirect_uri_mismatch`
   - Register `http://127.0.0.1:8765/callback` in provider console.
 - `OAuth transport mismatch`
   - Enable `OAuth bridge mode` or click `Apply bridge defaults`.
 - `soffice missing`
   - Install LibreOffice and make `soffice` discoverable in PATH.
+  - Download: `https://www.libreoffice.org/download/download-libreoffice/`

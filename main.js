@@ -1877,6 +1877,12 @@ var LOCAL_QA_MAX_ATTACHMENTS = 10;
 var LOCAL_QA_MAX_PANES = 3;
 var LOCAL_QA_PDF_OCR_MAX_PAGES_FAST = 6;
 var LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED = 16;
+var GOOGLE_OAUTH_CREDENTIALS_URL = "https://console.cloud.google.com/apis/credentials";
+var GOOGLE_OAUTH_CONSENT_URL = "https://console.cloud.google.com/apis/credentials/consent";
+var LIBREOFFICE_DOWNLOAD_URL = "https://www.libreoffice.org/download/download-libreoffice/";
+var TESSERACT_INSTALL_URL = "https://github.com/UB-Mannheim/tesseract/wiki";
+var POPPLER_WINDOWS_URL = "https://github.com/oschwartz10612/poppler-windows/releases";
+var TESSERACT_KOR_DATA_URL = "https://github.com/tesseract-ocr/tessdata_fast/blob/main/kor.traineddata";
 var ANALYSIS_CACHE_FILE = "analysis-proposal-cache.json";
 var SELECTION_DIFF_AUDIT_LOG_FILE = "selection-diff-audit.jsonl";
 var ANALYSIS_CACHE_VERSION = 1;
@@ -7613,6 +7619,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const requestedOem = Number.parseInt(String((options == null ? void 0 : options.oem) != null ? options.oem : ""), 10);
     const oem = Number.isFinite(requestedOem) ? Math.max(0, Math.min(3, requestedOem)) : null;
     const preserveInterwordSpaces = Boolean(options == null ? void 0 : options.preserveInterwordSpaces);
+    const requestedDpi = Number.parseInt(String((options == null ? void 0 : options.dpi) != null ? options.dpi : 220), 10);
+    const dpi = Number.isFinite(requestedDpi) ? Math.max(120, Math.min(600, requestedDpi)) : 220;
+    const grayscale = (options == null ? void 0 : options.grayscale) !== false;
     const tmpRoot = await nodeFs.promises.mkdtemp(
       nodePath.join(nodeOs.tmpdir(), "omni-forge-ocr-")
     );
@@ -7620,14 +7629,17 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       const prefix = nodePath.join(tmpRoot, "page");
       const renderCommand = [
         "pdftoppm",
+        "-r",
+        String(dpi),
         "-f",
         "1",
         "-l",
         String(Math.max(1, maxPages)),
+        grayscale ? "-gray" : "",
         "-png",
         this.shellQuoteArg(pdfAbsolutePath),
         this.shellQuoteArg(prefix)
-      ].join(" ");
+      ].filter((part) => part && part.trim().length > 0).join(" ");
       await execAsync(renderCommand, { timeout: 45e3, maxBuffer: 8 * 1024 * 1024 });
       const pageImages = (await nodeFs.promises.readdir(tmpRoot)).filter((name) => /^page-\d+\.png$/i.test(name)).map((name) => nodePath.join(tmpRoot, name)).sort((a, b) => a.localeCompare(b));
       const chunks = [];
@@ -8022,8 +8034,22 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       const ocrToolsReady = await this.canUseShellCommand("pdftoppm") && await this.canUseShellCommand("tesseract");
       if (shouldTryOcr && ocrToolsReady) {
         try {
+          const scoreOcrCandidate = (candidateQuality, candidateText) => {
+            const lengthBonus = Math.min(0.24, (candidateText || "").length / 5500);
+            const readableBonus = Math.min(0.5, Math.max(0, candidateQuality.readableRatio || 0));
+            const replacementPenalty = Math.min(0.3, Math.max(0, candidateQuality.replacementRatio || 0) * 6);
+            const lowConfidencePenalty = candidateQuality.lowConfidence ? 0.34 : 0;
+            const mojibakePenalty = candidateQuality.likelyMojibake ? 0.45 : 0;
+            const handwritingPenalty = candidateQuality.koreanHandwritingRisk ? 0.08 : 0;
+            return (candidateQuality.readabilityScore || 0) + lengthBonus + readableBonus - replacementPenalty - lowConfidencePenalty - mojibakePenalty - handwritingPenalty;
+          };
+          const baseOcrDpi = preferDetailed ? 300 : 240;
           const ocrText = this.normalizeParserExtractedText(
-            await this.extractPdfTextViaOcr(workingPath, ocrMaxPages, { psm: 6 }),
+            await this.extractPdfTextViaOcr(workingPath, ocrMaxPages, {
+              psm: 6,
+              dpi: baseOcrDpi,
+              grayscale: true
+            }),
             { forOcr: true, normalizeSpacing: true }
           );
           const ocrQuality = this.assessAttachmentTextQuality(ocrText);
@@ -8039,22 +8065,45 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           if (shouldTryStrongOcr) {
             strongOcrAttempted = true;
             const strongOcrPages = forceOcrPreferred ? Math.max(ocrMaxPages, LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED) : Math.min(24, Math.max(ocrMaxPages + 4, 8));
-            const ocrStrongText = this.normalizeParserExtractedText(
-              await this.extractPdfTextViaOcr(workingPath, strongOcrPages, {
-                psm: 11,
-                oem: 1,
-                preserveInterwordSpaces: true
-              }),
-              { forOcr: true, normalizeSpacing: true }
-            );
-            const ocrStrongQuality = this.assessAttachmentTextQuality(ocrStrongText);
-            const shouldPreferStrong = forceOcrPreferred || quality.lowConfidence && !ocrStrongQuality.lowConfidence || quality.koreanHandwritingRisk && !ocrStrongQuality.lowConfidence || ocrStrongQuality.readabilityScore > quality.readabilityScore + 0.04 || ocrStrongText.length > extracted.length + 80;
-            if (shouldPreferStrong && ocrStrongText.trim()) {
-              extracted = ocrStrongText;
-              parser = "ocr-strong";
-              quality = ocrStrongQuality;
-            } else if (ocrStrongText.trim()) {
-              notes.push(`OCR strong kept as secondary candidate (score=${ocrStrongQuality.readabilityScore.toFixed(2)}).`);
+            const strongProfiles = [
+              { parserLabel: "ocr-strong", psm: 11, oem: 1, preserveInterwordSpaces: true, dpi: 380, grayscale: true },
+              { parserLabel: "ocr-strong-psm6", psm: 6, oem: 1, preserveInterwordSpaces: true, dpi: 340, grayscale: true },
+              { parserLabel: "ocr-strong-psm13", psm: 13, oem: 1, preserveInterwordSpaces: true, dpi: 420, grayscale: true }
+            ];
+            let bestStrong = null;
+            for (const profile of strongProfiles) {
+              try {
+                const candidateText = this.normalizeParserExtractedText(
+                  await this.extractPdfTextViaOcr(workingPath, strongOcrPages, profile),
+                  { forOcr: true, normalizeSpacing: true }
+                );
+                if (!candidateText.trim()) {
+                  continue;
+                }
+                const candidateQuality = this.assessAttachmentTextQuality(candidateText);
+                const candidateScore = scoreOcrCandidate(candidateQuality, candidateText);
+                if (!bestStrong || candidateScore > bestStrong.score + 0.01) {
+                  bestStrong = {
+                    parserLabel: profile.parserLabel,
+                    text: candidateText,
+                    quality: candidateQuality,
+                    score: candidateScore
+                  };
+                }
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "strong OCR pass failed";
+                notes.push(`${profile.parserLabel} failed: ${message}`);
+              }
+            }
+            if (bestStrong) {
+              const shouldPreferStrong = forceOcrPreferred || quality.lowConfidence && !bestStrong.quality.lowConfidence || quality.koreanHandwritingRisk && !bestStrong.quality.lowConfidence || bestStrong.quality.readabilityScore > quality.readabilityScore + 0.04 || bestStrong.text.length > extracted.length + 80 || scoreOcrCandidate(bestStrong.quality, bestStrong.text) > scoreOcrCandidate(quality, extracted) + 0.06;
+              if (shouldPreferStrong) {
+                extracted = bestStrong.text;
+                parser = bestStrong.parserLabel;
+                quality = bestStrong.quality;
+              } else {
+                notes.push(`OCR strong kept as secondary candidate (score=${bestStrong.quality.readabilityScore.toFixed(2)}).`);
+              }
             }
           } else if (!preferDetailed && (quality.lowConfidence || quality.koreanHandwritingRisk)) {
             notes.push("fast mode kept strong OCR conservative; use Detailed mode or manual OCR re-parse for higher quality.");
@@ -11383,6 +11432,11 @@ ${availability.note}`).addText(
     new import_obsidian4.Setting(containerEl).setName(t("Parser status", "파서 상태")).setDesc(`모드 ${parserProfile.mode.toUpperCase()}(${parserProfile.focus}) | 진행률 ${parserStatus.processed || 0}/${parserStatus.total || 0} | 소요 ${this.plugin.formatParserEtaMsForQa(parserStatus.elapsedMs || 0)} | ETA ${this.plugin.formatParserEtaMsForQa(parserStatus.etaMs || 0)} | 큐 ${parserStatus.queueLength || 0} | 단계 ${parserStatus.stage || "idle"} | 최근 ${parserLast.fileName} | 결과 ${parserLast.result} (s:${parserStatus.success || 0}/k:${parserStatus.skip || 0}/e:${parserStatus.error || 0}) | 메시지 ${parserLast.message || "-"}`);
     new import_obsidian4.Setting(containerEl).setName("HWP/HWPX workaround").setDesc("HWPX는 1차 텍스트 추출 지원. HWP는 soffice가 감지되면 자동변환(PoC)을 시도하고, 미탐지/실패 시 PDF 또는 DOCX 수동 변환 안내로 폴백합니다.").addButton((button) => button.setButtonText("우회 안내 보기").onClick(() => {
       new import_obsidian4.Notice("HWPX는 XML 1차 추출을 시도합니다. HWP는 soffice 자동변환(PoC)을 먼저 시도하며 실패 시 PDF/DOCX 수동 변환 경로를 안내합니다.", 7e3);
+    })).addButton((button) => button.setButtonText("LibreOffice 설치").onClick(() => {
+      try {
+        window.open(LIBREOFFICE_DOWNLOAD_URL);
+      } catch (e) {
+      }
     }));
     new import_obsidian4.Setting(containerEl).setName("Parser mode indicator").setDesc(
       `${parserProfile.summary}
@@ -11403,6 +11457,37 @@ ${parserProfile.recommendation}`
       (button) => button.setButtonText("Refresh / \uC810\uAC80").onClick(async () => {
         await this.plugin.refreshParserToolReadinessForQa(true);
         this.display();
+      })
+    );
+    new import_obsidian4.Setting(containerEl).setName(t("Parser install links", "파서 설치 링크")).setDesc(
+      `LibreOffice: ${LIBREOFFICE_DOWNLOAD_URL} | Poppler(Windows): ${POPPLER_WINDOWS_URL} | Tesseract: ${TESSERACT_INSTALL_URL}`
+    ).addButton(
+      (button) => button.setButtonText("LibreOffice").onClick(() => {
+        try {
+          window.open(LIBREOFFICE_DOWNLOAD_URL);
+        } catch (e) {
+        }
+      })
+    ).addButton(
+      (button) => button.setButtonText("Poppler").onClick(() => {
+        try {
+          window.open(POPPLER_WINDOWS_URL);
+        } catch (e) {
+        }
+      })
+    ).addButton(
+      (button) => button.setButtonText("Tesseract").onClick(() => {
+        try {
+          window.open(TESSERACT_INSTALL_URL);
+        } catch (e) {
+        }
+      })
+    ).addButton(
+      (button) => button.setButtonText("Korean OCR data").onClick(() => {
+        try {
+          window.open(TESSERACT_KOR_DATA_URL);
+        } catch (e) {
+        }
       })
     );
     const parserList = containerEl.createEl("ul", { cls: "omni-forge-settings-guide-list" });
@@ -11545,9 +11630,25 @@ ${parserProfile.recommendation}`
       (button) => button.setButtonText(uiMode === "en" ? "Google OAuth Login" : uiMode === "ko" ? "Google OAuth 로그인" : "Google OAuth Login / Google OAuth 로그인").onClick(async () => {
         this.plugin.applyGoogleOAuthQuickSetupForQa();
         await this.plugin.saveSettings();
-        const validation = this.plugin.getOAuthLoginValidationForQa();
+        let validation = this.plugin.getOAuthLoginValidationForQa();
+        const missingClientId = Array.isArray(validation.missingKeys) && validation.missingKeys.includes("oauthClientId");
+        if (!validation.ready && missingClientId && typeof window.prompt === "function") {
+          const pastedClientId = window.prompt("Google OAuth client ID를 입력하세요.\nPaste OAuth client ID now:", this.plugin.settings.oauthClientId || "");
+          if (typeof pastedClientId === "string" && pastedClientId.trim()) {
+            this.plugin.settings.oauthClientId = pastedClientId.trim();
+            await this.plugin.saveSettings();
+            validation = this.plugin.getOAuthLoginValidationForQa();
+          }
+        }
         if (!validation.ready) {
-          new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}`.trim(), 8e3);
+          const openLinkHint = missingClientId ? ` | Open: ${GOOGLE_OAUTH_CREDENTIALS_URL}` : "";
+          new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}${openLinkHint}`.trim(), 11e3);
+          if (missingClientId) {
+            try {
+              window.open(GOOGLE_OAUTH_CREDENTIALS_URL);
+            } catch (e) {
+            }
+          }
           focusOAuthField(validation.focusField);
           this.display();
           return;
@@ -11804,6 +11905,21 @@ ${parserProfile.recommendation}`
     oauthRedirectGuide.createEl("div", { text: "Provider 콘솔에 위 URI를 Redirect URI 허용(whitelist)으로 등록해야 로그인됩니다." });
     oauthRedirectGuide.createEl("div", { text: "입력 순서(초보자 권장): Auth URL → Token URL → Client ID → Redirect URI → Start OAuth Login" });
     oauthRedirectGuide.createEl("div", { text: "Obsidian-plugin-first: 외부 스크립트보다 Omni-Forge 설정창에서 먼저 구성/검증하세요." });
+    new import_obsidian4.Setting(containerEl).setName("OAuth setup links / OAuth 설정 링크").setDesc(`Credentials: ${GOOGLE_OAUTH_CREDENTIALS_URL} | Consent: ${GOOGLE_OAUTH_CONSENT_URL}`).addButton(
+      (button) => button.setButtonText("Open Credentials").onClick(() => {
+        try {
+          window.open(GOOGLE_OAUTH_CREDENTIALS_URL);
+        } catch (e) {
+        }
+      })
+    ).addButton(
+      (button) => button.setButtonText("Open Consent Screen").onClick(() => {
+        try {
+          window.open(GOOGLE_OAUTH_CONSENT_URL);
+        } catch (e) {
+        }
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("OAuth use PKCE / OAuth PKCE 사용").setDesc("Enable S256 code challenge. / S256 코드 챌린지 사용").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.oauthUsePkce !== false).onChange(async (value) => {
         this.plugin.settings.oauthUsePkce = value === true;
@@ -11847,9 +11963,25 @@ ${parserProfile.recommendation}`
       (button) => button.setButtonText("Start OAuth Login / OAuth 로그인 시작").onClick(async () => {
         this.plugin.settings.oauthEnabled = true;
         await this.plugin.saveSettings();
-        const validation = this.plugin.getOAuthLoginValidationForQa();
+        let validation = this.plugin.getOAuthLoginValidationForQa();
+        const missingClientId = Array.isArray(validation.missingKeys) && validation.missingKeys.includes("oauthClientId");
+        if (!validation.ready && missingClientId && typeof window.prompt === "function") {
+          const pastedClientId = window.prompt("Google OAuth client ID를 입력하세요.\nPaste OAuth client ID now:", this.plugin.settings.oauthClientId || "");
+          if (typeof pastedClientId === "string" && pastedClientId.trim()) {
+            this.plugin.settings.oauthClientId = pastedClientId.trim();
+            await this.plugin.saveSettings();
+            validation = this.plugin.getOAuthLoginValidationForQa();
+          }
+        }
         if (!validation.ready) {
-          new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}`.trim(), 8e3);
+          const openLinkHint = missingClientId ? ` | Open: ${GOOGLE_OAUTH_CREDENTIALS_URL}` : "";
+          new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}${openLinkHint}`.trim(), 11e3);
+          if (missingClientId) {
+            try {
+              window.open(GOOGLE_OAUTH_CREDENTIALS_URL);
+            } catch (e) {
+            }
+          }
           focusOAuthField(validation.focusField);
           this.display();
           return;
@@ -12957,6 +13089,7 @@ _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
   "OAuth client ID",
   "OAuth scopes",
   "OAuth redirect URI",
+  "OAuth setup links",
   "OAuth use PKCE",
   "OAuth login validation",
   "OAuth endpoint compatibility",
@@ -14489,7 +14622,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getOAuthMissingFieldHintForQa(fieldKey) {
     switch (fieldKey) {
       case "oauthClientId":
-        return "Set OAuth client ID first. Use Google Cloud Console > Credentials > OAuth 2.0 Client IDs.";
+        return `Set OAuth client ID first. Open Google Cloud Console Credentials: ${GOOGLE_OAUTH_CREDENTIALS_URL}`;
       case "oauthRedirectUri":
         return "Use redirect URI http://127.0.0.1:8765/callback and register the same URI in provider console.";
       case "oauthAuthUrl":
@@ -14497,7 +14630,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       case "oauthTokenUrl":
         return "For Google preset, token URL should be https://oauth2.googleapis.com/token.";
       default:
-        return "Fill required OAuth fields in Settings > Cloud provider config.";
+        return "Fill required OAuth fields in Settings > Login (OAuth).";
     }
   }
   getOAuthLoginFailureHintForQa(rawMessage) {

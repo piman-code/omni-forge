@@ -55,6 +55,11 @@ Expected:
 Prerequisites:
 - LibreOffice installed (`soffice` available in PATH or standard install path).
 - Parser inbox watch enabled (or run scan command manually).
+- Install links:
+  - LibreOffice: `https://www.libreoffice.org/download/download-libreoffice/`
+  - Poppler (Windows): `https://github.com/oschwartz10612/poppler-windows/releases`
+  - Tesseract (Windows): `https://github.com/UB-Mannheim/tesseract/wiki`
+  - Korean OCR data (`kor.traineddata`): `https://github.com/tesseract-ocr/tessdata_fast/blob/main/kor.traineddata`
 
 1. Put a sample `.hwp` file into parser inbox folder.
 2. Choose `PDF -> MD` when prompted (or equivalent guided option).

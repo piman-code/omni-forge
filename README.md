@@ -158,6 +158,8 @@ This helps maintain metadata freshness without full rescans.
    - `OAuth token URL`: `https://oauth2.googleapis.com/token`
    - `OAuth client ID`: your Google OAuth client ID
    - `OAuth redirect URI`: `http://127.0.0.1:8765/callback`
+   - Google Cloud Console (Credentials): `https://console.cloud.google.com/apis/credentials`
+   - Google Cloud Console (Consent): `https://console.cloud.google.com/apis/credentials/consent`
 4. Check `OAuth endpoint compatibility`.
    - If it shows endpoint mismatch, click `Apply bridge defaults`.
    - Default bridge URL applied by helper: `http://127.0.0.1:8787/v1`
@@ -174,6 +176,11 @@ Notes:
 - `.hwp` auto conversion requires LibreOffice `soffice`.
 - `.hwpx` uses XML first-pass extraction and guided fallback.
 - Parser output format is configurable: `md` (chat-ready markdown) or `xml` (structured metadata + content).
+- Required install links:
+  - LibreOffice (soffice): `https://www.libreoffice.org/download/download-libreoffice/`
+  - Poppler (Windows pdftotext/pdftoppm): `https://github.com/oschwartz10612/poppler-windows/releases`
+  - Tesseract OCR (Windows installer guide): `https://github.com/UB-Mannheim/tesseract/wiki`
+  - Korean OCR language data (`kor.traineddata`): `https://github.com/tesseract-ocr/tessdata_fast/blob/main/kor.traineddata`
 
 Common failure reasons:
 - `soffice missing`: install LibreOffice and ensure `soffice` is discoverable.
@@ -204,12 +211,14 @@ Common failure reasons:
   - Use local endpoint, or explicitly enable non-local endpoint.
 - `Missing required fields: client ID` during OAuth login
   - Fill `OAuth client ID` in Cloud provider config, then retry login.
+  - Open: `https://console.cloud.google.com/apis/credentials`
 - `redirect_uri_mismatch` during OAuth login
   - Register `http://127.0.0.1:8765/callback` in the provider OAuth console.
 - `OAuth transport mismatch` (Google OAuth + direct `api.openai.com`)
   - Enable `OAuth bridge mode` or click `Apply bridge defaults`.
 - `soffice missing` during HWP ingest
   - Install LibreOffice and verify `soffice` command/path.
+  - Download: `https://www.libreoffice.org/download/download-libreoffice/`
 - `Embedding model is not suitable`
   - Choose an embedding-capable model and refresh detection.
 - Empty or too short answers
