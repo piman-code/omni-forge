@@ -1527,6 +1527,44 @@ function shellQuoteForExec(value) {
   }
   return `'${source.replace(/'/g, `'"'"'`)}'`;
 }
+async function openExternalUrlWithSystemFallback(rawUrl) {
+  var _a, _b;
+  const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
+  if (!url) {
+    return false;
+  }
+  try {
+    const win = typeof window !== "undefined" ? window : null;
+    const electron = win && typeof win.require === "function" ? win.require("electron") : null;
+    if ((_a = electron == null ? void 0 : electron.shell) == null ? void 0 : _a.openExternal) {
+      await electron.shell.openExternal(url);
+      return true;
+    }
+    if (((_b = electron == null ? void 0 : electron.shell) == null ? void 0 : _b.openPath) && /^file:\/\//i.test(url)) {
+      const path = decodeURIComponent(url.replace(/^file:\/\//i, ""));
+      const result = await electron.shell.openPath(path);
+      return !result;
+    }
+  } catch (e) {
+  }
+  try {
+    if (typeof window !== "undefined" && typeof window.open === "function") {
+      const opened = window.open(url, "_blank", "noopener,noreferrer");
+      if (opened) {
+        return true;
+      }
+    }
+  } catch (e) {
+  }
+  try {
+    const escapedUrl = process.platform === "win32" ? `"${url.replace(/"/g, '""')}"` : shellQuoteForExec(url);
+    const command = process.platform === "win32" ? `cmd /d /s /c start "" ${escapedUrl}` : process.platform === "darwin" ? `open ${escapedUrl}` : `xdg-open ${escapedUrl}`;
+    await execAsync(command, { timeout: 8e3, maxBuffer: 1024 * 1024 });
+    return true;
+  } catch (e) {
+  }
+  return false;
+}
 function sanitizeTempFileNameForHwp(rawName, fallbackBase, extHint = "") {
   const source = typeof rawName === "string" && rawName.trim() ? rawName.trim() : fallbackBase;
   const normalized = source.normalize("NFKD").replace(/[^\x20-\x7E]/g, "");
@@ -6670,7 +6708,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     optionsDetails.createEl("summary", { text: t("Workspace options", "작업 옵션") });
     const optionsBody = optionsDetails.createDiv({ cls: "omni-forge-chat-options-group-body" });
     const utilityDetails = optionsBody.createEl("details", { cls: "omni-forge-chat-collapsible" });
-    utilityDetails.open = true;
+    utilityDetails.open = false;
     utilityDetails.createEl("summary", { text: t("Maintenance tools", "유지보수 도구") });
     utilityDetails.createEl("small", {
       text: t(
@@ -6719,7 +6757,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       ).open();
     };
     const modelDetails = optionsBody.createEl("details", { cls: "omni-forge-chat-collapsible" });
-    modelDetails.open = true;
+    modelDetails.open = false;
     modelDetails.createEl("summary", { text: t("Model options", "모델 옵션") });
     this.modelPresetHintEl = modelDetails.createEl("small", {
       cls: "omni-forge-chat-model-hint"
@@ -6817,7 +6855,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     let runtimeMetaRow = null;
     if (showAdvancedInChat) {
       const runtimePanel = optionsBody.createEl("details", { cls: "omni-forge-chat-runtime-panel" });
-      runtimePanel.open = true;
+      runtimePanel.open = false;
       runtimePanel.createEl("summary", {
         cls: "omni-forge-chat-runtime-head",
         text: t("Current status", "현재 상태")
@@ -7538,7 +7576,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       return (_a = this.commandAvailabilityCache.get(safe)) != null ? _a : false;
     }
     try {
-      await execAsync(`command -v ${safe}`);
+      const probe = process.platform === "win32" ? `where ${safe}` : `command -v ${safe}`;
+      await execAsync(probe, { timeout: 6e3, maxBuffer: 512 * 1024 });
       this.commandAvailabilityCache.set(safe, true);
       return true;
     } catch (e) {
@@ -7596,21 +7635,42 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     return ((_a = result.stdout) != null ? _a : "").trim();
   }
   async extractPdfTextViaPdfMiner(pdfAbsolutePath) {
-    var _a;
+    var _a, _b;
     const pdf2txt = await this.resolvePdf2TxtExecutable();
-    if (!pdf2txt) {
-      return "";
+    if (pdf2txt) {
+      const command = [
+        this.shellQuoteArg(pdf2txt),
+        "--output_type",
+        "text",
+        "--codec",
+        "utf-8",
+        this.shellQuoteArg(pdfAbsolutePath)
+      ].join(" ");
+      const result = await execAsync(command, { timeout: 45e3, maxBuffer: 16 * 1024 * 1024 });
+      return ((_a = result.stdout) != null ? _a : "").trim();
     }
-    const command = [
-      this.shellQuoteArg(pdf2txt),
-      "--output_type",
-      "text",
-      "--codec",
-      "utf-8",
-      this.shellQuoteArg(pdfAbsolutePath)
-    ].join(" ");
-    const result = await execAsync(command, { timeout: 45e3, maxBuffer: 16 * 1024 * 1024 });
-    return ((_a = result.stdout) != null ? _a : "").trim();
+    const pythonRunners = process.platform === "win32" ? ["py", "python"] : ["python3", "python"];
+    for (const runner of pythonRunners) {
+      try {
+        const command = [
+          runner,
+          "-m",
+          "pdfminer.high_level",
+          "--output_type",
+          "text",
+          "--codec",
+          "utf-8",
+          this.shellQuoteArg(pdfAbsolutePath)
+        ].join(" ");
+        const result = await execAsync(command, { timeout: 6e4, maxBuffer: 16 * 1024 * 1024 });
+        const stdout = ((_b = result.stdout) != null ? _b : "").trim();
+        if (stdout) {
+          return stdout;
+        }
+      } catch (e) {
+      }
+    }
+    return "";
   }
   async extractPdfTextViaOcr(pdfAbsolutePath, maxPages, options) {
     var _a;
@@ -7618,6 +7678,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const psm = Number.isFinite(requestedPsm) ? Math.max(3, Math.min(13, requestedPsm)) : 6;
     const requestedOem = Number.parseInt(String((options == null ? void 0 : options.oem) != null ? options.oem : ""), 10);
     const oem = Number.isFinite(requestedOem) ? Math.max(0, Math.min(3, requestedOem)) : null;
+    const rawLang = typeof (options == null ? void 0 : options.lang) === "string" ? options.lang.trim() : "";
+    const lang = rawLang || "kor+eng";
     const preserveInterwordSpaces = Boolean(options == null ? void 0 : options.preserveInterwordSpaces);
     const requestedDpi = Number.parseInt(String((options == null ? void 0 : options.dpi) != null ? options.dpi : 220), 10);
     const dpi = Number.isFinite(requestedDpi) ? Math.max(120, Math.min(600, requestedDpi)) : 220;
@@ -7647,12 +7709,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         const ocrCommandParts = [
           "tesseract",
           this.shellQuoteArg(imagePath),
-          "stdout",
-          "-l",
-          "kor+eng",
-          "--psm",
-          String(psm)
-        ];
+        "stdout",
+        "-l",
+        lang,
+        "--psm",
+        String(psm)
+      ];
         if (oem !== null) {
           ocrCommandParts.push("--oem", String(oem));
         }
@@ -7967,8 +8029,45 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const pdftotextEnoughLength = preferDetailed ? 220 : 140;
     const pdfminerEnoughLength = preferDetailed ? 180 : 120;
     const ocrMaxPages = preferDetailed ? LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED : LOCAL_QA_PDF_OCR_MAX_PAGES_FAST;
+    const capability = this.plugin && typeof this.plugin.detectParserCapabilitiesForQa === "function" ? await this.plugin.detectParserCapabilitiesForQa().catch(() => null) : null;
+    const pdftotextAvailable = capability ? capability.pdftotext === true : await this.canUseShellCommand("pdftotext");
+    const pdftoppmAvailable = capability ? capability.pdftoppm === true : await this.canUseShellCommand("pdftoppm");
+    const tesseractAvailable = capability ? capability.tesseract === true : await this.canUseShellCommand("tesseract");
+    const pdfminerBinaryAvailable = capability ? capability.pdfminer === true : await this.canUseShellCommand("pdf2txt.py") || await this.canUseShellCommand("pdf2txt");
+    const pythonRuntimeAvailable = capability ? capability.pdfminer === true : await this.canUseShellCommand("python") || await this.canUseShellCommand("py") || await this.canUseShellCommand("python3");
+    const toolStatus = {
+      pdftotext: pdftotextAvailable,
+      pdfminer: capability ? capability.pdfminer === true : pdfminerBinaryAvailable || pythonRuntimeAvailable,
+      pdftoppm: pdftoppmAvailable,
+      tesseract: tesseractAvailable,
+      tesseractKor: capability ? capability.tesseractKor === true : false
+    };
+    const ocrToolsReady = toolStatus.pdftoppm && toolStatus.tesseract;
+    const ocrLanguage = toolStatus.tesseractKor ? "kor+eng" : "eng";
+    const remediationLines = [
+      `1) Poppler(pdftotext/pdftoppm) 설치: ${POPPLER_WINDOWS_URL}`,
+      `2) Tesseract 설치: ${TESSERACT_INSTALL_URL}`,
+      `3) 한국어 OCR 데이터(kor) 설치: ${TESSERACT_KOR_DATA_URL}`,
+      `4) HWP 원본이면 LibreOffice 설치: ${LIBREOFFICE_DOWNLOAD_URL}`,
+      "5) Parser mode를 Detailed로 바꾼 뒤 OCR re-parse를 다시 실행"
+    ];
+    const buildFailureContent = (reason) => [
+      "PDF attachment received.",
+      `파서 실패 사유: ${reason}`,
+      "도구 상태:",
+      `- pdftotext: ${toolStatus.pdftotext ? "ready" : "missing"}`,
+      `- pdfminer: ${toolStatus.pdfminer ? "ready" : "missing"}`,
+      `- pdftoppm: ${toolStatus.pdftoppm ? "ready" : "missing"}`,
+      `- tesseract: ${toolStatus.tesseract ? "ready" : "missing"}`,
+      `- tesseract kor data: ${toolStatus.tesseractKor ? "ready" : "missing"}`,
+      "복구 절차:",
+      ...remediationLines.map((line) => `- ${line}`)
+    ].join("\n");
     notes.push(`parser mode=${parserMode} (${modeProfile})`);
     notes.push(`ocr budget pages=${ocrMaxPages}`);
+    notes.push(
+      `toolchain=pdftotext:${toolStatus.pdftotext ? "ready" : "missing"},pdfminer:${toolStatus.pdfminer ? "ready" : "missing"},pdftoppm:${toolStatus.pdftoppm ? "ready" : "missing"},tesseract:${toolStatus.tesseract ? "ready" : "missing"},kor:${toolStatus.tesseractKor ? "ready" : "missing"}`
+    );
     if (forceOcrPreferred) {
       notes.push("manual override: force OCR re-parse");
     }
@@ -7980,7 +8079,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         workingPath = nodePath.join(tempDir, "input.pdf");
         await nodeFs.promises.writeFile(workingPath, Buffer.from(binary));
       }
-      if (await this.canUseShellCommand("pdftotext")) {
+      if (toolStatus.pdftotext) {
         try {
           extracted = this.normalizeParserExtractedText(
             await this.extractPdfTextViaPdftotext(workingPath),
@@ -8003,10 +8102,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           notes.push(`pdftotext failed: ${message}`);
         }
       } else {
-        notes.push("pdftotext unavailable: trying pdfminer/OCR/fallback.");
+        notes.push("pdftotext unavailable: trying pdfminer/OCR path.");
       }
       const shouldTryPdfminer = extracted.length < pdftotextEnoughLength || quality.readabilityScore < 0.45 || parser !== "pdftotext" || quality.lowConfidence;
-      if (shouldTryPdfminer) {
+      if (shouldTryPdfminer && toolStatus.pdfminer) {
         try {
           const pdfminerText = this.normalizeParserExtractedText(
             await this.extractPdfTextViaPdfMiner(workingPath),
@@ -8029,11 +8128,15 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           const message = error instanceof Error ? error.message : "pdfminer failed";
           notes.push(`pdfminer failed: ${message}`);
         }
+      } else if (shouldTryPdfminer && !toolStatus.pdfminer) {
+        notes.push("pdfminer unavailable: python module/binary not found.");
       }
       const shouldTryOcr = forceOcrPreferred || preferDetailed || extracted.length < pdftotextEnoughLength || quality.readabilityScore < 0.42 || quality.likelyMojibake || quality.lowConfidence || quality.koreanHandwritingRisk;
-      const ocrToolsReady = await this.canUseShellCommand("pdftoppm") && await this.canUseShellCommand("tesseract");
       if (shouldTryOcr && ocrToolsReady) {
         try {
+          if (!toolStatus.tesseractKor) {
+            notes.push("tesseract kor data missing: OCR language fallback to eng.");
+          }
           const scoreOcrCandidate = (candidateQuality, candidateText) => {
             const lengthBonus = Math.min(0.24, (candidateText || "").length / 5500);
             const readableBonus = Math.min(0.5, Math.max(0, candidateQuality.readableRatio || 0));
@@ -8048,7 +8151,8 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
             await this.extractPdfTextViaOcr(workingPath, ocrMaxPages, {
               psm: 6,
               dpi: baseOcrDpi,
-              grayscale: true
+              grayscale: true,
+              lang: ocrLanguage
             }),
             { forOcr: true, normalizeSpacing: true }
           );
@@ -8066,9 +8170,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
             strongOcrAttempted = true;
             const strongOcrPages = forceOcrPreferred ? Math.max(ocrMaxPages, LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED) : Math.min(24, Math.max(ocrMaxPages + 4, 8));
             const strongProfiles = [
-              { parserLabel: "ocr-strong", psm: 11, oem: 1, preserveInterwordSpaces: true, dpi: 380, grayscale: true },
-              { parserLabel: "ocr-strong-psm6", psm: 6, oem: 1, preserveInterwordSpaces: true, dpi: 340, grayscale: true },
-              { parserLabel: "ocr-strong-psm13", psm: 13, oem: 1, preserveInterwordSpaces: true, dpi: 420, grayscale: true }
+              { parserLabel: "ocr-strong", psm: 11, oem: 1, preserveInterwordSpaces: true, dpi: 380, grayscale: true, lang: ocrLanguage },
+              { parserLabel: "ocr-strong-psm6", psm: 6, oem: 1, preserveInterwordSpaces: true, dpi: 340, grayscale: true, lang: ocrLanguage },
+              { parserLabel: "ocr-strong-psm13", psm: 13, oem: 1, preserveInterwordSpaces: true, dpi: 420, grayscale: true, lang: ocrLanguage }
             ];
             let bestStrong = null;
             for (const profile of strongProfiles) {
@@ -8105,8 +8209,39 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
                 notes.push(`OCR strong kept as secondary candidate (score=${bestStrong.quality.readabilityScore.toFixed(2)}).`);
               }
             }
-          } else if (!preferDetailed && (quality.lowConfidence || quality.koreanHandwritingRisk)) {
-            notes.push("fast mode kept strong OCR conservative; use Detailed mode or manual OCR re-parse for higher quality.");
+          } else if (!preferDetailed && (quality.lowConfidence || quality.koreanHandwritingRisk || quality.likelyMojibake)) {
+            notes.push("fast mode low-confidence detected: escalating one detailed OCR pass.");
+            strongOcrAttempted = true;
+            try {
+              const escalatedPages = Math.max(ocrMaxPages + 6, LOCAL_QA_PDF_OCR_MAX_PAGES_DETAILED);
+              const escalatedText = this.normalizeParserExtractedText(
+                await this.extractPdfTextViaOcr(workingPath, escalatedPages, {
+                  psm: 6,
+                  oem: 1,
+                  preserveInterwordSpaces: true,
+                  dpi: 380,
+                  grayscale: true,
+                  lang: ocrLanguage
+                }),
+                { forOcr: true, normalizeSpacing: true }
+              );
+              if (escalatedText.trim()) {
+                const escalatedQuality = this.assessAttachmentTextQuality(escalatedText);
+                const currentScore = scoreOcrCandidate(quality, extracted);
+                const escalatedScore = scoreOcrCandidate(escalatedQuality, escalatedText);
+                const shouldPreferEscalated = forceOcrPreferred || escalatedScore > currentScore + 0.04 || escalatedQuality.readabilityScore > quality.readabilityScore + 0.03 || quality.lowConfidence && !escalatedQuality.lowConfidence;
+                if (shouldPreferEscalated) {
+                  extracted = escalatedText;
+                  parser = "ocr-detailed-escalated";
+                  quality = escalatedQuality;
+                } else {
+                  notes.push(`fast->detailed OCR candidate kept secondary (score=${escalatedQuality.readabilityScore.toFixed(2)}).`);
+                }
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "fast->detailed OCR failed";
+              notes.push(`fast->detailed OCR failed: ${message}`);
+            }
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : "OCR failed";
@@ -8122,13 +8257,20 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       }
     }
     if (!extracted.trim()) {
-      extracted = this.normalizeParserExtractedText(this.extractPdfFallbackText(binary), {
+      const fallbackText = this.normalizeParserExtractedText(this.extractPdfFallbackText(binary), {
         forOcr: false,
         normalizeSpacing: true
       });
-      parser = "fallback";
-      quality = this.assessAttachmentTextQuality(extracted);
-      notes.push("fallback literal extraction applied.");
+      const fallbackQuality = this.assessAttachmentTextQuality(fallbackText);
+      const fallbackAccepted = fallbackText.trim().length >= Math.max(150, pdftotextEnoughLength) && !fallbackQuality.lowConfidence && !fallbackQuality.likelyMojibake && fallbackQuality.readabilityScore >= 0.48;
+      if (fallbackAccepted) {
+        extracted = fallbackText;
+        parser = "fallback-text-validated";
+        quality = fallbackQuality;
+        notes.push("fallback literal extraction accepted by quality gate.");
+      } else {
+        notes.push("fallback literal extraction rejected by quality gate.");
+      }
     }
     const clipped = this.clampAttachmentText(
       extracted.trim(),
@@ -8148,13 +8290,31 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
           likelyMojibake: quality.likelyMojibake,
           koreanHandwritingRisk: quality.koreanHandwritingRisk,
           readabilityScore: quality.readabilityScore,
+          toolStatus,
           strongOcrAttempted
         },
-        content: [
-          "PDF attachment received.",
-          "\uD30C\uC11C \uC2E4\uD328 \uC0AC\uC720: \uD14D\uC2A4\uD2B8 \uCD94\uCD9C \uC2E0\uB8B0\uB3C4\uAC00 \uB0AE\uAC70\uB098 \uBE44\uC5B4 \uC788\uC2B5\uB2C8\uB2E4.",
-          "\uC7AC\uC2DC\uB3C4 \uAC00\uC774\uB4DC: 1) Parser mode\uB97C Detailed\uB85C \uBCC0\uACBD 2) OCR \uC7AC\uD30C\uC2F1 \uC2E4\uD589 3) 300dpi \uC774\uC0C1 \uC6D0\uBCF8/\uD575\uC2EC \uD398\uC774\uC9C0 \uC774\uBBF8\uC9C0 \uCCA8\uBD80"
-        ].join("\n")
+        content: buildFailureContent("텍스트 추출 결과가 비어 있거나 신뢰도가 낮습니다.")
+      };
+    }
+    if (quality.likelyMojibake && quality.readabilityScore < 0.5) {
+      notes.push("final output blocked: mojibake risk is high.");
+      return {
+        parser,
+        notes,
+        diagnostics: {
+          parserMode,
+          modeProfile,
+          ocrMaxPages,
+          forceOcrPreferred,
+          reasonCode: "garbled_output_blocked",
+          lowConfidence: true,
+          likelyMojibake: true,
+          koreanHandwritingRisk: quality.koreanHandwritingRisk,
+          readabilityScore: quality.readabilityScore,
+          toolStatus,
+          strongOcrAttempted
+        },
+        content: buildFailureContent("추출 결과가 깨진 텍스트로 판정되어 출력을 차단했습니다.")
       };
     }
     if (quality.lowConfidence) {
@@ -8173,6 +8333,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         likelyMojibake: quality.likelyMojibake,
         koreanHandwritingRisk: quality.koreanHandwritingRisk,
         readabilityScore: quality.readabilityScore,
+        toolStatus,
         strongOcrAttempted
       },
       content: clipped
@@ -8185,24 +8346,40 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     const requestedOem = Number.parseInt(String((options == null ? void 0 : options.oem) != null ? options.oem : ""), 10);
     const oem = Number.isFinite(requestedOem) ? Math.max(0, Math.min(3, requestedOem)) : null;
     const preserveInterwordSpaces = Boolean(options == null ? void 0 : options.preserveInterwordSpaces);
-    const commandParts = [
-      "tesseract",
-      this.shellQuoteArg(imageAbsolutePath),
-      "stdout",
-      "-l",
-      "kor+eng",
-      "--psm",
-      String(psm)
-    ];
-    if (oem !== null) {
-      commandParts.push("--oem", String(oem));
+    const preferredLang = this.plugin && this.plugin.parserToolStatus && this.plugin.parserToolStatus.tesseractKor === true ? "kor+eng" : "eng";
+    const languageCandidates = preferredLang === "kor+eng" ? ["kor+eng", "eng"] : ["eng", "kor+eng"];
+    let lastError = null;
+    for (const lang of languageCandidates) {
+      try {
+        const commandParts = [
+          "tesseract",
+          this.shellQuoteArg(imageAbsolutePath),
+          "stdout",
+          "-l",
+          lang,
+          "--psm",
+          String(psm)
+        ];
+        if (oem !== null) {
+          commandParts.push("--oem", String(oem));
+        }
+        if (preserveInterwordSpaces) {
+          commandParts.push("-c", "preserve_interword_spaces=1");
+        }
+        const command = commandParts.join(" ");
+        const result = await execAsync(command, { timeout: 45e3, maxBuffer: 10 * 1024 * 1024 });
+        const text = ((_a = result.stdout) != null ? _a : "").trim();
+        if (text) {
+          return text;
+        }
+      } catch (error) {
+        lastError = error;
+      }
     }
-    if (preserveInterwordSpaces) {
-      commandParts.push("-c", "preserve_interword_spaces=1");
+    if (lastError instanceof Error) {
+      throw lastError;
     }
-    const command = commandParts.join(" ");
-    const result = await execAsync(command, { timeout: 45e3, maxBuffer: 10 * 1024 * 1024 });
-    return ((_a = result.stdout) != null ? _a : "").trim();
+    return "";
   }
   async extractImageTextWithParserChain(binary, sourceAbsolutePath, fallbackExt = "png") {
     const notes = [];
@@ -9153,29 +9330,10 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     return `file://${segments.join("/")}`;
   }
   async openLinkWithDesktopShell(url) {
-    var _a, _b;
-    try {
-      const win = window;
-      const electron = typeof win.require === "function" ? win.require("electron") : null;
-      if ((_a = electron == null ? void 0 : electron.shell) == null ? void 0 : _a.openExternal) {
-        await electron.shell.openExternal(url);
-        return true;
-      }
-      if (((_b = electron == null ? void 0 : electron.shell) == null ? void 0 : _b.openPath) && /^file:\/\//i.test(url)) {
-        const path = decodeURIComponent(url.replace(/^file:\/\//i, ""));
-        const result = await electron.shell.openPath(path);
-        return !result;
-      }
-      window.open(url, "_blank");
-      return true;
-    } catch (e) {
-      try {
-        window.open(url, "_blank");
-        return true;
-      } catch (e2) {
-        return false;
-      }
+    if (this.plugin && typeof this.plugin.openLinkWithDesktopShell === "function") {
+      return await this.plugin.openLinkWithDesktopShell(url);
     }
+    return await openExternalUrlWithSystemFallback(url);
   }
   async tryOpenExternalFromChatLink(raw) {
     const decoded = this.decodeChatLinkValue(raw);
@@ -11434,7 +11592,7 @@ ${availability.note}`).addText(
       new import_obsidian4.Notice("HWPX는 XML 1차 추출을 시도합니다. HWP는 soffice 자동변환(PoC)을 먼저 시도하며 실패 시 PDF/DOCX 수동 변환 경로를 안내합니다.", 7e3);
     })).addButton((button) => button.setButtonText("LibreOffice 설치").onClick(() => {
       try {
-        window.open(LIBREOFFICE_DOWNLOAD_URL);
+        void this.plugin.openLinkWithDesktopShell(LIBREOFFICE_DOWNLOAD_URL);
       } catch (e) {
       }
     }));
@@ -11464,28 +11622,28 @@ ${parserProfile.recommendation}`
     ).addButton(
       (button) => button.setButtonText("LibreOffice").onClick(() => {
         try {
-          window.open(LIBREOFFICE_DOWNLOAD_URL);
+          void this.plugin.openLinkWithDesktopShell(LIBREOFFICE_DOWNLOAD_URL);
         } catch (e) {
         }
       })
     ).addButton(
       (button) => button.setButtonText("Poppler").onClick(() => {
         try {
-          window.open(POPPLER_WINDOWS_URL);
+          void this.plugin.openLinkWithDesktopShell(POPPLER_WINDOWS_URL);
         } catch (e) {
         }
       })
     ).addButton(
       (button) => button.setButtonText("Tesseract").onClick(() => {
         try {
-          window.open(TESSERACT_INSTALL_URL);
+          void this.plugin.openLinkWithDesktopShell(TESSERACT_INSTALL_URL);
         } catch (e) {
         }
       })
     ).addButton(
       (button) => button.setButtonText("Korean OCR data").onClick(() => {
         try {
-          window.open(TESSERACT_KOR_DATA_URL);
+          void this.plugin.openLinkWithDesktopShell(TESSERACT_KOR_DATA_URL);
         } catch (e) {
         }
       })
@@ -11645,7 +11803,7 @@ ${parserProfile.recommendation}`
           new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}${openLinkHint}`.trim(), 11e3);
           if (missingClientId) {
             try {
-              window.open(GOOGLE_OAUTH_CREDENTIALS_URL);
+              void this.plugin.openLinkWithDesktopShell(GOOGLE_OAUTH_CREDENTIALS_URL);
             } catch (e) {
             }
           }
@@ -11908,14 +12066,14 @@ ${parserProfile.recommendation}`
     new import_obsidian4.Setting(containerEl).setName("OAuth setup links / OAuth 설정 링크").setDesc(`Credentials: ${GOOGLE_OAUTH_CREDENTIALS_URL} | Consent: ${GOOGLE_OAUTH_CONSENT_URL}`).addButton(
       (button) => button.setButtonText("Open Credentials").onClick(() => {
         try {
-          window.open(GOOGLE_OAUTH_CREDENTIALS_URL);
+          void this.plugin.openLinkWithDesktopShell(GOOGLE_OAUTH_CREDENTIALS_URL);
         } catch (e) {
         }
       })
     ).addButton(
       (button) => button.setButtonText("Open Consent Screen").onClick(() => {
         try {
-          window.open(GOOGLE_OAUTH_CONSENT_URL);
+          void this.plugin.openLinkWithDesktopShell(GOOGLE_OAUTH_CONSENT_URL);
         } catch (e) {
         }
       })
@@ -11978,7 +12136,7 @@ ${parserProfile.recommendation}`
           new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}${openLinkHint}`.trim(), 11e3);
           if (missingClientId) {
             try {
-              window.open(GOOGLE_OAUTH_CREDENTIALS_URL);
+              void this.plugin.openLinkWithDesktopShell(GOOGLE_OAUTH_CREDENTIALS_URL);
             } catch (e) {
             }
           }
@@ -13697,6 +13855,8 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       pdftotext: false,
       pdftoppm: false,
       tesseract: false,
+      tesseractKor: false,
+      pdfminer: false,
       soffice: false
     };
     this.parserToolSummary = "Parser tool check has not run yet.";
@@ -14697,6 +14857,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const hint = this.getOAuthLoginFailureHintForQa(message);
     return hint ? `OAuth login failed: ${message} | Hint: ${hint}` : `OAuth login failed: ${message}`;
   }
+  async openLinkWithDesktopShell(url) {
+    return await openExternalUrlWithSystemFallback(url);
+  }
   getOAuthAutoLoginCooldownMsForQa() {
     return 3e5;
   }
@@ -15242,7 +15405,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return this.parserToolSummary;
   }
   getParserToolReadinessLinesForQa() {
-    const tools = ["pdftotext", "pdftoppm", "tesseract", "soffice"];
+    const tools = ["pdftotext", "pdfminer", "pdftoppm", "tesseract", "tesseractKor", "soffice"];
     return tools.map((tool) => `${tool}: ${this.parserToolStatus[tool] ? "ready" : "missing"}`);
   }
   getParserSupportedFormatsForQa() {
@@ -15312,8 +15475,10 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       targetCount: targets.length,
       toolStatus: {
         pdftotext: this.parserToolStatus.pdftotext === true,
+        pdfminer: this.parserToolStatus.pdfminer === true,
         pdftoppm: this.parserToolStatus.pdftoppm === true,
         tesseract: this.parserToolStatus.tesseract === true,
+        tesseractKor: this.parserToolStatus.tesseractKor === true,
         soffice: this.parserToolStatus.soffice === true
       }
     });
@@ -15395,23 +15560,78 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       return false;
     }
   }
-  async refreshParserToolReadinessForQa(notify) {
+  async hasPythonPdfMinerForQa() {
+    const probes = process.platform === "win32" ? ['python -c "import pdfminer"', 'py -c "import pdfminer"'] : ['python3 -c "import pdfminer"', 'python -c "import pdfminer"'];
+    for (const probe of probes) {
+      try {
+        await execAsync(probe, { timeout: 6e3, maxBuffer: 512 * 1024 });
+        return true;
+      } catch (e) {
+      }
+    }
+    return false;
+  }
+  async hasTesseractLanguageForQa(lang) {
+    if (!(await this.isShellCommandAvailable("tesseract"))) {
+      return false;
+    }
+    const target = String(lang || "").trim().toLowerCase();
+    if (!target) {
+      return false;
+    }
+    try {
+      const result = await execAsync("tesseract --list-langs", { timeout: 1e4, maxBuffer: 1024 * 1024 });
+      const raw = `${String((result == null ? void 0 : result.stdout) || "")}
+${String((result == null ? void 0 : result.stderr) || "")}`;
+      const langs = raw.split(/\r?\n/g).map((line) => line.trim().toLowerCase()).filter((line) => line.length > 0 && !line.startsWith("list of available"));
+      return langs.includes(target);
+    } catch (e) {
+      return false;
+    }
+  }
+  async detectParserCapabilitiesForQa() {
     const pdftotext = await this.isShellCommandAvailable("pdftotext");
     const pdftoppm = await this.isShellCommandAvailable("pdftoppm");
     const tesseract = await this.isShellCommandAvailable("tesseract");
+    const tesseractKor = tesseract ? await this.hasTesseractLanguageForQa("kor") : false;
+    const pdfminerBinary = await this.isShellCommandAvailable("pdf2txt.py") || await this.isShellCommandAvailable("pdf2txt");
+    const pdfminerPython = pdfminerBinary ? false : await this.hasPythonPdfMinerForQa();
+    const pdfminer = pdfminerBinary || pdfminerPython;
     const sofficeBin = await resolveSofficeExecutableForHwpPoC();
     const soffice = Boolean(sofficeBin);
-    this.parserToolStatus = { pdftotext, pdftoppm, tesseract, soffice };
-    const coreReady = pdftotext && pdftoppm && tesseract;
+    return {
+      pdftotext,
+      pdftoppm,
+      tesseract,
+      tesseractKor,
+      pdfminer,
+      pdfminerSource: pdfminerBinary ? "binary" : pdfminerPython ? "python" : "missing",
+      soffice,
+      sofficeBin: sofficeBin || ""
+    };
+  }
+  async refreshParserToolReadinessForQa(notify) {
+    const capability = await this.detectParserCapabilitiesForQa();
+    this.parserToolStatus = {
+      pdftotext: capability.pdftotext,
+      pdftoppm: capability.pdftoppm,
+      tesseract: capability.tesseract,
+      tesseractKor: capability.tesseractKor,
+      pdfminer: capability.pdfminer,
+      soffice: capability.soffice
+    };
+    const coreReady = capability.pdftotext && capability.pdftoppm && capability.tesseract;
     const parserProfile = this.getParserModeProfileForQa();
     this.parserToolSummary = [
-      `PDF text: ${pdftotext ? "ready" : "missing"}`,
-      `PDF OCR render: ${pdftoppm ? "ready" : "missing"}`,
-      `OCR engine: ${tesseract ? "ready" : "missing"}`,
-      `HWP converter(soffice): ${soffice ? "ready" : "missing"}`,
+      `PDF text(pdftotext): ${capability.pdftotext ? "ready" : "missing"}`,
+      `PDF fallback(pdfminer): ${capability.pdfminer ? `ready(${capability.pdfminerSource})` : "missing"}`,
+      `PDF OCR render(pdftoppm): ${capability.pdftoppm ? "ready" : "missing"}`,
+      `OCR engine(tesseract): ${capability.tesseract ? "ready" : "missing"}${capability.tesseract && !capability.tesseractKor ? " (kor data missing)" : ""}`,
+      `HWP converter(soffice): ${capability.soffice ? "ready" : "missing"}`,
       `Parser mode: ${parserProfile.badge} (${parserProfile.focus})`,
-      coreReady ? "Detailed parser chain available." : "Fallback parser mode will be used for missing tools.",
-      soffice ? "HWP auto-convert PoC route is available." : "HWP auto-convert PoC route will fallback to guide."
+      coreReady && capability.tesseractKor ? "Detailed parser chain available for Korean OCR." : "Parser chain degraded: install missing tools and rerun OCR re-parse.",
+      capability.soffice ? "HWP auto-convert PoC route is available." : "HWP auto-convert PoC route will fallback to guide.",
+      `Install links: LibreOffice=${LIBREOFFICE_DOWNLOAD_URL} | Poppler=${POPPLER_WINDOWS_URL} | Tesseract=${TESSERACT_INSTALL_URL}`
     ].join(" | ");
     if (notify) {
       this.notice(this.parserToolSummary, 7e3);
@@ -23828,8 +24048,10 @@ ${stderr}` : ""
           strongOcrAttempted: Boolean(parserDiagnostics == null ? void 0 : parserDiagnostics.strongOcrAttempted),
           toolStatus: {
             pdftotext: this.parserToolStatus.pdftotext === true,
+            pdfminer: this.parserToolStatus.pdfminer === true,
             pdftoppm: this.parserToolStatus.pdftoppm === true,
             tesseract: this.parserToolStatus.tesseract === true,
+            tesseractKor: this.parserToolStatus.tesseractKor === true,
             soffice: this.parserToolStatus.soffice === true
           }
         });
@@ -23864,8 +24086,10 @@ ${stderr}` : ""
           forceOcr,
           toolStatus: {
             pdftotext: this.parserToolStatus.pdftotext === true,
+            pdfminer: this.parserToolStatus.pdfminer === true,
             pdftoppm: this.parserToolStatus.pdftoppm === true,
             tesseract: this.parserToolStatus.tesseract === true,
+            tesseractKor: this.parserToolStatus.tesseractKor === true,
             soffice: this.parserToolStatus.soffice === true
           }
         }, isSkip ? "info" : "error");

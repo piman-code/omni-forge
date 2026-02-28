@@ -304,7 +304,7 @@
   padding: 10px;
   margin-top: 8px;
   background: color-mix(in srgb, var(--background-secondary) 90%, transparent);
-  max-height: 34vh;
+  max-height: 28vh;
   min-height: 0;
   overflow: auto;
 }
@@ -440,7 +440,7 @@
 }
 
 .omni-forge-chat-options-group {
-  max-height: 34vh;
+  max-height: 26vh;
   min-height: 0;
   overflow: auto;
 }
@@ -461,6 +461,9 @@
   display: grid;
   gap: 8px;
   margin-top: 8px;
+  max-height: calc(26vh - 44px);
+  min-height: 0;
+  overflow: auto;
 }
 
 .omni-forge-chat-collapsible > small {
