@@ -41,6 +41,15 @@ Expected:
 Expected:
 - Failure notice includes actionable hint for redirect registration.
 
+### Case C: OAuth endpoint mismatch (Google OAuth + direct OpenAI host)
+1. Keep `OAuth provider preset=google`, `oauthEnabled=true`, and `OAuth bridge mode=OFF`.
+2. Set `OpenAI base URL` to `https://api.openai.com/v1`.
+3. Trigger cloud Q&A request.
+
+Expected:
+- Error/hint indicates transport mismatch.
+- Suggested action: enable bridge mode or apply bridge defaults.
+
 ## 3) HWP Success Path (`.hwp`)
 
 Prerequisites:

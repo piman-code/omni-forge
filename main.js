@@ -11526,7 +11526,7 @@ ${parserProfile.recommendation}`
       })
     );
     new import_obsidian4.Setting(containerEl).setName("OAuth bridge mode (API-key optional)").setDesc(
-      "Route cloud analysis/chat to local OpenAI-compatible /v1 bridge. API key checks are bypassed in this mode."
+      "Route cloud analysis/chat to local OpenAI-compatible /v1 bridge. API key checks are bypassed in this mode. Recommended for Google OAuth + codex profile."
     ).addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.oauthBridgeEnabled).onChange(async (value) => {
         this.plugin.settings.oauthBridgeEnabled = value;
@@ -11679,6 +11679,19 @@ ${parserProfile.recommendation}`
     );
     const oauthValidation = this.plugin.getOAuthLoginValidationForQa();
     new import_obsidian4.Setting(containerEl).setName("OAuth login validation").setDesc(`${oauthValidation.message} ${oauthValidation.guidance || ""}`.trim());
+    const oauthTransport = this.plugin.getOAuthTransportValidationForQa();
+    const oauthTransportSetting = new import_obsidian4.Setting(containerEl).setName("OAuth endpoint compatibility").setDesc(
+      `${oauthTransport.message} ${oauthTransport.guidance || ""}`.trim()
+    );
+    if (!oauthTransport.ready || oauthTransport.level === "notice") {
+      oauthTransportSetting.addButton((button) => button.setButtonText("Apply bridge defaults").onClick(async () => {
+        this.plugin.applyRecommendedOAuthBridgeDefaultsForQa();
+        await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+        this.display();
+        new import_obsidian4.Notice("OAuth bridge defaults applied. / OAuth 브리지 기본값 적용 완료", 4e3);
+      }));
+    }
     new import_obsidian4.Setting(containerEl).setName("OAuth session actions / OAuth 세션 동작").setDesc(this.plugin.getOAuthStatusSummaryForQa()).addButton(
       (button) => button.setButtonText("Google quick preset / Google 빠른 설정").onClick(async () => {
         this.plugin.applyGoogleOAuthQuickSetupForQa();
@@ -14232,6 +14245,58 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.settings.qaOllamaModel = this.settings.openAIModel.trim() || DEFAULT_SETTINGS.openAIModel;
     this.appendQaAllowedOutboundHostFromUrl(bridgeBase);
   }
+  applyRecommendedOAuthBridgeDefaultsForQa() {
+    this.settings.oauthBridgeEnabled = true;
+    if (!this.settings.oauthBridgeBaseUrl.trim()) {
+      this.settings.oauthBridgeBaseUrl = "http://127.0.0.1:8787/v1";
+    }
+    const bridgeBase = resolveOAuthBridgeBaseUrl(this.settings);
+    this.settings.qaOllamaBaseUrl = bridgeBase;
+    this.appendQaAllowedOutboundHostFromUrl(bridgeBase);
+  }
+  getOAuthTransportValidationForQa() {
+    const oauthEnabled = this.settings.oauthEnabled === true;
+    if (!oauthEnabled) {
+      return {
+        ready: true,
+        level: "ok",
+        message: "OAuth transport inactive (OAuth disabled).",
+        guidance: ""
+      };
+    }
+    const oauthBridgeEnabled = this.settings.oauthBridgeEnabled === true;
+    const activeBase = oauthBridgeEnabled ? resolveOAuthBridgeBaseUrl(this.settings) : toOpenAICompatibleBase(this.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+    let host = "";
+    try {
+      host = new URL(activeBase).hostname.toLowerCase();
+    } catch (e) {
+      host = "";
+    }
+    const preset = this.normalizeOAuthProviderPresetForQa(this.settings.oauthProviderPreset);
+    const isOpenAiPublicHost = host === "api.openai.com" || host.endsWith(".openai.com");
+    if (preset === "google" && !oauthBridgeEnabled && isOpenAiPublicHost) {
+      return {
+        ready: false,
+        level: "warning",
+        message: "OAuth endpoint mismatch detected: Google OAuth + direct api.openai.com.",
+        guidance: "Enable OAuth bridge mode (recommended) or change OpenAI base URL to your OAuth-compatible OpenAI-style endpoint."
+      };
+    }
+    if (oauthBridgeEnabled && !this.settings.oauthBridgeBaseUrl.trim()) {
+      return {
+        ready: true,
+        level: "notice",
+        message: "OAuth bridge mode is enabled with OpenAI base URL fallback.",
+        guidance: "Set OAuth bridge base URL explicitly if your bridge host differs from OpenAI base URL."
+      };
+    }
+    return {
+      ready: true,
+      level: "ok",
+      message: `OAuth transport ready: ${oauthBridgeEnabled ? "bridge" : "direct"} (${host || "unknown-host"}).`,
+      guidance: oauthBridgeEnabled ? "Cloud requests will use OAuth bridge endpoint." : "Cloud requests will use direct OpenAI-compatible endpoint."
+    };
+  }
   getOAuthValidationFieldMetaForQa() {
     return [
       { key: "oauthAuthUrl", label: "auth URL", settingLabel: "OAuth authorization URL" },
@@ -14262,8 +14327,18 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (normalized.includes("missing required fields")) {
       return "Complete all required OAuth fields in settings, then retry Start OAuth Login.";
     }
+    if (normalized.includes("oauth endpoint mismatch detected") || normalized.includes("oauth transport mismatch")) {
+      return "Enable OAuth bridge mode (recommended) or change OpenAI base URL to your OAuth-compatible OpenAI-style endpoint.";
+    }
     if (normalized.includes("oauth client id is empty")) {
       return this.getOAuthMissingFieldHintForQa("oauthClientId");
+    }
+    if (normalized.includes("cloud chat completion failed: 401") || normalized.includes("cloud responses request failed: 401")) {
+      const transport = this.getOAuthTransportValidationForQa();
+      if (!transport.ready) {
+        return transport.guidance || transport.message;
+      }
+      return "Cloud endpoint returned 401. Verify token audience/scope and endpoint compatibility.";
     }
     if (normalized.includes("redirect_uri_mismatch") || normalized.includes("redirect uri mismatch")) {
       return "Register this redirect URI in provider console: http://127.0.0.1:8765/callback.";
@@ -14419,6 +14494,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
   getOAuthStatusSummaryForQa() {
     const enabled = this.settings.oauthEnabled === true;
     const validation = this.getOAuthLoginValidationForQa();
+    const transport = this.getOAuthTransportValidationForQa();
     const accessTokenPresent = typeof this.settings.oauthAccessToken === "string" && this.settings.oauthAccessToken.trim().length > 0;
     const refreshTokenPresent = typeof this.settings.oauthRefreshToken === "string" && this.settings.oauthRefreshToken.trim().length > 0;
     const expiryMs = this.getOAuthTokenExpiryMsForQa();
@@ -14437,6 +14513,7 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return [
       `OAuth: ${enabled ? "enabled" : "disabled"}`,
       `config: ${configState}`,
+      `transport: ${transport.ready ? transport.message : `needs action (${transport.message})`}`,
       `access token: ${accessTokenPresent ? "present" : "missing"}`,
       `refresh token: ${refreshTokenPresent ? "present" : "missing"}`,
       `expiry: ${expiryText}`
@@ -19242,6 +19319,28 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
     }
     return this.extractCloudChatCompletionAnswer(payload);
   }
+  summarizeCloudErrorPayloadForQa(rawPayload) {
+    const raw = typeof rawPayload === "string" ? rawPayload.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const detail = [
+        parsed == null ? void 0 : parsed.error_description,
+        parsed == null ? void 0 : parsed.error,
+        parsed == null ? void 0 : parsed.message,
+        (parsed == null ? void 0 : parsed.error) && typeof parsed.error === "object" ? parsed.error.message : ""
+      ].find((value) => typeof value === "string" && value.trim().length > 0);
+      if (typeof detail === "string" && detail.trim()) {
+        const compact = detail.trim().replace(/\s+/g, " ");
+        return compact.length > 180 ? `${compact.slice(0, 180)}...` : compact;
+      }
+    } catch (e) {
+    }
+    const compactRaw = raw.replace(/\s+/g, " ");
+    return compactRaw.length > 180 ? `${compactRaw.slice(0, 180)}...` : compactRaw;
+  }
   async requestCloudQaCompletion(params) {
     const {
       qaBaseUrl,
@@ -19280,6 +19379,12 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       baseHost = "";
     }
     const isOpenAiPublicHost = baseHost === "api.openai.com" || baseHost.endsWith(".openai.com");
+    const oauthPreset = this.normalizeOAuthProviderPresetForQa(this.settings.oauthProviderPreset);
+    if (oauthEnabled && oauthPreset === "google" && !oauthBridgeEnabled && isOpenAiPublicHost) {
+      throw new Error(
+        "OAuth transport mismatch: Google OAuth token cannot be used directly with api.openai.com in this plugin. Enable OAuth bridge mode or change OpenAI base URL to your OAuth-compatible OpenAI-style endpoint."
+      );
+    }
     if (!oauthBridgeEnabled && !oauthEnabled && !apiKey && isOpenAiPublicHost) {
       if (profile === "codex") {
         throw new Error(
@@ -19323,7 +19428,9 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
         })
       });
       if (!chatResponse.ok) {
-        throw new Error(`Cloud chat completion failed: ${chatResponse.status}`);
+        const errorRaw = await chatResponse.text().catch(() => "");
+        const detail = this.summarizeCloudErrorPayloadForQa(errorRaw);
+        throw new Error(`Cloud chat completion failed: ${chatResponse.status}${detail ? ` (${detail})` : ""}`);
       }
       const chatRaw = await chatResponse.text();
       let chatPayload = {};
@@ -19370,7 +19477,9 @@ ${this.settings.qaCustomSystemPrompt.trim()}` : ""
       })
     });
     if (!responsesResponse.ok) {
-      throw new Error(`Cloud responses request failed: ${responsesResponse.status}`);
+      const errorRaw = await responsesResponse.text().catch(() => "");
+      const detail = this.summarizeCloudErrorPayloadForQa(errorRaw);
+      throw new Error(`Cloud responses request failed: ${responsesResponse.status}${detail ? ` (${detail})` : ""}`);
     }
     const responsesRaw = await responsesResponse.text();
     let responsesPayload = {};

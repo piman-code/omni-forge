@@ -158,12 +158,16 @@ This helps maintain metadata freshness without full rescans.
    - `OAuth token URL`: `https://oauth2.googleapis.com/token`
    - `OAuth client ID`: your Google OAuth client ID
    - `OAuth redirect URI`: `http://127.0.0.1:8765/callback`
-4. Click `Start OAuth Login`.
+4. Check `OAuth endpoint compatibility`.
+   - If it shows endpoint mismatch, click `Apply bridge defaults`.
+   - Default bridge URL applied by helper: `http://127.0.0.1:8787/v1`
+5. Click `Start OAuth Login`.
 
 Notes:
 - The quick action automatically switches profile to `provider=openai`, `family=cloud`, `profile=codex`, and enables OAuth.
 - Validation now reports missing fields with direct guidance (for example, `Missing required fields: client ID`).
 - OAuth status shows token presence and expiry state (without printing token values).
+- OAuth status now also reports transport state (`direct` vs `bridge`) and warns when Google OAuth is paired with direct `api.openai.com`.
 
 ## HWP Ingest (HWP -> PDF -> MD/XML)
 
@@ -202,6 +206,8 @@ Common failure reasons:
   - Fill `OAuth client ID` in Cloud provider config, then retry login.
 - `redirect_uri_mismatch` during OAuth login
   - Register `http://127.0.0.1:8765/callback` in the provider OAuth console.
+- `OAuth transport mismatch` (Google OAuth + direct `api.openai.com`)
+  - Enable `OAuth bridge mode` or click `Apply bridge defaults`.
 - `soffice missing` during HWP ingest
   - Install LibreOffice and verify `soffice` command/path.
 - `Embedding model is not suitable`

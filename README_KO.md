@@ -205,6 +205,8 @@ Omni Forge는 반대로 동작합니다.
   - token URL
   - client ID
   - redirect URI
+- `OAuth endpoint compatibility` row now highlights transport mismatch and offers `Apply bridge defaults`.
+  - helper default bridge URL: `http://127.0.0.1:8787/v1`
 - OAuth status text now shows token presence and expiry state in user-friendly form (without exposing token values).
 
 ### HWP ingest
@@ -219,5 +221,7 @@ Omni Forge는 반대로 동작합니다.
   - Fill `OAuth client ID` in Cloud provider config.
 - `redirect_uri_mismatch`
   - Register `http://127.0.0.1:8765/callback` in provider console.
+- `OAuth transport mismatch`
+  - Enable `OAuth bridge mode` or click `Apply bridge defaults`.
 - `soffice missing`
   - Install LibreOffice and make `soffice` discoverable in PATH.
