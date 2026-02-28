@@ -1826,6 +1826,7 @@ var DEFAULT_SETTINGS = {
   qaSelectionInventoryMaxFiles: 200,
   qaThreadAutoSyncEnabled: true,
   qaPdfAttachmentEnabled: true,
+  qaChatMinimalUi: true,
   qaContextInChat: true,
   qaRequireSelectionForSelectedAsk: true,
   qaParserInboxWatchEnabled: false,
@@ -6465,6 +6466,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     parserDropButton.addEventListener("drop", (event) => {
       void this.handleParserDrop(event, parserDropButton);
     });
+    const showAdvancedInChat = this.plugin.settings.qaChatMinimalUi !== true;
     const parserQuickWrap = root.createDiv({ cls: "omni-forge-parser-quick-wrap" });
     const parserQuickHeader = parserQuickWrap.createDiv({ cls: "omni-forge-parser-quick-header" });
     parserQuickHeader.createDiv({
@@ -6597,6 +6599,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     };
     void hwpGuide;
     applyParserQuickCollapsed(parserQuickCollapsed, false);
+    if (!showAdvancedInChat) {
+      parserQuickWrap.addClass("omni-forge-chat-hidden-action");
+    }
     const newThreadButton = actionRow.createEl("button", { text: t("New thread", "새 스레드") });
     newThreadButton.addClass("omni-forge-chat-btn");
     newThreadButton.addClass("omni-forge-chat-hidden-action");
@@ -6653,6 +6658,9 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     };
     const optionsDetails = root.createEl("details", { cls: "omni-forge-chat-collapsible omni-forge-chat-options-group" });
     optionsDetails.open = false;
+    if (!showAdvancedInChat) {
+      optionsDetails.addClass("omni-forge-chat-hidden-action");
+    }
     optionsDetails.createEl("summary", { text: t("Workspace options", "작업 옵션") });
     const optionsBody = optionsDetails.createDiv({ cls: "omni-forge-chat-options-group-body" });
     const utilityDetails = optionsBody.createEl("details", { cls: "omni-forge-chat-collapsible" });
@@ -6800,17 +6808,25 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
       this.plugin.settings.qaTopK = Math.min(15, parsed);
       await this.plugin.saveSettings();
     };
-    const runtimePanel = optionsBody.createEl("details", { cls: "omni-forge-chat-runtime-panel" });
-    runtimePanel.open = true;
-    runtimePanel.createEl("summary", {
-      cls: "omni-forge-chat-runtime-head",
-      text: t("Current status", "현재 상태")
-    });
-    const runtimeBody = runtimePanel.createDiv({ cls: "omni-forge-chat-runtime-body" });
-    const runtimeMetaRow = runtimeBody.createDiv({ cls: "omni-forge-chat-meta" });
+    let runtimeMetaRow = null;
+    if (showAdvancedInChat) {
+      const runtimePanel = optionsBody.createEl("details", { cls: "omni-forge-chat-runtime-panel" });
+      runtimePanel.open = true;
+      runtimePanel.createEl("summary", {
+        cls: "omni-forge-chat-runtime-head",
+        text: t("Current status", "현재 상태")
+      });
+      const runtimeBody = runtimePanel.createDiv({ cls: "omni-forge-chat-runtime-body" });
+      runtimeMetaRow = runtimeBody.createDiv({ cls: "omni-forge-chat-meta" });
+      this.runtimeSummaryEl = runtimeBody.createDiv({ cls: "omni-forge-chat-runtime-summary" });
+    } else {
+      const runtimeMini = root.createDiv({ cls: "omni-forge-chat-runtime-mini" });
+      runtimeMetaRow = runtimeMini.createDiv({ cls: "omni-forge-chat-meta" });
+      this.runtimeSummaryEl = runtimeMini.createDiv({ cls: "omni-forge-chat-runtime-summary omni-forge-chat-runtime-summary-inline" });
+      this.runtimeSummaryEl.setText(t("Compact chat mode: advanced controls moved to Settings.", "컴팩트 채팅 모드: 고급 제어는 설정창에서 관리합니다."));
+    }
     this.threadInfoEl = runtimeMetaRow.createDiv({ cls: "omni-forge-chat-thread-info" });
     this.syncInfoEl = runtimeMetaRow.createDiv({ cls: "omni-forge-chat-sync-info" });
-    this.runtimeSummaryEl = runtimeBody.createDiv({ cls: "omni-forge-chat-runtime-summary" });
     this.threadEl = root.createDiv({ cls: "omni-forge-chat-thread" });
     this.threadEl.createDiv({
       cls: "omni-forge-chat-empty",
@@ -9664,7 +9680,7 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
     }
-    const parsedTopK = Number.parseInt(this.topKInput.value, 10);
+    const parsedTopK = Number.parseInt(this.topKInput ? this.topKInput.value : String(this.plugin.settings.qaTopK), 10);
     const topK = Number.isFinite(parsedTopK) && parsedTopK >= 1 ? Math.min(15, parsedTopK) : this.plugin.settings.qaTopK;
     if (!preloadedTurn) {
       this.inputEl.value = "";
@@ -9989,6 +10005,7 @@ var SETTINGS_NAME_KO_MAP = {
   "Role system prompt editor": "\uC5ED\uD560 \uC2DC\uC2A4\uD15C \uD504\uB86C\uD504\uD2B8 \uD3B8\uC9D1\uAE30",
   "Prefer Ollama /api/chat (with fallback)": "Ollama /api/chat \uC6B0\uC120(\uD3F4\uBC31 \uD3EC\uD568)",
   "Show system messages in chat": "\uCC44\uD305 \uC2DC\uC2A4\uD15C \uBA54\uC2DC\uC9C0 \uD45C\uC2DC",
+  "Compact chat UI (recommended)": "\uCC44\uD305 \uD654\uBA74 \uB2E8\uC21C\uD654(\uAD8C\uC7A5)",
   "Chat transcript folder path": "\uCC44\uD305 \uAE30\uB85D \uD3F4\uB354 \uACBD\uB85C",
   "Attachment ingest folder path": "\uCCA8\uBD80 \uBBF8\uB7EC\uB9C1 \uD3F4\uB354 \uACBD\uB85C",
   "Use QA context in chat": "\uCC44\uD305\uC5D0\uC11C QA \uCEE8\uD14D\uC2A4\uD2B8 \uC0AC\uC6A9",
@@ -12243,6 +12260,13 @@ Detected local models: ${qaLocalHealth.detectedCount}`
         await this.plugin.refreshOpenQaWorkspaceViews();
       })
     );
+    new import_obsidian4.Setting(containerEl).setName("Compact chat UI (recommended) / \uCC44\uD305 \uD654\uBA74 \uB2E8\uC21C\uD654(\uAD8C\uC7A5)").setDesc("Keep only essential chat controls in the chat pane. Advanced parser/model/workflow controls stay in Settings.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.qaChatMinimalUi).onChange(async (value) => {
+        this.plugin.settings.qaChatMinimalUi = value;
+        await this.plugin.saveSettings();
+        await this.plugin.refreshOpenQaWorkspaceViews();
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("Preferred response language / \uB2F5\uBCC0 \uC5B8\uC5B4 \uC6B0\uC120").setDesc("Applies to local Q&A prompt. / \uB85C\uCEEC Q&A \uD504\uB86C\uD504\uD2B8\uC5D0 \uC801\uC6A9").addDropdown(
       (dropdown) => dropdown.addOption("auto", "Auto / \uC790\uB3D9").addOption("korean", "Korean / \uD55C\uAD6D\uC5B4").addOption("english", "English / \uC601\uC5B4").setValue(this.plugin.settings.qaPreferredResponseLanguage).onChange(async (value) => {
         this.plugin.settings.qaPreferredResponseLanguage = value;
@@ -12950,6 +12974,7 @@ _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
   "Always detailed answers",
   "Minimum answer chars",
   "Preferred response language",
+  "Compact chat UI (recommended)",
   "Chat font size",
   "Show system messages in chat",
   "Include selection inventory",
@@ -16931,6 +16956,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     if (typeof this.settings.qaContextInChat !== "boolean") {
       this.settings.qaContextInChat = DEFAULT_SETTINGS.qaContextInChat;
+    }
+    if (typeof this.settings.qaChatMinimalUi !== "boolean") {
+      this.settings.qaChatMinimalUi = DEFAULT_SETTINGS.qaChatMinimalUi;
     }
     if (typeof this.settings.qaRequireSelectionForSelectedAsk !== "boolean") {
       this.settings.qaRequireSelectionForSelectedAsk = DEFAULT_SETTINGS.qaRequireSelectionForSelectedAsk;

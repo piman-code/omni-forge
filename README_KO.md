@@ -191,6 +191,7 @@ Omni Forge는 반대로 동작합니다.
 - [README.md](README.md)
 - [docs/oauth-hwp-e2e-checklist.md](docs/oauth-hwp-e2e-checklist.md)
 - [docs/OAUTH_RUNBOOK_KO.md](docs/OAUTH_RUNBOOK_KO.md)
+- [docs/UI_SIMPLIFICATION.md](docs/UI_SIMPLIFICATION.md)
 
 ## OAuth / HWP Update Notes
 
