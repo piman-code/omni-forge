@@ -15258,7 +15258,15 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       authorizeUrl.searchParams.set("code_challenge_method", "S256");
       authorizeUrl.searchParams.set("code_challenge", codeChallenge);
     }
-    const opened = await this.openLinkWithDesktopShell(authorizeUrl.toString());
+    const openExternal = typeof this.openLinkWithDesktopShell === "function" ? this.openLinkWithDesktopShell.bind(this) : async (url) => {
+      try {
+        window.open(url, "_blank");
+        return true;
+      } catch (error) {
+        return false;
+      }
+    };
+    const opened = await openExternal(authorizeUrl.toString());
     if (!opened) {
       throw new Error("Failed to open the OAuth authorization URL.");
     }
