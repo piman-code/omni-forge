@@ -1,0 +1,9 @@
+﻿{
+  "cases": [
+    {"id":"ko-text","label":"Korean narrative text","hasTable":false},
+    {"id":"ko-table","label":"Korean table-heavy document","hasTable":true},
+    {"id":"mixed","label":"Mixed KO/EN/number/symbol","hasTable":false},
+    {"id":"scanned","label":"Scanned PDF OCR-like sample","hasTable":false},
+    {"id":"hwp-pdf","label":"HWP converted PDF sample","hasTable":true}
+  ]
+}

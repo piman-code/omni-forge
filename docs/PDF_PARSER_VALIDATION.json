@@ -1,0 +1,229 @@
+{
+  "cases": [
+    {
+      "id": "ko-text",
+      "label": "Korean narrative text",
+      "hasTable": false,
+      "variants": {
+        "before-fast": {
+          "charRetention": 0.7848,
+          "hangulCorruption": 0,
+          "paragraphOrder": 0,
+          "tableScore": 1,
+          "accepted": false
+        },
+        "after-fast": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        },
+        "before-detailed": {
+          "charRetention": 0.7848,
+          "hangulCorruption": 0,
+          "paragraphOrder": 0.6667,
+          "tableScore": 1,
+          "accepted": false
+        },
+        "after-detailed": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        }
+      }
+    },
+    {
+      "id": "ko-table",
+      "label": "Korean table-heavy document",
+      "hasTable": true,
+      "variants": {
+        "before-fast": {
+          "charRetention": 0.6429,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 0,
+          "accepted": false
+        },
+        "after-fast": {
+          "charRetention": 0.9732,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        },
+        "before-detailed": {
+          "charRetention": 0.6429,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 0,
+          "accepted": false
+        },
+        "after-detailed": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        }
+      }
+    },
+    {
+      "id": "mixed",
+      "label": "Mixed KO/EN/number/symbol",
+      "hasTable": false,
+      "variants": {
+        "before-fast": {
+          "charRetention": 0.9733,
+          "hangulCorruption": 0,
+          "paragraphOrder": 0.5,
+          "tableScore": 1,
+          "accepted": false
+        },
+        "after-fast": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        },
+        "before-detailed": {
+          "charRetention": 0.9933,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        },
+        "after-detailed": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        }
+      }
+    },
+    {
+      "id": "scanned",
+      "label": "Scanned PDF OCR-like sample",
+      "hasTable": false,
+      "variants": {
+        "before-fast": {
+          "charRetention": 0.9519,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        },
+        "after-fast": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        },
+        "before-detailed": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        },
+        "after-detailed": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        }
+      }
+    },
+    {
+      "id": "hwp-pdf",
+      "label": "HWP converted PDF sample",
+      "hasTable": true,
+      "variants": {
+        "before-fast": {
+          "charRetention": 0.8053,
+          "hangulCorruption": 0,
+          "paragraphOrder": 0.5,
+          "tableScore": 0,
+          "accepted": false
+        },
+        "after-fast": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        },
+        "before-detailed": {
+          "charRetention": 0.9912,
+          "hangulCorruption": 0,
+          "paragraphOrder": 0.5,
+          "tableScore": 1,
+          "accepted": false
+        },
+        "after-detailed": {
+          "charRetention": 1,
+          "hangulCorruption": 0,
+          "paragraphOrder": 1,
+          "tableScore": 1,
+          "accepted": true
+        }
+      }
+    }
+  ],
+  "aggregate": [
+    {
+      "key": "before-fast",
+      "label": "Before/Fast",
+      "charRetention": 0.8316399999999999,
+      "hangulCorruption": 0,
+      "paragraphOrder": 0.6,
+      "tableScore": 0.6,
+      "passRate": 0.2
+    },
+    {
+      "key": "after-fast",
+      "label": "After/Fast",
+      "charRetention": 0.9946400000000001,
+      "hangulCorruption": 0,
+      "paragraphOrder": 1,
+      "tableScore": 1,
+      "passRate": 1
+    },
+    {
+      "key": "before-detailed",
+      "label": "Before/Detailed",
+      "charRetention": 0.8824400000000001,
+      "hangulCorruption": 0,
+      "paragraphOrder": 0.8333400000000001,
+      "tableScore": 0.8,
+      "passRate": 0.4
+    },
+    {
+      "key": "after-detailed",
+      "label": "After/Detailed",
+      "charRetention": 1,
+      "hangulCorruption": 0,
+      "paragraphOrder": 1,
+      "tableScore": 1,
+      "passRate": 1
+    }
+  ],
+  "delta": {
+    "fastCharRetention": 0.16300000000000014,
+    "detailedCharRetention": 0.11755999999999989,
+    "fastTableScore": 0.4,
+    "detailedTableScore": 0.19999999999999996
+  },
+  "thresholds": {
+    "charRetentionMin": 0.88,
+    "hangulCorruptionMax": 0.03,
+    "paragraphOrderMin": 0.8,
+    "tableScoreMin": 0.75
+  }
+}

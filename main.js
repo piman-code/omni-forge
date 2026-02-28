@@ -7685,6 +7685,118 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     }
     return true;
   }
+  splitWhitespaceTableColumns(rawLine) {
+    const line = typeof rawLine === "string" ? rawLine.trim() : "";
+    if (!line || line.length < 6) {
+      return [];
+    }
+    if (line.startsWith("|") && line.endsWith("|")) {
+      return [];
+    }
+    if (/^[-*•]\s/.test(line) || /^\d+[.)]\s/.test(line) || /^#{1,6}\s/.test(line)) {
+      return [];
+    }
+    if (!/\t|\s{2,}/.test(line)) {
+      return [];
+    }
+    const columns = line.split(/\t+|\s{2,}/g).map((cell) => cell.trim()).filter((cell) => cell.length > 0);
+    if (columns.length < 2 || columns.length > 8) {
+      return [];
+    }
+    if (columns.some((cell) => cell.length > 90)) {
+      return [];
+    }
+    const readableCells = columns.filter((cell) => /[A-Za-z0-9가-힣]/.test(cell)).length;
+    if (readableCells < Math.max(1, columns.length - 1)) {
+      return [];
+    }
+    return columns;
+  }
+  normalizeWhitespaceTableCell(cell) {
+    return String(cell || "").replace(/\|/g, "¦").replace(/\s+/g, " ").trim();
+  }
+  chooseDominantTableColumnCount(rows) {
+    const histogram = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const key = row.length;
+      histogram.set(key, (histogram.get(key) || 0) + 1);
+    }
+    const sorted = [...histogram.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+    return sorted.length > 0 ? sorted[0][0] : 0;
+  }
+  convertWhitespaceTableRowsToMarkdown(rows, targetColumns) {
+    if (rows.length < 3 || targetColumns < 2) {
+      return [];
+    }
+    const normalizedRows = rows.map((row) => {
+      const normalized = row.slice(0, targetColumns).map((cell) => this.normalizeWhitespaceTableCell(cell));
+      while (normalized.length < targetColumns) {
+        normalized.push("");
+      }
+      return normalized;
+    }).filter((row) => row.some((cell) => cell.length > 0));
+    if (normalizedRows.length < 3) {
+      return [];
+    }
+    const header = normalizedRows[0];
+    const body = normalizedRows.slice(1);
+    const tableLines = [];
+    tableLines.push(`| ${header.join(" | ")} |`);
+    tableLines.push(`| ${new Array(targetColumns).fill("---").join(" | ")} |`);
+    for (const row of body) {
+      tableLines.push(`| ${row.join(" | ")} |`);
+    }
+    return tableLines;
+  }
+  rebuildWhitespaceTablesForParser(text) {
+    const input = typeof text === "string" ? text.trim() : "";
+    if (!input) {
+      return "";
+    }
+    const sourceLines = input.split("\n");
+    const rebuilt = [];
+    let index = 0;
+    while (index < sourceLines.length) {
+      const firstColumns = this.splitWhitespaceTableColumns(sourceLines[index]);
+      if (firstColumns.length < 2) {
+        rebuilt.push(sourceLines[index]);
+        index += 1;
+        continue;
+      }
+      const start = index;
+      const rows = [firstColumns];
+      index += 1;
+      while (index < sourceLines.length) {
+        const columns = this.splitWhitespaceTableColumns(sourceLines[index]);
+        if (columns.length < 2) {
+          break;
+        }
+        const currentColumns = rows[rows.length - 1].length;
+        if (Math.abs(columns.length - currentColumns) > 1) {
+          break;
+        }
+        rows.push(columns);
+        index += 1;
+      }
+      const dominantColumns = this.chooseDominantTableColumnCount(rows);
+      const candidateRows = rows.filter((row) => Math.abs(row.length - dominantColumns) <= 1);
+      const markdownTable = this.convertWhitespaceTableRowsToMarkdown(candidateRows, dominantColumns);
+      if (markdownTable.length > 0) {
+        if (rebuilt.length > 0 && rebuilt[rebuilt.length - 1].trim().length > 0) {
+          rebuilt.push("");
+        }
+        rebuilt.push(...markdownTable);
+        if (index < sourceLines.length && sourceLines[index].trim().length > 0) {
+          rebuilt.push("");
+        }
+        continue;
+      }
+      for (let cursor = start; cursor < index; cursor += 1) {
+        rebuilt.push(sourceLines[cursor]);
+      }
+    }
+    return rebuilt.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
   normalizeParserExtractedText(text, options) {
     const forOcr = Boolean(options == null ? void 0 : options.forOcr);
     const normalizeSpacing = options == null ? void 0 : options.normalizeSpacing;
@@ -7699,11 +7811,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
     normalized = normalized.replace(/[\u200B-\u200D\uFEFF]/g, "");
     normalized = normalized.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
     if (!forOcr) {
-      const compact = normalized.trim();
+      let compact = normalized.trim();
       if (normalizeSpacing === false) {
-        return compact;
+        return this.rebuildWhitespaceTablesForParser(compact);
       }
-      return compact.replace(/([가-힣])\s+([.,!?;:])/g, "$1$2");
+      compact = compact.replace(/([가-힣])\s+([.,!?;:])/g, "$1$2");
+      return this.rebuildWhitespaceTablesForParser(compact);
     }
     const lines = normalized.split("\n").map((line) => line.replace(/[ \t]+/g, " ").trimEnd());
     const merged = [];
@@ -7728,11 +7841,12 @@ var LocalQAWorkspaceView = class extends import_obsidian4.ItemView {
         merged.push(line);
       }
     }
-    const compact = merged.join("\n").replace(/[ ]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    let compact = merged.join("\n").replace(/[ ]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
     if (normalizeSpacing === false) {
-      return compact;
+      return this.rebuildWhitespaceTablesForParser(compact);
     }
-    return compact.replace(/([가-힣])\s+([.,!?;:])/g, "$1$2");
+    compact = compact.replace(/([가-힣])\s+([.,!?;:])/g, "$1$2");
+    return this.rebuildWhitespaceTablesForParser(compact);
   }
   assessAttachmentTextQuality(text) {
     const normalized = this.normalizeParserExtractedText(text || "", {
