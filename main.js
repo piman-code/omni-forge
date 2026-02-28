@@ -11390,6 +11390,30 @@ ${parserProfile.recommendation}`
         new import_obsidian4.Notice(summary, 6500);
         this.display();
       })
+    ).addButton(
+      (button) => button.setButtonText(uiMode === "en" ? "Google OAuth Login" : uiMode === "ko" ? "Google OAuth 로그인" : "Google OAuth Login / Google OAuth 로그인").onClick(async () => {
+        this.plugin.settings.provider = "openai";
+        this.plugin.settings.qaChatModelFamily = "cloud";
+        this.plugin.settings.qaChatModelProfile = "codex";
+        this.plugin.settings.qaAllowNonLocalEndpoint = true;
+        this.plugin.settings.oauthEnabled = true;
+        this.plugin.applyOAuthProviderPresetForQa("google");
+        await this.plugin.saveSettings();
+        const validation = this.plugin.getOAuthLoginValidationForQa();
+        if (!validation.ready) {
+          new import_obsidian4.Notice(validation.message, 8e3);
+          this.display();
+          return;
+        }
+        try {
+          await this.plugin.startOAuthLoginForQa();
+          new import_obsidian4.Notice("OAuth login completed. / OAuth 로그인 완료", 4e3);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          new import_obsidian4.Notice(`OAuth login failed: ${message}`, 8e3);
+        }
+        this.display();
+      })
     );
     const showCodexBridgeNote = this.plugin.getQaChatModelProfileForQa() === "codex";
     if (showCodexBridgeNote) {
