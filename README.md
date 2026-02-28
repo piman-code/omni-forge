@@ -226,3 +226,4 @@ Common failure reasons:
 Related docs:
 - [README_KO.md](README_KO.md)
 - [docs/oauth-hwp-e2e-checklist.md](docs/oauth-hwp-e2e-checklist.md)
+- [docs/OAUTH_RUNBOOK_KO.md](docs/OAUTH_RUNBOOK_KO.md)

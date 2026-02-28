@@ -604,6 +604,15 @@ function resolveOAuthTokenExpiryMs(payload) {
   }
   return 0;
 }
+function tokenFreshStatusForSummary(accessTokenPresent, expiryMs) {
+  if (!accessTokenPresent) {
+    return "required";
+  }
+  if (!expiryMs) {
+    return "not required (non-expiring token)";
+  }
+  return Date.now() < expiryMs ? "not required" : "required";
+}
 function isCloudProviderForOAuthBridge(provider) {
   return provider === "openai" || provider === "anthropic" || provider === "gemini";
 }
@@ -11806,6 +11815,17 @@ ${parserProfile.recommendation}`
         new import_obsidian4.Notice("OAuth bridge defaults applied. / OAuth 브리지 기본값 적용 완료", 4e3);
       }));
     }
+    const oauthChecklist = this.plugin.getOAuthSetupChecklistForQa();
+    new import_obsidian4.Setting(containerEl).setName("OAuth setup checklist").setDesc(oauthChecklist.text).addButton(
+      (button) => button.setButtonText("Validate redirect URI").onClick(() => {
+        const redirectValidation = this.plugin.getOAuthRedirectValidationForQa();
+        const message = redirectValidation.ready ? `Redirect URI OK: ${redirectValidation.normalized}` : `Redirect URI fix needed. ${redirectValidation.guidance}`;
+        new import_obsidian4.Notice(message, 6e3);
+        if (!redirectValidation.ready) {
+          focusOAuthField("oauthRedirectUri");
+        }
+      })
+    );
     new import_obsidian4.Setting(containerEl).setName("OAuth session actions / OAuth 세션 동작").setDesc(this.plugin.getOAuthStatusSummaryForQa()).addButton(
       (button) => button.setButtonText("Google quick preset / Google 빠른 설정").onClick(async () => {
         this.plugin.applyGoogleOAuthQuickSetupForQa();
@@ -14359,6 +14379,62 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     this.settings.qaOllamaModel = this.settings.openAIModel.trim() || DEFAULT_SETTINGS.openAIModel;
     this.appendQaAllowedOutboundHostFromUrl(bridgeBase);
   }
+  getOAuthRedirectValidationForQa() {
+    const raw = typeof this.settings.oauthRedirectUri === "string" ? this.settings.oauthRedirectUri.trim() : "";
+    const normalized = this.normalizeOAuthRedirectUriForQa(raw);
+    let host = "";
+    let path = "";
+    let protocol = "";
+    try {
+      const parsed = new URL(normalized);
+      host = parsed.hostname.toLowerCase();
+      path = parsed.pathname || "";
+      protocol = parsed.protocol || "";
+    } catch (e) {
+      host = "";
+      path = "";
+      protocol = "";
+    }
+    const hostOk = host === "127.0.0.1" || host === "localhost";
+    const pathOk = path === "/callback";
+    const protocolOk = protocol === "http:" || protocol === "https:";
+    const exactMatch = raw === normalized;
+    const ready = Boolean(raw) && exactMatch && hostOk && pathOk && protocolOk;
+    const message = ready ? `redirect ready: ${normalized}` : `redirect needs fix: current='${raw || "(empty)"}' expected='${normalized}'`;
+    const guidance = ready ? "Register exactly the same URI in provider console." : "Use localhost/127.0.0.1 callback URI and register the same value in provider console.";
+    return {
+      ready,
+      message,
+      guidance,
+      raw,
+      normalized,
+      hostOk,
+      pathOk,
+      protocolOk,
+      exactMatch
+    };
+  }
+  getOAuthSetupChecklistForQa() {
+    const preset = this.normalizeOAuthProviderPresetForQa(this.settings.oauthProviderPreset);
+    const validation = this.getOAuthLoginValidationForQa();
+    const redirect = this.getOAuthRedirectValidationForQa();
+    const transport = this.getOAuthTransportValidationForQa();
+    const tokenFresh = this.isOAuthTokenFreshForQa();
+    const tokenPresent = typeof this.settings.oauthAccessToken === "string" && this.settings.oauthAccessToken.trim().length > 0;
+    const lines = [
+      `1) preset: ${preset === "google" ? "google (ok)" : `${preset} (switch to google for Google OAuth)`}`,
+      `2) client ID: ${this.settings.oauthClientId.trim() ? "set" : "missing"}`,
+      `3) redirect URI: ${redirect.ready ? "valid" : "invalid"}`,
+      `4) start login: ${validation.ready ? "ready" : "blocked (fill required fields)"}`,
+      `5) token status: ${tokenFresh ? "active" : tokenPresent ? "present but refresh/login needed" : "missing"}`,
+      `transport: ${transport.ready ? "ok" : "needs action"}`
+    ];
+    return {
+      ready: validation.ready && redirect.ready && transport.ready,
+      lines,
+      text: lines.join(" | ")
+    };
+  }
   applyRecommendedOAuthBridgeDefaultsForQa() {
     this.settings.oauthBridgeEnabled = true;
     if (!this.settings.oauthBridgeBaseUrl.trim()) {
@@ -14453,6 +14529,15 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
         return transport.guidance || transport.message;
       }
       return "Cloud endpoint returned 401. Verify token audience/scope and endpoint compatibility.";
+    }
+    if (normalized.includes("oauth token exchange failed")) {
+      return "Token exchange failed. Verify OAuth consent screen publish/test-user config, client ID, and redirect URI registration.";
+    }
+    if (normalized.includes("access blocked") || normalized.includes("app not verified") || normalized.includes("consent")) {
+      return "OAuth consent screen issue detected. In Google Cloud Console, configure consent screen and add your account to Test users.";
+    }
+    if (normalized.includes("test user") || normalized.includes("not in the list of allowed users") || normalized.includes("not authorized to use this app")) {
+      return "Current account is not allowed. Add this Google account to OAuth Test users or publish the app.";
     }
     if (normalized.includes("redirect_uri_mismatch") || normalized.includes("redirect uri mismatch")) {
       return "Register this redirect URI in provider console: http://127.0.0.1:8765/callback.";
@@ -14624,13 +14709,15 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       }
     }
     const configState = validation.ready ? "ready" : `missing ${validation.missing.join(", ")}`;
+    const reloginState = enabled ? tokenFreshStatusForSummary(accessTokenPresent, expiryMs) : "n/a";
     return [
       `OAuth: ${enabled ? "enabled" : "disabled"}`,
       `config: ${configState}`,
       `transport: ${transport.ready ? transport.message : `needs action (${transport.message})`}`,
       `access token: ${accessTokenPresent ? "present" : "missing"}`,
       `refresh token: ${refreshTokenPresent ? "present" : "missing"}`,
-      `expiry: ${expiryText}`
+      `expiry: ${expiryText}`,
+      `re-login: ${reloginState}`
     ].join(" | ");
   }
   async clearOAuthTokensForQa() {
