@@ -13509,6 +13509,27 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       }
     });
     this.addCommand({
+      id: "oauth-google-login-now",
+      name: "OAuth: Google login now (quick setup)",
+      callback: async () => {
+        this.applyOAuthProviderPresetForQa("google");
+        this.settings.oauthEnabled = true;
+        await this.saveSettings();
+        const validation = this.getOAuthLoginValidationForQa();
+        if (!validation.ready) {
+          new import_obsidian4.Notice(validation.message, 8e3);
+          return;
+        }
+        try {
+          await this.startOAuthLoginForQa();
+          new import_obsidian4.Notice("OAuth login completed. / OAuth 로그인 완료", 4e3);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          new import_obsidian4.Notice(`OAuth login failed: ${message}`, 8e3);
+        }
+      }
+    });
+    this.addCommand({
       id: "parser-inbox-open-folder",
       name: "Parser inbox: Open folder",
       callback: async () => {
