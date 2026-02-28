@@ -149,6 +149,33 @@ When a new markdown note is created there, Omni Forge can prompt you to:
 
 This helps maintain metadata freshness without full rescans.
 
+## OAuth (Google) Quick Setup
+
+1. Open `Settings -> Omni Forge -> Cloud provider config`.
+2. Click `Google OAuth Login` or `Google quick preset`.
+3. Confirm required fields:
+   - `OAuth authorization URL`: `https://accounts.google.com/o/oauth2/v2/auth`
+   - `OAuth token URL`: `https://oauth2.googleapis.com/token`
+   - `OAuth client ID`: your Google OAuth client ID
+   - `OAuth redirect URI`: `http://127.0.0.1:8765/callback`
+4. Click `Start OAuth Login`.
+
+Notes:
+- The quick action automatically switches profile to `provider=openai`, `family=cloud`, `profile=codex`, and enables OAuth.
+- Validation now reports missing fields with direct guidance (for example, `Missing required fields: client ID`).
+- OAuth status shows token presence and expiry state (without printing token values).
+
+## HWP Ingest (HWP -> PDF -> MD/XML)
+
+- `.hwp` auto conversion requires LibreOffice `soffice`.
+- `.hwpx` uses XML first-pass extraction and guided fallback.
+- Parser output format is configurable: `md` (chat-ready markdown) or `xml` (structured metadata + content).
+
+Common failure reasons:
+- `soffice missing`: install LibreOffice and ensure `soffice` is discoverable.
+- `readBinary API unavailable`: Obsidian runtime/adapter limitation.
+- `pdf parser chain failed`: retry in Detailed mode or run OCR fallback tools.
+
 ## Command List
 
 - `Select target notes/folders`
@@ -171,6 +198,12 @@ This helps maintain metadata freshness without full rescans.
   - Run `Select target notes/folders` first.
 - `Q&A endpoint blocked by security policy`
   - Use local endpoint, or explicitly enable non-local endpoint.
+- `Missing required fields: client ID` during OAuth login
+  - Fill `OAuth client ID` in Cloud provider config, then retry login.
+- `redirect_uri_mismatch` during OAuth login
+  - Register `http://127.0.0.1:8765/callback` in the provider OAuth console.
+- `soffice missing` during HWP ingest
+  - Install LibreOffice and verify `soffice` command/path.
 - `Embedding model is not suitable`
   - Choose an embedding-capable model and refresh detection.
 - Empty or too short answers
@@ -186,3 +219,4 @@ This helps maintain metadata freshness without full rescans.
 
 Related docs:
 - [README_KO.md](README_KO.md)
+- [docs/oauth-hwp-e2e-checklist.md](docs/oauth-hwp-e2e-checklist.md)

@@ -189,3 +189,35 @@ Omni Forge는 반대로 동작합니다.
 
 관련 문서:
 - [README.md](README.md)
+
+- [docs/oauth-hwp-e2e-checklist.md](docs/oauth-hwp-e2e-checklist.md)
+
+## OAuth / HWP Update Notes
+
+### OAuth (Google)
+- `Google OAuth Login` / `Google quick preset` now auto-applies:
+  - `provider=openai`
+  - `qaChatModelFamily=cloud`
+  - `qaChatModelProfile=codex`
+  - Google OAuth preset URLs + `oauthEnabled=true`
+- Required fields are validated with actionable guidance:
+  - auth URL
+  - token URL
+  - client ID
+  - redirect URI
+- OAuth status text now shows token presence and expiry state in user-friendly form (without exposing token values).
+
+### HWP ingest
+- `.hwp` auto route requires LibreOffice `soffice` (`hwp -> pdf -> parser`).
+- `.hwpx` uses XML first-pass extraction with guided fallback.
+- Parser output format is configurable:
+  - `md`: chat-ready markdown
+  - `xml`: structured metadata + content
+
+### Common failure guidance
+- `Missing required fields: client ID`
+  - Fill `OAuth client ID` in Cloud provider config.
+- `redirect_uri_mismatch`
+  - Register `http://127.0.0.1:8765/callback` in provider console.
+- `soffice missing`
+  - Install LibreOffice and make `soffice` discoverable in PATH.

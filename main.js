@@ -1,4 +1,4 @@
-/* eslint-disable */
+﻿/* eslint-disable */
 "use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -1513,6 +1513,9 @@ async function searchSemanticNotesByQuery(app, files, settings, query, topK, abo
 var execAsync = (0, import_util.promisify)(import_child_process.exec);
 function shellQuoteForExec(value) {
   const source = value == null ? "" : String(value);
+  if (process.platform === "win32") {
+    return `"${source.replace(/"/g, '""')}"`;
+  }
   return `'${source.replace(/'/g, `'"'"'`)}'`;
 }
 function sanitizeTempFileNameForHwp(rawName, fallbackBase, extHint = "") {
@@ -1527,20 +1530,35 @@ function sanitizeTempFileNameForHwp(rawName, fallbackBase, extHint = "") {
   return trimmed.toLowerCase().endsWith(`.${ext}`) ? trimmed : `${trimmed}.${ext}`;
 }
 async function resolveSofficeExecutableForHwpPoC() {
-  try {
-    await execAsync("command -v soffice");
-    return "soffice";
-  } catch (e) {
+  const probes = process.platform === "win32" ? ["where soffice.exe", "where soffice"] : ["command -v soffice"];
+  for (const probe of probes) {
+    try {
+      const result = await execAsync(probe);
+      const first = String((result == null ? void 0 : result.stdout) || "").split(/\r?\n/g).map((line) => line.trim()).find((line) => line.length > 0);
+      if (first) {
+        return first;
+      }
+      if (process.platform !== "win32") {
+        return "soffice";
+      }
+    } catch (e) {
+    }
   }
-  const candidates = [
+  const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const candidates = process.platform === "win32" ? [
+    nodePath.join(programFiles, "LibreOffice", "program", "soffice.exe"),
+    nodePath.join(programFilesX86, "LibreOffice", "program", "soffice.exe")
+  ] : [
     "/Applications/LibreOffice.app/Contents/MacOS/soffice",
     "/opt/homebrew/bin/soffice",
     "/usr/local/bin/soffice",
     "/usr/bin/soffice"
   ];
+  const accessMode = process.platform === "win32" ? nodeFs.constants.F_OK : nodeFs.constants.X_OK;
   for (const candidate of candidates) {
     try {
-      await nodeFs.promises.access(candidate, nodeFs.constants.X_OK);
+      await nodeFs.promises.access(candidate, accessMode);
       return candidate;
     } catch (e) {
     }
@@ -11392,16 +11410,12 @@ ${parserProfile.recommendation}`
       })
     ).addButton(
       (button) => button.setButtonText(uiMode === "en" ? "Google OAuth Login" : uiMode === "ko" ? "Google OAuth 로그인" : "Google OAuth Login / Google OAuth 로그인").onClick(async () => {
-        this.plugin.settings.provider = "openai";
-        this.plugin.settings.qaChatModelFamily = "cloud";
-        this.plugin.settings.qaChatModelProfile = "codex";
-        this.plugin.settings.qaAllowNonLocalEndpoint = true;
-        this.plugin.settings.oauthEnabled = true;
-        this.plugin.applyOAuthProviderPresetForQa("google");
+        this.plugin.applyGoogleOAuthQuickSetupForQa();
         await this.plugin.saveSettings();
         const validation = this.plugin.getOAuthLoginValidationForQa();
         if (!validation.ready) {
-          new import_obsidian4.Notice(validation.message, 8e3);
+          new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}`.trim(), 8e3);
+          focusOAuthField(validation.focusField);
           this.display();
           return;
         }
@@ -11409,8 +11423,7 @@ ${parserProfile.recommendation}`
           await this.plugin.startOAuthLoginForQa();
           new import_obsidian4.Notice("OAuth login completed. / OAuth 로그인 완료", 4e3);
         } catch (error) {
-          const message = error instanceof Error ? error.message : "unknown error";
-          new import_obsidian4.Notice(`OAuth login failed: ${message}`, 8e3);
+          new import_obsidian4.Notice(this.plugin.formatOAuthLoginFailureForQa(error), 8e3);
         }
         this.display();
       })
@@ -11551,6 +11564,24 @@ ${parserProfile.recommendation}`
     let oauthAuthUrlText = null;
     let oauthTokenUrlText = null;
     let oauthScopesText = null;
+    let oauthClientIdText = null;
+    let oauthRedirectUriText = null;
+    const focusOAuthField = (fieldKey) => {
+      const targetByKey = {
+        oauthAuthUrl: oauthAuthUrlText,
+        oauthTokenUrl: oauthTokenUrlText,
+        oauthClientId: oauthClientIdText,
+        oauthRedirectUri: oauthRedirectUriText
+      };
+      const target = targetByKey[fieldKey];
+      if (target && target.inputEl) {
+        target.inputEl.focus();
+        try {
+          target.inputEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        } catch (e) {
+        }
+      }
+    };
     new import_obsidian4.Setting(containerEl).setName("OAuth provider preset").setDesc("google | auth0 | custom (auto-fill helper)").addDropdown(
       (dropdown) => dropdown.addOption("google", "google").addOption("auth0", "auth0").addOption("custom", "custom").setValue(
         this.plugin.normalizeOAuthProviderPresetForQa(this.plugin.settings.oauthProviderPreset)
@@ -11608,11 +11639,14 @@ ${parserProfile.recommendation}`
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian4.Setting(containerEl).setName("OAuth client ID / OAuth 클라이언트 ID").addText(
-      (text) => text.setPlaceholder("client-id").setValue(this.plugin.settings.oauthClientId).onChange(async (value) => {
-        this.plugin.settings.oauthClientId = value.trim();
-        await this.plugin.saveSettings();
-      })
+    new import_obsidian4.Setting(containerEl).setName("OAuth client ID / OAuth 클라이언트 ID").setDesc("Required. Google Cloud Console > Credentials > OAuth 2.0 Client IDs.").addText(
+      (text) => {
+        oauthClientIdText = text;
+        return text.setPlaceholder("xxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com").setValue(this.plugin.settings.oauthClientId).onChange(async (value) => {
+          this.plugin.settings.oauthClientId = value.trim();
+          await this.plugin.saveSettings();
+        });
+      }
     );
     new import_obsidian4.Setting(containerEl).setName("OAuth scopes / OAuth 스코프").setDesc("Comma or space separated scopes. / 쉼표 또는 공백으로 구분").addText((text) => {
       oauthScopesText = text;
@@ -11622,11 +11656,14 @@ ${parserProfile.recommendation}`
       });
     });
     new import_obsidian4.Setting(containerEl).setName("OAuth redirect URI / OAuth 리디렉션 URI").addText(
-      (text) => text.setPlaceholder("http://127.0.0.1:8765/callback").setValue(this.plugin.settings.oauthRedirectUri).onChange(async (value) => {
-        this.plugin.settings.oauthRedirectUri = this.plugin.normalizeOAuthRedirectUriForQa(value);
-        await this.plugin.saveSettings();
-        text.setValue(this.plugin.settings.oauthRedirectUri);
-      })
+      (text) => {
+        oauthRedirectUriText = text;
+        return text.setPlaceholder("http://127.0.0.1:8765/callback").setValue(this.plugin.settings.oauthRedirectUri).onChange(async (value) => {
+          this.plugin.settings.oauthRedirectUri = this.plugin.normalizeOAuthRedirectUriForQa(value);
+          await this.plugin.saveSettings();
+          text.setValue(this.plugin.settings.oauthRedirectUri);
+        });
+      }
     );
     const oauthRedirectGuide = containerEl.createDiv({ cls: "omni-forge-settings-guide-note" });
     oauthRedirectGuide.createSpan({ text: "Redirect URI example: " });
@@ -11640,11 +11677,11 @@ ${parserProfile.recommendation}`
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("OAuth login validation").setDesc(this.plugin.getOAuthLoginValidationForQa().message);
+    const oauthValidation = this.plugin.getOAuthLoginValidationForQa();
+    new import_obsidian4.Setting(containerEl).setName("OAuth login validation").setDesc(`${oauthValidation.message} ${oauthValidation.guidance || ""}`.trim());
     new import_obsidian4.Setting(containerEl).setName("OAuth session actions / OAuth 세션 동작").setDesc(this.plugin.getOAuthStatusSummaryForQa()).addButton(
       (button) => button.setButtonText("Google quick preset / Google 빠른 설정").onClick(async () => {
-        this.plugin.applyOAuthProviderPresetForQa("google");
-        this.plugin.settings.oauthEnabled = true;
+        this.plugin.applyGoogleOAuthQuickSetupForQa();
         await this.plugin.saveSettings();
         this.display();
         new import_obsidian4.Notice("Google OAuth preset applied. / Google OAuth 프리셋 적용 완료", 4e3);
@@ -11655,7 +11692,8 @@ ${parserProfile.recommendation}`
         await this.plugin.saveSettings();
         const validation = this.plugin.getOAuthLoginValidationForQa();
         if (!validation.ready) {
-          new import_obsidian4.Notice(validation.message, 8e3);
+          new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}`.trim(), 8e3);
+          focusOAuthField(validation.focusField);
           this.display();
           return;
         }
@@ -11664,8 +11702,7 @@ ${parserProfile.recommendation}`
           await this.plugin.startOAuthLoginForQa();
           new import_obsidian4.Notice("OAuth login completed. / OAuth 로그인 완료");
         } catch (error) {
-          const message = error instanceof Error ? error.message : "unknown error";
-          new import_obsidian4.Notice(`OAuth login failed: ${message}`, 8e3);
+          new import_obsidian4.Notice(this.plugin.formatOAuthLoginFailureForQa(error), 8e3);
         }
         this.display();
       })
@@ -12257,7 +12294,7 @@ Detected local models: ${qaLocalHealth.detectedCount}`
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Parser inbox watch").setDesc("Watch inbox folder for PDF/DOCX/XLSX/HWP/HWPX uploads and auto-convert to parser output. Multiple files are processed in sequential/safe order. HWPX supports first-pass text extraction; HWP tries soffice PoC (hwp->pdf) and falls back to guide when unavailable/failed.").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("Parser inbox watch").setDesc("Watch inbox folder for PDF/DOCX/XLSX/HWP/HWPX uploads and auto-convert to parser output. Multiple files are processed in sequential/safe order. HWPX supports first-pass text extraction; HWP requires LibreOffice soffice for auto (hwp->pdf) and falls back to guide if unavailable/failed.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.qaParserInboxWatchEnabled).onChange(async (value) => {
         this.plugin.settings.qaParserInboxWatchEnabled = value;
         await this.plugin.saveSettings();
@@ -12269,7 +12306,7 @@ Detected local models: ${qaLocalHealth.detectedCount}`
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian4.Setting(containerEl).setName("Parser ingest output format").setDesc("Output format for inbox conversion result.").addDropdown(
+    new import_obsidian4.Setting(containerEl).setName("Parser ingest output format").setDesc("Output format for inbox conversion result: md (chat-ready markdown) or xml (structured metadata + content).").addDropdown(
       (dropdown) => dropdown.addOption("md", "md").addOption("xml", "xml").setValue(this.plugin.settings.qaParserIngestOutputFormat).onChange(async (value) => {
         this.plugin.settings.qaParserIngestOutputFormat = value === "xml" ? "xml" : "md";
         await this.plugin.saveSettings();
@@ -13536,20 +13573,18 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       id: "oauth-google-login-now",
       name: "OAuth: Google login now (quick setup)",
       callback: async () => {
-        this.applyOAuthProviderPresetForQa("google");
-        this.settings.oauthEnabled = true;
+        this.applyGoogleOAuthQuickSetupForQa();
         await this.saveSettings();
         const validation = this.getOAuthLoginValidationForQa();
         if (!validation.ready) {
-          new import_obsidian4.Notice(validation.message, 8e3);
+          new import_obsidian4.Notice(`${validation.message} ${validation.guidance || ""}`.trim(), 8e3);
           return;
         }
         try {
           await this.startOAuthLoginForQa();
           new import_obsidian4.Notice("OAuth login completed. / OAuth 로그인 완료", 4e3);
         } catch (error) {
-          const message = error instanceof Error ? error.message : "unknown error";
-          new import_obsidian4.Notice(`OAuth login failed: ${message}`, 8e3);
+          new import_obsidian4.Notice(this.formatOAuthLoginFailureForQa(error), 8e3);
         }
       }
     });
@@ -14183,6 +14218,87 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
     this.settings.oauthProvider = "generic";
   }
+  applyGoogleOAuthQuickSetupForQa() {
+    this.settings.provider = "openai";
+    this.settings.qaChatModelFamily = "cloud";
+    this.settings.qaChatModelProfile = "codex";
+    this.settings.qaLocalPresetProfile = "custom";
+    this.settings.qaAllowNonLocalEndpoint = true;
+    this.settings.oauthEnabled = true;
+    this.applyOAuthProviderPresetForQa("google");
+    this.settings.oauthRedirectUri = this.normalizeOAuthRedirectUriForQa(this.settings.oauthRedirectUri);
+    const bridgeBase = toOpenAICompatibleBase(this.settings.openAIBaseUrl.trim() || DEFAULT_SETTINGS.openAIBaseUrl);
+    this.settings.qaOllamaBaseUrl = bridgeBase;
+    this.settings.qaOllamaModel = this.settings.openAIModel.trim() || DEFAULT_SETTINGS.openAIModel;
+    this.appendQaAllowedOutboundHostFromUrl(bridgeBase);
+  }
+  getOAuthValidationFieldMetaForQa() {
+    return [
+      { key: "oauthAuthUrl", label: "auth URL", settingLabel: "OAuth authorization URL" },
+      { key: "oauthTokenUrl", label: "token URL", settingLabel: "OAuth token URL" },
+      { key: "oauthClientId", label: "client ID", settingLabel: "OAuth client ID" },
+      { key: "oauthRedirectUri", label: "redirect URI", settingLabel: "OAuth redirect URI" }
+    ];
+  }
+  getOAuthMissingFieldHintForQa(fieldKey) {
+    switch (fieldKey) {
+      case "oauthClientId":
+        return "Set OAuth client ID first. Use Google Cloud Console > Credentials > OAuth 2.0 Client IDs.";
+      case "oauthRedirectUri":
+        return "Use redirect URI http://127.0.0.1:8765/callback and register the same URI in provider console.";
+      case "oauthAuthUrl":
+        return "For Google preset, auth URL should be https://accounts.google.com/o/oauth2/v2/auth.";
+      case "oauthTokenUrl":
+        return "For Google preset, token URL should be https://oauth2.googleapis.com/token.";
+      default:
+        return "Fill required OAuth fields in Settings > Cloud provider config.";
+    }
+  }
+  getOAuthLoginFailureHintForQa(rawMessage) {
+    const normalized = typeof rawMessage === "string" ? rawMessage.toLowerCase() : "";
+    if (!normalized) {
+      return "";
+    }
+    if (normalized.includes("missing required fields")) {
+      return "Complete all required OAuth fields in settings, then retry Start OAuth Login.";
+    }
+    if (normalized.includes("oauth client id is empty")) {
+      return this.getOAuthMissingFieldHintForQa("oauthClientId");
+    }
+    if (normalized.includes("redirect_uri_mismatch") || normalized.includes("redirect uri mismatch")) {
+      return "Register this redirect URI in provider console: http://127.0.0.1:8765/callback.";
+    }
+    if (normalized.includes("invalid_client") || normalized.includes("unauthorized_client")) {
+      return "OAuth client is invalid. Verify client ID, app type, and enabled OAuth consent screen.";
+    }
+    if (normalized.includes("invalid_grant")) {
+      return "Authorization code is expired/invalid. Restart OAuth login and finish consent quickly.";
+    }
+    if (normalized.includes("invalid_scope")) {
+      return "Requested scopes were rejected. For Google start with: openid profile email.";
+    }
+    if (normalized.includes("access_denied")) {
+      return "Authorization was denied or canceled in the provider consent screen.";
+    }
+    if (normalized.includes("state mismatch")) {
+      return "OAuth state mismatch. Retry with a fresh browser tab and do not reuse old callback URLs.";
+    }
+    if (normalized.includes("callback listener failed") || normalized.includes("eaddrinuse")) {
+      return "Local callback listener failed. Port 8765 may be in use by another app.";
+    }
+    if (normalized.includes("timed out")) {
+      return "OAuth callback timed out. Complete provider consent in browser within 180 seconds.";
+    }
+    if (normalized.includes("failed to open the oauth authorization url")) {
+      return "Browser launch failed. Copy/paste the authorization URL manually if needed.";
+    }
+    return "";
+  }
+  formatOAuthLoginFailureForQa(error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    const hint = this.getOAuthLoginFailureHintForQa(message);
+    return hint ? `OAuth login failed: ${message} | Hint: ${hint}` : `OAuth login failed: ${message}`;
+  }
   getOAuthAutoLoginCooldownMsForQa() {
     return 3e5;
   }
@@ -14224,28 +14340,33 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     }
   }
   getOAuthLoginValidationForQa() {
-    const required = [
-      { key: "oauthAuthUrl", label: "auth URL" },
-      { key: "oauthTokenUrl", label: "token URL" },
-      { key: "oauthClientId", label: "client ID" },
-      { key: "oauthRedirectUri", label: "redirect URI" }
-    ];
-    const missing = required.filter((item) => {
+    const required = this.getOAuthValidationFieldMetaForQa();
+    const missingEntries = required.filter((item) => {
       const value = this.settings[item.key];
       return typeof value !== "string" || !value.trim();
-    }).map((item) => item.label);
-    if (missing.length === 0) {
+    });
+    const missing = missingEntries.map((item) => item.label);
+    const missingKeys = missingEntries.map((item) => item.key);
+    if (missingEntries.length === 0) {
       return {
         ready: true,
         missing,
-        message: "OAuth 로그인 준비 완료 / OAuth login is ready."
+        missingKeys,
+        focusField: "",
+        message: "OAuth login is ready.",
+        guidance: "All required fields are present."
       };
     }
-    const missingText = missing.join(", ");
+    const focusField = missingKeys.includes("oauthClientId") ? "oauthClientId" : missingKeys[0] || "";
+    const hint = this.getOAuthMissingFieldHintForQa(focusField);
+    const detail = missingEntries.map((item) => `${item.label} -> ${item.settingLabel}`).join(" | ");
     return {
       ready: false,
       missing,
-      message: `OAuth 로그인 전 필수값 누락: ${missingText} / Missing required fields: ${missingText}`
+      missingKeys,
+      focusField,
+      message: `Missing required fields: ${missing.join(", ")}. ${hint}`,
+      guidance: `Fill required settings: ${detail}`
     };
   }
   normalizeOAuthRedirectUriForQa(rawValue) {
@@ -14296,13 +14417,30 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     return Date.now() + Math.max(0, Math.floor(bufferMs)) < expiryMs;
   }
   getOAuthStatusSummaryForQa() {
-    const enabled = this.settings.oauthEnabled === true ? "enabled" : "disabled";
+    const enabled = this.settings.oauthEnabled === true;
+    const validation = this.getOAuthLoginValidationForQa();
     const accessTokenPresent = typeof this.settings.oauthAccessToken === "string" && this.settings.oauthAccessToken.trim().length > 0;
     const refreshTokenPresent = typeof this.settings.oauthRefreshToken === "string" && this.settings.oauthRefreshToken.trim().length > 0;
     const expiryMs = this.getOAuthTokenExpiryMsForQa();
-    const expired = expiryMs > 0 && Date.now() >= expiryMs;
-    const expiryText = expiryMs > 0 ? new Date(expiryMs).toISOString() : "none";
-    return `OAuth ${enabled}; accessToken=${accessTokenPresent ? "present" : "missing"}; refreshToken=${refreshTokenPresent ? "present" : "missing"}; expiry=${expiryText}${expired ? " (expired)" : ""}`;
+    let expiryText = "not set";
+    if (expiryMs > 0) {
+      const iso = new Date(expiryMs).toISOString();
+      const remainingMs = expiryMs - Date.now();
+      if (remainingMs <= 0) {
+        expiryText = `expired (${iso})`;
+      } else {
+        const remainingMin = Math.max(1, Math.ceil(remainingMs / 6e4));
+        expiryText = `active, expires in ${remainingMin}m (${iso})`;
+      }
+    }
+    const configState = validation.ready ? "ready" : `missing ${validation.missing.join(", ")}`;
+    return [
+      `OAuth: ${enabled ? "enabled" : "disabled"}`,
+      `config: ${configState}`,
+      `access token: ${accessTokenPresent ? "present" : "missing"}`,
+      `refresh token: ${refreshTokenPresent ? "present" : "missing"}`,
+      `expiry: ${expiryText}`
+    ].join(" | ");
   }
   async clearOAuthTokensForQa() {
     this.settings.oauthAccessToken = "";
@@ -14349,7 +14487,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const payload = parseOAuthTokenPayload(response);
     if (response.status >= 300) {
       const detail = typeof payload.error_description === "string" ? payload.error_description : typeof payload.error === "string" ? payload.error : typeof response.text === "string" ? response.text.trim() : "";
-      throw new Error(`OAuth token exchange failed: ${response.status}${detail ? ` (${detail})` : ""}`);
+      const base = `OAuth token exchange failed: ${response.status}${detail ? ` (${detail})` : ""}`;
+      const hint = this.getOAuthLoginFailureHintForQa(detail || base);
+      throw new Error(hint ? `${base} | ${hint}` : base);
     }
     const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
     if (!accessToken) {
@@ -14401,7 +14541,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     const payload = parseOAuthTokenPayload(response);
     if (response.status >= 300) {
       const detail = typeof payload.error_description === "string" ? payload.error_description : typeof payload.error === "string" ? payload.error : typeof response.text === "string" ? response.text.trim() : "";
-      throw new Error(`OAuth token refresh failed: ${response.status}${detail ? ` (${detail})` : ""}`);
+      const base = `OAuth token refresh failed: ${response.status}${detail ? ` (${detail})` : ""}`;
+      const hint = this.getOAuthLoginFailureHintForQa(detail || base);
+      throw new Error(hint ? `${base} | ${hint}` : base);
     }
     const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
     if (!accessToken) {
@@ -14475,7 +14617,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
           res.statusCode = 400;
           res.setHeader("Content-Type", "text/html; charset=utf-8");
           res.end("<html><body><h3>OAuth failed</h3><p>Authorization error returned by provider.</p></body></html>");
-          finalize(new Error(`OAuth authorization failed: ${oauthErrorDescription || oauthError}`));
+          const reason = oauthErrorDescription || oauthError;
+          const hint = this.getOAuthLoginFailureHintForQa(reason);
+          finalize(new Error(hint ? `OAuth authorization failed: ${reason} | ${hint}` : `OAuth authorization failed: ${reason}`));
           return;
         }
         if (!code) {
@@ -14520,18 +14664,12 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     });
   }
   async startOAuthLoginForQa() {
+    const validation = this.getOAuthLoginValidationForQa();
+    if (!validation.ready) {
+      throw new Error(validation.message);
+    }
     const authUrl = this.settings.oauthAuthUrl.trim();
-    const tokenUrl = this.settings.oauthTokenUrl.trim();
     const clientId = this.settings.oauthClientId.trim();
-    if (!authUrl) {
-      throw new Error("OAuth auth URL is empty.");
-    }
-    if (!tokenUrl) {
-      throw new Error("OAuth token URL is empty.");
-    }
-    if (!clientId) {
-      throw new Error("OAuth client ID is empty.");
-    }
     this.settings.oauthEnabled = true;
     const redirectUri = this.normalizeOAuthRedirectUriForQa(this.settings.oauthRedirectUri);
     this.settings.oauthRedirectUri = redirectUri;
@@ -14559,9 +14697,15 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (!opened) {
       throw new Error("Failed to open the OAuth authorization URL.");
     }
-    const callback = await this.waitForOAuthCallbackForQa(redirectUri, state);
-    await this.exchangeOAuthCodeForTokenForQa(callback.code, redirectUri, codeVerifier);
-    await this.saveSettings();
+    try {
+      const callback = await this.waitForOAuthCallbackForQa(redirectUri, state);
+      await this.exchangeOAuthCodeForTokenForQa(callback.code, redirectUri, codeVerifier);
+      await this.saveSettings();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      const hint = this.getOAuthLoginFailureHintForQa(message);
+      throw new Error(hint ? `${message} | ${hint}` : message);
+    }
   }
   async applyQaChatModelProfileForQa(profile, familyHint) {
     const family = familyHint === "cloud" ? "cloud" : this.getQaChatModelFamilyForQa();
@@ -14841,8 +14985,9 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
     if (!/^[A-Za-z0-9._-]+$/.test(safe)) {
       return false;
     }
+    const probe = process.platform === "win32" ? `where ${safe}` : `command -v ${safe}`;
     try {
-      await execAsync(`command -v ${safe}`);
+      await execAsync(probe);
       return true;
     } catch (e) {
       return false;
@@ -22933,14 +23078,23 @@ ${stderr}` : ""
   }
   classifyParserAbortReason(message, ext) {
     const normalized = typeof message === "string" ? message.toLowerCase() : "";
-    if (normalized.includes("hwp 처리 취소") || normalized.includes("user_cancel")) {
+    if (normalized.includes("hwp 처리 취소") || normalized.includes("hwp processing cancelled") || normalized.includes("user_cancel")) {
       return "user_cancel";
     }
     if (normalized.includes("unsupported parser input")) {
       return "unsupported_input";
     }
-    if (normalized.includes("readbinary api unavailable")) {
+    if (normalized.includes("readbinary api unavailable") || normalized.includes("input binary unavailable")) {
       return "vault_readbinary_unavailable";
+    }
+    if (normalized.includes("soffice missing") || normalized.includes("command not found")) {
+      return "soffice_unavailable";
+    }
+    if (normalized.includes("soffice failed")) {
+      return "soffice_failed";
+    }
+    if (normalized.includes("pdf parser chain unavailable") || normalized.includes("pdf parser chain failed")) {
+      return "pdf_parser_failed";
     }
     if (normalized.includes("pdftotext failed")) {
       return "pdftotext_failed";
@@ -22954,11 +23108,8 @@ ${stderr}` : ""
     if (normalized.includes("empty_extraction")) {
       return "empty_extraction";
     }
-    if (normalized.includes("지원하지 않습니다") || normalized.includes("미지원")) {
-      if (ext === "hwp" || ext === "hwpx") {
-        return "hwp_conversion_not_supported";
-      }
-      return "unsupported_input";
+    if (normalized.includes("hwp_conversion_not_supported") || normalized.includes("hwp conversion not supported")) {
+      return "hwp_conversion_not_supported";
     }
     if (ext === "hwp" || ext === "hwpx") {
       return "hwp_conversion_not_supported";
@@ -22968,25 +23119,31 @@ ${stderr}` : ""
   getParserRetryGuidance(reasonCode, ext) {
     switch (reasonCode) {
       case "user_cancel":
-        return "사용자 취소로 중단되었습니다. 필요 시 같은 파일을 다시 스캔하세요.";
+        return "Ingest was canceled by user. Re-upload the same file when ready.";
       case "hwp_conversion_not_supported":
-        return "HWP는 soffice 자동변환(PoC) 미탐지/실패 시 PDF 또는 DOCX 수동 변환 후 다시 업로드하세요. HWPX는 XML 1차 추출 실패 시 동일 경로를 권장합니다.";
+        return "HWP/HWPX auto conversion is unavailable. Convert to PDF or DOCX manually, then upload again.";
+      case "soffice_unavailable":
+        return "LibreOffice (soffice) is missing. Install LibreOffice and ensure soffice is on PATH.";
+      case "soffice_failed":
+        return "LibreOffice conversion failed. Open the source file in LibreOffice and export PDF manually.";
+      case "pdf_parser_failed":
+        return "PDF parse chain failed after conversion. Retry in Detailed parser mode or run OCR fallback tools.";
       case "unsupported_input":
-        return "지원 포맷만 사용하세요: PDF, DOCX, XLSX, PNG/JPG/JPEG/WEBP, HWP/HWPX(가이드).";
+        return "Supported parser formats: PDF, DOCX, XLSX, PNG/JPG/JPEG/WEBP, HWP/HWPX.";
       case "vault_readbinary_unavailable":
-        return "Obsidian/vault adapter 환경에서 바이너리 읽기가 불가합니다. 앱 업데이트 후 재시도하세요.";
+        return "Vault adapter readBinary is unavailable in this runtime. Update Obsidian/plugin runtime and retry.";
       case "ocr_failed":
-        return "Parser mode=Detailed로 전환하고 `pdftoppm`, `tesseract` 설치 상태를 점검한 뒤 OCR 재파싱을 실행하세요.";
+        return "Switch parser mode to Detailed and verify pdftoppm + tesseract installation for OCR fallback.";
       case "pdftotext_failed":
       case "pdfminer_failed":
-        return "외부 파서 명령이 실패했습니다. Parser tool readiness를 갱신하고 OCR 재파싱으로 우회해보세요.";
+        return "PDF text extract failed. Refresh parser tool readiness and retry with OCR fallback.";
       case "empty_extraction":
-        return "스캔 품질이 낮을 수 있습니다. 300dpi 이상 원본 또는 핵심 페이지 이미지를 다시 첨부하세요.";
+        return "Extraction returned empty text. Retry with a higher-quality source (300dpi+ recommended).";
       default:
         if (ext === "hwp" || ext === "hwpx") {
-          return "HWP/HWPX는 soffice 자동변환(PoC) 실패 시 PDF/DOCX 변환 후 재업로드를 권장합니다.";
+          return "HWP/HWPX conversion failed. Manual PDF conversion is recommended as fallback.";
         }
-        return "재시도 후 반복되면 Parser tool readiness와 parser diagnostics 로그(stage/reason)를 확인하세요.";
+        return "Retry once. If it still fails, check parser diagnostics logs (stage/reason).";
     }
   }
   buildParserInboxOutputDocument(payload) {
