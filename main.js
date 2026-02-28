@@ -1707,14 +1707,14 @@ var DEFAULT_SETTINGS = {
   oauthBridgeEnabled: false,
   oauthBridgeBaseUrl: "",
   oauthBridgeModel: "",
-  oauthEnabled: false,
-  oauthProviderPreset: "custom",
-  oauthProvider: "generic",
+  oauthEnabled: true,
+  oauthProviderPreset: "google",
+  oauthProvider: "google",
   oauthAuth0Domain: "",
-  oauthAuthUrl: "",
-  oauthTokenUrl: "",
+  oauthAuthUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+  oauthTokenUrl: "https://oauth2.googleapis.com/token",
   oauthClientId: "",
-  oauthScopes: "",
+  oauthScopes: "openid profile email",
   oauthRedirectUri: "http://127.0.0.1:8765/callback",
   oauthUsePkce: true,
   oauthAccessToken: "",
@@ -11618,7 +11618,17 @@ ${parserProfile.recommendation}`
     );
     new import_obsidian4.Setting(containerEl).setName("OAuth login validation").setDesc(this.plugin.getOAuthLoginValidationForQa().message);
     new import_obsidian4.Setting(containerEl).setName("OAuth session actions / OAuth 세션 동작").setDesc(this.plugin.getOAuthStatusSummaryForQa()).addButton(
+      (button) => button.setButtonText("Google quick preset / Google 빠른 설정").onClick(async () => {
+        this.plugin.applyOAuthProviderPresetForQa("google");
+        this.plugin.settings.oauthEnabled = true;
+        await this.plugin.saveSettings();
+        this.display();
+        new import_obsidian4.Notice("Google OAuth preset applied. / Google OAuth 프리셋 적용 완료", 4e3);
+      })
+    ).addButton(
       (button) => button.setButtonText("Start OAuth Login / OAuth 로그인 시작").onClick(async () => {
+        this.plugin.settings.oauthEnabled = true;
+        await this.plugin.saveSettings();
         const validation = this.plugin.getOAuthLoginValidationForQa();
         if (!validation.ready) {
           new import_obsidian4.Notice(validation.message, 8e3);
