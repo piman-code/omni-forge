@@ -74,7 +74,7 @@ Omni Forge는 반대로 동작합니다.
 1. `설정 -> Omni Forge` 열기
    - `Settings view mode`를 `Simple / 간결`로 두면 핵심 항목만 깔끔하게 볼 수 있습니다.
    - 필요할 때만 `Open Full / 전체 열기`로 고급 항목을 펼치세요.
-   - 상단 탭(`Quick/Models/Chat/Workflow/Advanced`)으로 설정 영역을 분리해 볼 수 있습니다.
+   - 상단 탭(`Quick Start/Login (OAuth)/Models & Provider/Parser/Advanced`)으로 설정 영역을 분리해 볼 수 있습니다.
 2. Provider/Model 선택
    - 로컬 우선 권장: `Ollama`
 3. `One-click local presets`에서 기본은 `Balanced` 권장
@@ -192,6 +192,9 @@ Omni Forge는 반대로 동작합니다.
 - [docs/oauth-hwp-e2e-checklist.md](docs/oauth-hwp-e2e-checklist.md)
 - [docs/OAUTH_RUNBOOK_KO.md](docs/OAUTH_RUNBOOK_KO.md)
 - [docs/UI_SIMPLIFICATION.md](docs/UI_SIMPLIFICATION.md)
+- [docs/PDF_PARSER_VALIDATION.md](docs/PDF_PARSER_VALIDATION.md)
+- [docs/KO_COPY_GUIDE.md](docs/KO_COPY_GUIDE.md)
+- [docs/KO_LOCALIZATION_CHECKLIST.md](docs/KO_LOCALIZATION_CHECKLIST.md)
 
 ## OAuth / HWP Update Notes
 

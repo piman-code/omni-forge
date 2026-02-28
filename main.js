@@ -10868,9 +10868,6 @@ ${availability.note}`).addText(
     languageSetting.settingEl.addClass("omni-forge-settings-quick");
   }
   isSectionVisibleForTab(sectionTitle, tab) {
-    if (tab === "advanced") {
-      return true;
-    }
     if (tab === "guide") {
       return false;
     }
@@ -10878,11 +10875,15 @@ ${availability.note}`).addText(
       case "quick":
         return sectionTitle === "__prelude" || sectionTitle === "Local provider config" || sectionTitle === "Cloud provider config" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
       case "analyzed":
-        return sectionTitle === "Behavior" || sectionTitle === "Semantic linking (Ollama embeddings)" || sectionTitle === "Property cleanup" || sectionTitle === "Selection and backup" || sectionTitle === "MOC";
+        return sectionTitle === "__prelude" || sectionTitle === "Local provider config" || sectionTitle === "Cloud provider config" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
       case "chat":
-        return sectionTitle === "__prelude" || sectionTitle === "Behavior" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)";
+        return sectionTitle === "__prelude" || sectionTitle === "Cloud provider config";
       case "orchestration":
-        return sectionTitle === "__prelude" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)" || sectionTitle === "Pipeline prompt tips / \uD30C\uC774\uD504\uB77C\uC778 \uD504\uB86C\uD504\uD2B8 \uD301";
+        return sectionTitle === "Behavior" || sectionTitle === "Semantic linking (Ollama embeddings)" || sectionTitle === "Property cleanup" || sectionTitle === "Selection and backup" || sectionTitle === "MOC" || sectionTitle === "Local Q&A (security-first) / \uB85C\uCEEC Q&A (\uBCF4\uC548 \uC6B0\uC120)" || sectionTitle === "Pipeline prompt tips / \uD30C\uC774\uD504\uB77C\uC778 \uD504\uB86C\uD504\uD2B8 \uD301";
+      case "skills":
+      case "parser":
+      case "guide":
+        return false;
       default:
         return true;
     }
@@ -10934,15 +10935,7 @@ ${availability.note}`).addText(
           return true;
         }
       case "orchestration":
-        return this.settingNameStartsWithPrefixes(
-          name,
-          _KnowledgeWeaverSettingTab.ORCHESTRATION_TAB_VISIBLE_NAME_PREFIXES
-        );
-      case "advanced":
-        return this.settingNameStartsWithPrefixes(
-          name,
-          _KnowledgeWeaverSettingTab.ADVANCED_TAB_VISIBLE_NAME_PREFIXES
-        );
+        return true;
       case "skills":
       case "parser":
       case "guide":
@@ -11475,8 +11468,8 @@ ${parserProfile.recommendation}`
       text: uiMode === "en" ? "Language docs: README.md (EN) | README_KO.md (KO)" : uiMode === "ko" ? "\uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)" : "Language docs / \uC5B8\uC5B4 \uBB38\uC11C: README.md (EN) | README_KO.md (KO)"
     });
     this.addSettingsTabSwitcher(containerEl);
-    const activeTab = this.plugin.settings.settingsActiveTab === "advanced" ? "guide" : this.plugin.settings.settingsActiveTab;
-    if (activeTab === "chat") {
+    const activeTab = this.plugin.settings.settingsActiveTab;
+    if (activeTab === "analyzed") {
       this.addViewModeAndPresetControls(containerEl);
       this.addChatPresetControls(containerEl);
     }
@@ -12886,15 +12879,29 @@ Detected local models: ${qaLocalHealth.detectedCount}`
   }
 };
 _KnowledgeWeaverSettingTab.TAB_OPTIONS = [
-  { key: "quick", en: "General", ko: "\uC77C\uBC18" },
-  { key: "analyzed", en: "Analyzed", ko: "\uBD84\uC11D" },
-  { key: "chat", en: "Chat", ko: "\uCC44\uD305" },
-  { key: "orchestration", en: "Orchestration", ko: "\uC624\uCF00\uC2A4\uD2B8\uB808\uC774\uC158" },
-  { key: "skills", en: "Skills", ko: "\uC2A4\uD0AC\uC2A4" },
-  { key: "guide", en: "Description", ko: "\uC124\uBA85" }
+  { key: "quick", en: "Quick Start", ko: "\uBE60\uB978 \uC2DC\uC791" },
+  { key: "chat", en: "Login (OAuth)", ko: "\uB85C\uADF8\uC778(OAuth)" },
+  { key: "analyzed", en: "Models & Provider", ko: "\uBAA8\uB378/\uC81C\uACF5\uC790" },
+  { key: "parser", en: "Parser", ko: "\uD30C\uC11C" },
+  { key: "orchestration", en: "Advanced", ko: "\uACE0\uAE09" },
+  { key: "guide", en: "Guide", ko: "\uAC00\uC774\uB4DC" },
+  { key: "skills", en: "Skills", ko: "\uC2A4\uD0AC" }
 ];
 _KnowledgeWeaverSettingTab.QUICK_TAB_VISIBLE_NAME_PREFIXES = [
   "Settings UI language",
+  "Quick provider",
+  "Chat model profile",
+  "Q&A model",
+  "Preferred response language",
+  "Parser mode",
+  "OAuth provider preset",
+  "OAuth client ID",
+  "OAuth redirect URI",
+  "OAuth setup checklist",
+  "Conversation mode (chat runtime)",
+  "Q&A pipeline preset"
+];
+_KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES = [
   "Quick provider",
   "Codex bridge note",
   "Ollama base URL",
@@ -12909,56 +12916,6 @@ _KnowledgeWeaverSettingTab.QUICK_TAB_VISIBLE_NAME_PREFIXES = [
   "Anthropic API key",
   "Gemini model",
   "Gemini API key",
-  "Custom system prompt"
-];
-_KnowledgeWeaverSettingTab.ANALYZED_TAB_VISIBLE_NAME_PREFIXES = [
-  "Analyzed depth mode",
-  "Analyzed runtime estimate",
-  "Analyzed scope snapshot",
-  "Suggestion mode (recommended)",
-  "Show reasons for each field",
-  "Show progress notices",
-  "Analyze tags",
-  "Analyze topic",
-  "Analyze linked",
-  "Force all-to-all linked (deterministic)",
-  "Analyze index",
-  "Max tags",
-  "Max linked",
-  "Analyze changed notes only",
-  "Enable semantic candidate ranking",
-  "Embedding Ollama base URL",
-  "Embedding detected model picker",
-  "Embedding model (manual)",
-  "Embedding auto-match policy",
-  "Cloud embedding behavior",
-  "Embedding detection summary",
-  "Semantic top-k candidates",
-  "Semantic min similarity",
-  "Semantic source max chars",
-  "Remove legacy AI-prefixed keys",
-  "Enable cleanup rules during apply",
-  "Cleanup exact keys",
-  "Pick cleanup keys from selected notes",
-  "Cleanup key prefixes",
-  "Never remove these keys",
-  "Run cleanup command",
-  "Cleanup dry-run report folder",
-  "Sort tags and linked arrays",
-  "Include subfolders for selected folders",
-  "Selection path width percent",
-  "Excluded folder patterns",
-  "Watch folders for new notes",
-  "Watched folders",
-  "Auto-tag active note",
-  "Auto-tag cooldown seconds",
-  "Backup selected notes before apply",
-  "Backup root path",
-  "Backup retention count",
-  "Generate MOC after apply",
-  "MOC file path"
-];
-_KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
   "Chat model profile",
   "Model inventory refresh",
   "Q&A model",
@@ -12967,36 +12924,45 @@ _KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
   "Ollama detection summary",
   "Flash profile",
   "Pro profile",
-  "Prefer Ollama /api/chat (with fallback)",
+  "Allow non-local Q&A endpoint",
+  "Allowed outbound hosts",
   "Q&A retrieval top-k",
   "Q&A max context chars",
   "Structured answer guard",
   "Always detailed answers",
   "Minimum answer chars",
   "Preferred response language",
-  "Compact chat UI (recommended)",
-  "Chat font size",
   "Show system messages in chat",
+  "Chat font size",
   "Include selection inventory",
   "Inventory max files",
-  "Allow non-local Q&A endpoint (danger)",
-  "Allowed outbound hosts (non-local Q&A)",
-  "Chat transcript folder path",
-  "Attachment ingest folder path",
   "Auto-sync chat thread",
   "PDF attachments in chat",
-  "Parser mode",
-  "Parser inbox default collapsed",
-  "Parser inbox watch",
-  "Parser inbox folder",
-  "Parser ingest output format",
-  "Enable agent tool mode (experimental)",
-  "Require approval before tool execution",
-  "Allow shell tool (danger)",
-  "Agent shell full access (danger)",
-  "Shell tool timeout (seconds)",
-  "Shell tool default cwd (vault-relative, optional)",
-  "Agent path allowlist (absolute, comma/newline)"
+  "Custom system prompt"
+];
+_KnowledgeWeaverSettingTab.CHAT_TAB_VISIBLE_NAME_PREFIXES = [
+  "Quick provider",
+  "Codex bridge note",
+  "OpenAI base URL",
+  "OpenAI model",
+  "OAuth bridge mode",
+  "OAuth bridge base URL",
+  "OAuth bridge model override",
+  "OAuth enabled",
+  "OAuth provider preset",
+  "Auth0 domain",
+  "OAuth provider hint",
+  "OAuth authorization URL",
+  "OAuth token URL",
+  "OAuth client ID",
+  "OAuth scopes",
+  "OAuth redirect URI",
+  "OAuth use PKCE",
+  "OAuth login validation",
+  "OAuth endpoint compatibility",
+  "OAuth setup checklist",
+  "OAuth session actions",
+  "OpenAI API key"
 ];
 _KnowledgeWeaverSettingTab.ANALYZED_OLLAMA_ONLY_PREFIXES = [
   "Enable semantic candidate ranking",
@@ -16567,16 +16533,13 @@ var KnowledgeWeaverPlugin = class extends import_obsidian4.Plugin {
       this.settings.settingsActiveTab = DEFAULT_SETTINGS.settingsActiveTab;
     }
     if (this.settings.settingsActiveTab === "models") {
-      this.settings.settingsActiveTab = "chat";
-    }
-    if (this.settings.settingsActiveTab === "workflow") {
       this.settings.settingsActiveTab = "analyzed";
     }
-    if (this.settings.settingsActiveTab === "advanced") {
-      this.settings.settingsActiveTab = "guide";
+    if (this.settings.settingsActiveTab === "workflow") {
+      this.settings.settingsActiveTab = "orchestration";
     }
-    if (this.settings.settingsActiveTab === "parser") {
-      this.settings.settingsActiveTab = "chat";
+    if (this.settings.settingsActiveTab === "advanced") {
+      this.settings.settingsActiveTab = "orchestration";
     }
     if (!Array.isArray(this.settings.targetFilePaths)) {
       this.settings.targetFilePaths = [];

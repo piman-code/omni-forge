@@ -72,7 +72,7 @@ Keep non-local endpoints disabled unless you explicitly trust the destination an
 1. Open `Settings -> Omni Forge`.
    - Keep `Settings view mode` on `Simple` for an essentials-only screen.
    - Use `Open Full` only when you need advanced controls.
-   - Use top tabs (`Quick/Models/Chat/Workflow/Advanced`) to focus on one area at a time.
+   - Use top tabs (`Quick Start/Login (OAuth)/Models & Provider/Parser/Advanced`) to focus on one area at a time.
 2. Choose provider/model.
    - local-first recommendation: `Ollama`
 3. Pick a `One-click local presets` profile (`Balanced` is the default recommendation).
@@ -228,3 +228,7 @@ Related docs:
 - [docs/oauth-hwp-e2e-checklist.md](docs/oauth-hwp-e2e-checklist.md)
 - [docs/OAUTH_RUNBOOK_KO.md](docs/OAUTH_RUNBOOK_KO.md)
 - [docs/UI_SIMPLIFICATION.md](docs/UI_SIMPLIFICATION.md)
+- [docs/PDF_PARSER_VALIDATION.md](docs/PDF_PARSER_VALIDATION.md)
+- [docs/KO_COPY_GUIDE.md](docs/KO_COPY_GUIDE.md)
+- [docs/KO_LOCALIZATION_CHECKLIST.md](docs/KO_LOCALIZATION_CHECKLIST.md)
+
